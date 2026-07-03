@@ -1,7 +1,7 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 7 adds the first usable catalog APIs for
-brands, categories, products, product aliases, and product image metadata.
+FastAPI backend for LeafletPilot. Phase 8 adds the campaign workflow data layer
+on top of the catalog APIs from Phase 7.
 
 ## Setup
 
@@ -67,6 +67,35 @@ Turkish characters are preserved in normalized aliases for MVP matching
 fidelity. Image metadata is stored only as database fields; there is no upload,
 S3, or file storage workflow yet.
 
+## Campaign Workflow Models
+
+Phase 8 adds SQLAlchemy models and an Alembic migration for the campaign
+workflow:
+
+- `Campaign`: brochure generation workflow, status counters, source text, and selected template id.
+- `CampaignItem`: parsed product lines with raw text, decimal-safe prices, optional product matches, and match state.
+- `MatchingSuggestion`: candidate product matches with decimal-safe scores.
+- `CampaignFile`: preview, source upload, and future final export file records.
+- `ExportJob`: placeholder async job records for previews, final exports, regeneration, and file sending.
+- `Conversation` and `IncomingMessage`: channel-independent conversation state and preserved raw provider payloads.
+
+Campaign workflow statuses are stored as strings with database check
+constraints:
+
+```text
+draft -> parsing -> matching -> missing_products -> preview_ready
+preview_ready -> waiting_approval -> approved -> generating_files -> completed
+revision_requested, failed, and cancelled are terminal or recovery states depending on later APIs.
+```
+
+All workflow records are scoped by `market_id` where appropriate. Campaign child
+records cascade when their campaign is deleted; market deletion does not cascade
+through workflow data. `Campaign.template_id` is a nullable UUID for now because
+the `Template` model has not been implemented yet.
+
+Campaign CRUD/list/detail APIs, item update APIs, matching resolution APIs, and
+export job placeholder APIs are not implemented in Phase 8.
+
 ## Market Scoping Placeholder
 
 There is no real authentication or tenancy resolution yet. Catalog routes use a
@@ -106,6 +135,12 @@ $env:TEST_DATABASE_URL="postgresql+asyncpg://leafletpilot:leafletpilot@localhost
 The test creates missing tables with SQLAlchemy metadata. Use a disposable test
 database, not a production or shared database.
 
+Check Alembic heads without a database:
+
+```powershell
+.\.venv\Scripts\python -m alembic heads
+```
+
 ## Database Configuration
 
 Copy `.env.example` to `.env` and set `DATABASE_URL`:
@@ -130,6 +165,8 @@ Current model groups:
 
 - Accounts and tenancy: `User`, `Market`, `MarketUser`
 - Catalog: `Brand`, `Category`, `Product`, `ProductAlias`, `ProductImage`
+- Campaign workflow: `Campaign`, `CampaignItem`, `MatchingSuggestion`, `CampaignFile`, `ExportJob`
+- Messaging intake: `Conversation`, `IncomingMessage`
 - Audit trail: `ActivityLog`
 
 Catalog records support global rows with `market_id = null` and `is_global =
@@ -182,12 +219,15 @@ configured `DATABASE_URL`.
 - Product images accept metadata only; there is no upload or storage integration.
 - Product alias normalization is intentionally simple and is not the matching engine.
 - No activity CRUD APIs yet.
-- No campaign workflow, bot, AI, PDF, storage, auth, payment, or deployment features.
+- Campaign workflow APIs are not implemented yet; Phase 8 only adds models, migration, metadata wiring, and tests.
+- Campaign template references use a nullable UUID without a foreign key until the `Template` model is added.
+- No bot integration, AI parsing, PDF/PNG rendering, S3 storage, auth, payment, or deployment features.
 - No seed data in the initial migration.
 - The frontend remains mock/local-state only.
 
 ## Next Phase
 
-Phase 8 should focus on campaign models and migration planning or implementation,
-including `Campaign`, `CampaignItem`, `CampaignFile`, `MatchingSuggestion`,
-`ExportJob`, and `IncomingMessage`/`Conversation` if they remain in scope.
+Phase 9 should focus on campaign Pydantic schemas, campaign CRUD/list/detail
+APIs, campaign item update and matching resolution APIs, and export job
+placeholder APIs. Telegram, AI parsing, and real PDF/PNG generation should stay
+out of scope.
