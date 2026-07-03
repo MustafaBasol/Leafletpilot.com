@@ -1,7 +1,7 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 8 adds the campaign workflow data layer
-on top of the catalog APIs from Phase 7.
+FastAPI backend for LeafletPilot. Phase 9 adds backend-only campaign workflow
+APIs on top of the catalog APIs and campaign data layer from earlier phases.
 
 ## Setup
 
@@ -67,6 +67,115 @@ Turkish characters are preserved in normalized aliases for MVP matching
 fidelity. Image metadata is stored only as database fields; there is no upload,
 S3, or file storage workflow yet.
 
+## Campaign APIs
+
+Campaign routes are mounted under `/api/campaigns` and require the temporary
+market header:
+
+```text
+X-Market-Id: <market uuid>
+```
+
+If the header is missing, campaign routes return `400` before opening a
+database session. This is a tenancy placeholder until real auth resolves the
+active market.
+
+Implemented campaign routes:
+
+- `GET|POST /api/campaigns`
+- `GET|PATCH|DELETE /api/campaigns/{campaign_id}`
+- `POST /api/campaigns/{campaign_id}/items`
+- `PATCH /api/campaigns/{campaign_id}/items/{item_id}`
+- `POST /api/campaigns/{campaign_id}/items/{item_id}/resolve-match`
+- `GET|POST /api/campaigns/{campaign_id}/items/{item_id}/suggestions`
+- `GET|POST /api/campaigns/{campaign_id}/files`
+- `GET|POST /api/campaigns/{campaign_id}/export-jobs`
+
+List campaigns:
+
+```powershell
+curl.exe -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns?status=draft&limit=50&offset=0"
+```
+
+List filters are `search`, `status`, `channel`, `source_type`, `date_from`,
+`date_to`, `limit`, and `offset`. Results are ordered by `created_at`
+descending and return the shared list envelope:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Create a campaign with manual items:
+
+```json
+{
+  "title": "Hafta 28",
+  "channel": "panel",
+  "source_type": "manual",
+  "raw_input_text": "Coca Cola 2L - 1.59",
+  "currency": "EUR",
+  "language": "tr",
+  "items": [
+    {
+      "raw_line": "Coca Cola 2L - 1.59",
+      "incoming_name": "Coca Cola 2L",
+      "price": "1.59"
+    }
+  ]
+}
+```
+
+Get campaign detail:
+
+```powershell
+curl.exe -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>"
+```
+
+Detail responses include campaign metadata, items, files, export jobs, and
+matching suggestions. Money and score fields use Pydantic `Decimal`; JSON
+responses serialize them as strings.
+
+Resolve an item match manually:
+
+```json
+{
+  "resolution": "manual_selected",
+  "product_id": "<product uuid>",
+  "display_name": "Coca Cola 2L",
+  "notes": "Operator selected the catalog product."
+}
+```
+
+Supported resolutions are `manual_selected`, `new_product_needed`,
+`use_without_image`, `excluded`, and `not_found`. Manual selection requires a
+product visible to the current market: either a market-specific product with
+the same `market_id`, or an active global product.
+
+Campaign counts are recalculated after item changes. `product_count` counts
+non-excluded items. `matched_count` counts `matched` and `manual_selected`.
+`missing_count` counts `not_found`, `new_product_needed`, and
+`use_without_image`. `low_confidence_count` counts `low_confidence`.
+
+Export jobs are placeholders only:
+
+```json
+{
+  "job_type": "preview",
+  "requested_formats": ["preview_png"],
+  "status": "queued"
+}
+```
+
+Creating an export job stores a queued `ExportJob` row. It does not start a
+worker, generate files, upload to storage, or send messages. Campaign file
+routes similarly store metadata only; there is no upload or generation path in
+this phase.
+
 ## Campaign Workflow Models
 
 Phase 8 adds SQLAlchemy models and an Alembic migration for the campaign
@@ -93,8 +202,9 @@ records cascade when their campaign is deleted; market deletion does not cascade
 through workflow data. `Campaign.template_id` is a nullable UUID for now because
 the `Template` model has not been implemented yet.
 
-Campaign CRUD/list/detail APIs, item update APIs, matching resolution APIs, and
-export job placeholder APIs are not implemented in Phase 8.
+Campaign CRUD/list/detail APIs, item update APIs, matching resolution APIs,
+matching suggestion placeholder APIs, campaign file metadata APIs, and export
+job placeholder APIs are implemented in Phase 9.
 
 ## Market Scoping Placeholder
 
@@ -105,11 +215,12 @@ temporary header:
 X-Market-Id: <market uuid>
 ```
 
-For market-specific create operations, `X-Market-Id` is required. Global create
-operations use `is_global=true` and do not store a market id. Read/list/update
-and soft-delete operations are scoped to global records plus the provided market
-when the header is present. Without the header, catalog reads return only global
-records.
+For catalog market-specific create operations, `X-Market-Id` is required.
+Global catalog create operations use `is_global=true` and do not store a market
+id. Catalog read/list/update and soft-delete operations are scoped to global
+records plus the provided market when the header is present. Without the
+header, catalog reads return only global records. Campaign routes always require
+`X-Market-Id`.
 
 This placeholder should be replaced by the real auth/tenancy dependency in a
 future phase.
@@ -214,20 +325,21 @@ configured `DATABASE_URL`.
 
 ## Current Limitations
 
-- Catalog APIs require `DATABASE_URL` for actual CRUD calls.
+- Catalog and campaign APIs require `DATABASE_URL` for actual CRUD calls.
 - Auth and market tenancy are represented only by the temporary `X-Market-Id` header.
 - Product images accept metadata only; there is no upload or storage integration.
 - Product alias normalization is intentionally simple and is not the matching engine.
+- Campaign item creation is manual only; there is no AI parsing.
+- Matching suggestions can be stored as placeholder/demo data, but no matching engine exists yet.
+- Campaign file and export job APIs store metadata only; no PDF/PNG generation or background worker runs.
 - No activity CRUD APIs yet.
-- Campaign workflow APIs are not implemented yet; Phase 8 only adds models, migration, metadata wiring, and tests.
 - Campaign template references use a nullable UUID without a foreign key until the `Template` model is added.
-- No bot integration, AI parsing, PDF/PNG rendering, S3 storage, auth, payment, or deployment features.
+- No Telegram or WhatsApp integration, real matching, S3 storage, frontend API integration, payment, or deployment features.
 - No seed data in the initial migration.
 - The frontend remains mock/local-state only.
 
 ## Next Phase
 
-Phase 9 should focus on campaign Pydantic schemas, campaign CRUD/list/detail
-APIs, campaign item update and matching resolution APIs, and export job
-placeholder APIs. Telegram, AI parsing, and real PDF/PNG generation should stay
-out of scope.
+Phase 10 should focus on a deterministic product matching service: exact,
+alias, barcode, and fuzzy matching; suggestion generation; and a clear
+interface where AI can be added later without enabling AI behavior yet.
