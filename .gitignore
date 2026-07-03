@@ -1,3 +1,14 @@
 node_modules/
 dist/
 .npm-cache/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+backend/.venv/
+backend/.pytest_cache/
