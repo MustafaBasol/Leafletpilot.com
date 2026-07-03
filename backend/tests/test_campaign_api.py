@@ -54,6 +54,8 @@ def test_openapi_schema_contains_campaign_routes() -> None:
     assert "/api/campaigns/{campaign_id}" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items/{item_id}/resolve-match" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/generate-suggestions" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/files" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/export-jobs" in schema["paths"]
 
@@ -63,6 +65,14 @@ def test_missing_market_id_returns_400_before_database_session_is_used() -> None
 
     assert response.status_code == 400
     assert response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    item_response = client.post(f"/api/campaigns/{uuid4()}/items/{uuid4()}/generate-suggestions", json={})
+    assert item_response.status_code == 400
+    assert item_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    campaign_response = client.post(f"/api/campaigns/{uuid4()}/generate-suggestions", json={})
+    assert campaign_response.status_code == 400
+    assert campaign_response.json()["detail"] == "X-Market-Id is required for campaign routes."
 
 
 def test_campaign_count_recalculation_uses_non_excluded_items() -> None:

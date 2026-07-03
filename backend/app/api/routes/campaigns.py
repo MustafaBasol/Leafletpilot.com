@@ -11,15 +11,20 @@ from app.schemas.campaign import (
     CampaignItemCreate,
     CampaignItemRead,
     CampaignItemResolveMatch,
+    CampaignItemSuggestionResult,
     CampaignItemUpdate,
     CampaignListItem,
+    CampaignSuggestionSummary,
     CampaignUpdate,
+    GenerateCampaignSuggestionsRequest,
+    GenerateItemSuggestionsRequest,
     MatchingSuggestionCreate,
     MatchingSuggestionRead,
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
 from app.services import campaign as campaign_service
+from app.services import product_matching
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -155,6 +160,47 @@ async def create_matching_suggestion(
         item_id,
         payload,
         market_id,
+    )
+
+
+@router.post(
+    "/{campaign_id}/items/{item_id}/generate-suggestions",
+    response_model=CampaignItemSuggestionResult,
+)
+async def generate_item_suggestions(
+    campaign_id: UUID,
+    item_id: UUID,
+    payload: GenerateItemSuggestionsRequest | None = None,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignItemSuggestionResult:
+    request = payload or GenerateItemSuggestionsRequest()
+    item, suggestions = await product_matching.generate_suggestions_for_campaign_item(
+        session,
+        market_id,
+        campaign_id,
+        item_id,
+        limit=request.limit,
+    )
+    return CampaignItemSuggestionResult(item=item, suggestions=suggestions)
+
+
+@router.post(
+    "/{campaign_id}/generate-suggestions",
+    response_model=CampaignSuggestionSummary,
+)
+async def generate_campaign_suggestions(
+    campaign_id: UUID,
+    payload: GenerateCampaignSuggestionsRequest | None = None,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignSuggestionSummary:
+    request = payload or GenerateCampaignSuggestionsRequest()
+    return await product_matching.generate_suggestions_for_campaign(
+        session,
+        market_id,
+        campaign_id,
+        limit_per_item=request.limit_per_item,
     )
 
 

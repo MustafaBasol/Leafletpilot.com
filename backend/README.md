@@ -1,7 +1,8 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 9 adds backend-only campaign workflow
-APIs on top of the catalog APIs and campaign data layer from earlier phases.
+FastAPI backend for LeafletPilot. Phase 10 adds deterministic product matching
+and generated campaign item suggestions on top of the catalog and campaign
+workflow APIs from earlier phases.
 
 ## Setup
 
@@ -84,9 +85,11 @@ Implemented campaign routes:
 
 - `GET|POST /api/campaigns`
 - `GET|PATCH|DELETE /api/campaigns/{campaign_id}`
+- `POST /api/campaigns/{campaign_id}/generate-suggestions`
 - `POST /api/campaigns/{campaign_id}/items`
 - `PATCH /api/campaigns/{campaign_id}/items/{item_id}`
 - `POST /api/campaigns/{campaign_id}/items/{item_id}/resolve-match`
+- `POST /api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions`
 - `GET|POST /api/campaigns/{campaign_id}/items/{item_id}/suggestions`
 - `GET|POST /api/campaigns/{campaign_id}/files`
 - `GET|POST /api/campaigns/{campaign_id}/export-jobs`
@@ -140,6 +143,34 @@ Detail responses include campaign metadata, items, files, export jobs, and
 matching suggestions. Money and score fields use Pydantic `Decimal`; JSON
 responses serialize them as strings.
 
+Generate deterministic suggestions for one item:
+
+```powershell
+curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/items/<item uuid>/generate-suggestions"
+```
+
+Generate deterministic suggestions for every campaign item:
+
+```powershell
+curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit_per_item\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/generate-suggestions"
+```
+
+The campaign-level endpoint returns a summary:
+
+```json
+{
+  "campaign_id": "<campaign uuid>",
+  "items_processed": 0,
+  "auto_matched": 0,
+  "low_confidence": 0,
+  "not_found": 0,
+  "suggestions_created": 0
+}
+```
+
+Generated suggestions replace prior generated suggestions for that item on each
+run. Manual suggestions are left untouched.
+
 Resolve an item match manually:
 
 ```json
@@ -160,6 +191,51 @@ Campaign counts are recalculated after item changes. `product_count` counts
 non-excluded items. `matched_count` counts `matched` and `manual_selected`.
 `missing_count` counts `not_found`, `new_product_needed`, and
 `use_without_image`. `low_confidence_count` counts `low_confidence`.
+
+## Deterministic Product Matching
+
+The matching engine lives in `app.services.product_matching`. It does not call
+AI and does not parse files. It uses existing active `Product` and
+`ProductAlias` rows visible to the current market.
+
+A product is visible when either:
+
+- `product.market_id` matches `X-Market-Id`
+- `product.is_global=true` and `product.market_id` is null
+
+Only active products are suggested.
+
+Incoming names, product names, and aliases are normalized by lowercasing,
+trimming, collapsing whitespace, removing most punctuation, keeping numbers,
+normalizing common separators, converting Turkish characters to ASCII
+equivalents (`ç/c`, `ğ/g`, `ı/i`, `İ/i`, `ö/o`, `ş/s`, `ü/u`), and normalizing
+common units such as `litre/liter/lt/l`, `gram/gr/g`, and `kilogram/kg`.
+Barcodes are normalized to digits only.
+
+Scoring priority:
+
+- Barcode exact match: `100`
+- Product name exact normalized match: `98`
+- Product alias exact normalized match: `96`
+- Fuzzy product name match: `70-95`
+- Fuzzy alias match: `65-93`
+
+`difflib.SequenceMatcher` is used for the MVP fuzzy score. Duplicate products
+are collapsed so each product appears at most once, with the best reason/score
+kept. Suggestions are ranked by score descending, then by deterministic reason
+priority.
+
+Auto-match behavior:
+
+- Barcode exact, exact product name, and exact alias matches with score `>=95`
+  set `CampaignItem.product_id`, `match_status=matched`, and store the score in
+  `match_confidence`.
+- Fuzzy matches do not set `product_id`; they set
+  `match_status=low_confidence` and require operator review.
+- Items with no suggestion remain `not_found`.
+
+`parsed_payload.barcode` is used as the optional campaign item barcode source
+until a later parsing phase adds a first-class input flow.
 
 Export jobs are placeholders only:
 
@@ -234,7 +310,7 @@ future phase.
 The normal test suite does not require PostgreSQL. The optional live database
 check skips automatically when `DATABASE_URL` is not configured or reachable.
 
-Catalog DB-backed CRUD tests also skip automatically unless
+Catalog, campaign, and matching DB-backed tests skip automatically unless
 `TEST_DATABASE_URL` is configured. To run them against a local PostgreSQL test
 database:
 
@@ -330,16 +406,18 @@ configured `DATABASE_URL`.
 - Product images accept metadata only; there is no upload or storage integration.
 - Product alias normalization is intentionally simple and is not the matching engine.
 - Campaign item creation is manual only; there is no AI parsing.
-- Matching suggestions can be stored as placeholder/demo data, but no matching engine exists yet.
+- Matching is deterministic only; there is no AI-assisted normalization or scoring yet.
+- No OCR, PDF, Excel, or image parsing exists yet.
 - Campaign file and export job APIs store metadata only; no PDF/PNG generation or background worker runs.
 - No activity CRUD APIs yet.
 - Campaign template references use a nullable UUID without a foreign key until the `Template` model is added.
-- No Telegram or WhatsApp integration, real matching, S3 storage, frontend API integration, payment, or deployment features.
+- No Telegram or WhatsApp integration, S3 storage, frontend API integration, payment, or deployment features.
 - No seed data in the initial migration.
 - The frontend remains mock/local-state only.
 
 ## Next Phase
 
-Phase 10 should focus on a deterministic product matching service: exact,
-alias, barcode, and fuzzy matching; suggestion generation; and a clear
-interface where AI can be added later without enabling AI behavior yet.
+Phase 11 should focus on a simple campaign text parsing service: create a
+campaign from a pasted product list, parse basic product lines into campaign
+items, keep AI disabled or behind an adapter interface only, and add an
+endpoint that turns pasted raw product text into campaign items.

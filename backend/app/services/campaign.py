@@ -3,7 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -312,7 +312,7 @@ async def validate_visible_product(session: AsyncSession, product_id: UUID, mark
             Product.is_active.is_(True),
             or_(
                 Product.market_id == market_id,
-                Product.is_global.is_(True),
+                and_(Product.is_global.is_(True), Product.market_id.is_(None)),
             ),
         )
     )

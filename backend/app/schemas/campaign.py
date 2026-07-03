@@ -127,6 +127,28 @@ class MatchingSuggestionRead(BaseModel):
     created_at: datetime
 
 
+class GenerateItemSuggestionsRequest(BaseModel):
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class GenerateCampaignSuggestionsRequest(BaseModel):
+    limit_per_item: int = Field(default=5, ge=1, le=20)
+
+
+class CampaignItemSuggestionResult(BaseModel):
+    item: CampaignItemRead
+    suggestions: list[MatchingSuggestionRead] = Field(default_factory=list)
+
+
+class CampaignSuggestionSummary(BaseModel):
+    campaign_id: UUID
+    items_processed: int
+    auto_matched: int
+    low_confidence: int
+    not_found: int
+    suggestions_created: int
+
+
 class CampaignCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     channel: CampaignChannel = "panel"
