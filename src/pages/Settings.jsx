@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiStatus } from "../components/ApiStatus.jsx";
 import { marketSettings, outputFormats, templates } from "../data/mockData.js";
 import { Button, Card, Checkbox, Input, PageHeader, SelectPlaceholder } from "../components/ui/index.js";
 
@@ -62,6 +63,7 @@ export function Settings() {
             ))}
           </div>
         </Card>
+        <ApiStatus />
       </section>
     </>
   );

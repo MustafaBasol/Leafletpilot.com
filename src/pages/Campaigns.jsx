@@ -1,4 +1,7 @@
-import { campaigns } from "../data/mockData.js";
+import { useEffect, useState } from "react";
+import { campaigns as mockCampaigns } from "../data/mockData.js";
+import { isRealApiEnabled } from "../api/config.js";
+import { getCampaigns } from "../data/dataSource.js";
 import {
   Button,
   Card,
@@ -11,6 +14,36 @@ import {
 } from "../components/ui/index.js";
 
 export function Campaigns() {
+  const [campaigns, setCampaigns] = useState(mockCampaigns);
+  const [apiError, setApiError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCampaigns() {
+      if (!isRealApiEnabled) return;
+
+      try {
+        const apiCampaigns = await getCampaigns();
+        if (isMounted) {
+          setCampaigns(apiCampaigns);
+          setApiError("");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setCampaigns(mockCampaigns);
+          setApiError(`${error.message} Mock kampanya listesi gösteriliyor.`);
+        }
+      }
+    }
+
+    loadCampaigns();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   return (
     <>
       <PageHeader
@@ -33,6 +66,8 @@ export function Campaigns() {
         <FilterChip label="Tarih" value="Son 30 gün" />
         <FilterChip label="Eksik ürün" value="Var / Yok" />
       </FilterBar>
+
+      {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
 
       <Card title="Kampanya Listesi">
         <Table

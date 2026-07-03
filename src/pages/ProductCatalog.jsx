@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { products as initialProducts } from "../data/mockData.js";
+import { isRealApiEnabled } from "../api/config.js";
+import { getProducts } from "../data/dataSource.js";
 import {
   Button,
   Card,
@@ -94,6 +96,34 @@ export function ProductCatalog() {
   const [products, setProducts] = useState(initialProducts);
   const [editingProduct, setEditingProduct] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [apiError, setApiError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadProducts() {
+      if (!isRealApiEnabled) return;
+
+      try {
+        const apiProducts = await getProducts();
+        if (isMounted) {
+          setProducts(apiProducts);
+          setApiError("");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setProducts(initialProducts);
+          setApiError(`${error.message} Mock ürün listesi gösteriliyor.`);
+        }
+      }
+    }
+
+    loadProducts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function closeModal() {
     setEditingProduct(null);
@@ -137,6 +167,8 @@ export function ProductCatalog() {
         <FilterChip label="Görsel Durumu" />
         <FilterChip label="Aktif/Pasif" value="Aktif" />
       </FilterBar>
+
+      {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
 
       <Card title="Katalog Ürünleri">
         <Table

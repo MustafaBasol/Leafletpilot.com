@@ -1283,6 +1283,40 @@ tbody tr:hover {
   padding: 12px 14px;
 }
 
+.inline-result-warning {
+  border-color: var(--warning-100);
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.api-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.api-status-grid div {
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.api-status-grid dt {
+  color: var(--neutral-500);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.api-status-grid dd {
+  color: var(--neutral-900);
+  font-size: 13px;
+  font-weight: 800;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .template-management-grid,
 .provider-grid {
   display: grid;
@@ -1681,7 +1715,8 @@ tbody tr:hover {
   .stepper,
   .template-grid,
   .template-management-grid,
-  .provider-grid {
+  .provider-grid,
+  .api-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1754,6 +1789,7 @@ tbody tr:hover {
   .template-grid,
   .template-management-grid,
   .provider-grid,
+  .api-status-grid,
   .compact-definition-list {
     grid-template-columns: 1fr;
   }
