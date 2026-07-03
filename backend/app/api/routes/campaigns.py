@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_campaign_session, get_required_market_id
 from app.schemas.campaign import (
     CampaignCreate,
+    CampaignCreateFromTextRequest,
+    CampaignCreateFromTextResponse,
     CampaignDetail,
     CampaignItemCreate,
     CampaignItemRead,
@@ -20,10 +22,14 @@ from app.schemas.campaign import (
     GenerateItemSuggestionsRequest,
     MatchingSuggestionCreate,
     MatchingSuggestionRead,
+    CampaignParseRequest,
+    CampaignParseResponse,
+    ParsedCampaignLineRead,
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
 from app.services import campaign as campaign_service
+from app.services.campaign_parser import parse_campaign_text
 from app.services import product_matching
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -64,6 +70,37 @@ async def create_campaign(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.create_campaign(session, payload, market_id)
+
+
+@router.post("/parse-text", response_model=CampaignParseResponse)
+async def parse_campaign_text_endpoint(payload: CampaignParseRequest) -> CampaignParseResponse:
+    parsed_items = parse_campaign_text(payload.raw_text, default_currency=payload.default_currency)
+    items = [
+        ParsedCampaignLineRead(
+            **item.__dict__,
+            warnings=item.parsed_payload.get("warnings", []),
+        )
+        for item in parsed_items
+    ]
+    return CampaignParseResponse(
+        items=items,
+        total_lines=len([line for line in payload.raw_text.splitlines() if line.strip()]),
+        parsed_count=len(items),
+        warning_count=sum(len(item.warnings) for item in items),
+    )
+
+
+@router.post(
+    "/from-text",
+    response_model=CampaignCreateFromTextResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_campaign_from_text(
+    payload: CampaignCreateFromTextRequest,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignCreateFromTextResponse:
+    return await campaign_service.create_campaign_from_text(session, payload, market_id)
 
 
 @router.get("/{campaign_id}", response_model=CampaignDetail)

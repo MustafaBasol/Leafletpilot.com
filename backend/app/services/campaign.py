@@ -11,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product
 from app.schemas.campaign import (
     CampaignCreate,
+    CampaignCreateFromTextRequest,
+    CampaignCreateFromTextResponse,
     CampaignItemCreate,
     CampaignItemResolveMatch,
     CampaignItemUpdate,
@@ -18,6 +20,7 @@ from app.schemas.campaign import (
     MatchingSuggestionCreate,
 )
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
+from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
@@ -97,6 +100,57 @@ async def create_campaign(
     recalculate_campaign_counts(campaign)
     await _persist(session, campaign)
     return await get_campaign(session, campaign.id, scoped_market_id)
+
+
+async def create_campaign_from_text(
+    session: AsyncSession,
+    payload: CampaignCreateFromTextRequest,
+    market_id: UUID | None,
+) -> CampaignCreateFromTextResponse:
+    scoped_market_id = require_market_id(market_id)
+    parsed_items = parse_campaign_text(payload.raw_text, default_currency=payload.currency)
+    campaign_payload = CampaignCreate(
+        title=payload.title,
+        channel=payload.channel,
+        source_type=payload.source_type,
+        raw_input_text=payload.raw_text,
+        template_id=payload.template_id,
+        campaign_start_date=payload.campaign_start_date,
+        campaign_end_date=payload.campaign_end_date,
+        currency=payload.currency,
+        language=payload.language,
+        items=[_campaign_item_create_from_parsed(item) for item in parsed_items],
+    )
+    campaign = await create_campaign(session, campaign_payload, scoped_market_id)
+    suggestions_created = 0
+    if payload.generate_suggestions and parsed_items:
+        from app.services import product_matching
+
+        summary = await product_matching.generate_suggestions_for_campaign(
+            session,
+            scoped_market_id,
+            campaign.id,
+            limit_per_item=payload.suggestion_limit,
+        )
+        suggestions_created = summary.suggestions_created
+        campaign = await get_campaign(session, campaign.id, scoped_market_id)
+
+    warning_count = sum(
+        len(item.parsed_payload.get("warnings", []))
+        for item in parsed_items
+        if isinstance(item.parsed_payload, dict)
+    )
+    return CampaignCreateFromTextResponse(
+        campaign_id=campaign.id,
+        product_count=campaign.product_count,
+        matched_count=campaign.matched_count,
+        missing_count=campaign.missing_count,
+        low_confidence_count=campaign.low_confidence_count,
+        parsed_count=len(parsed_items),
+        warning_count=warning_count,
+        suggestions_created=suggestions_created,
+        campaign=campaign,
+    )
 
 
 async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID | None) -> Campaign:
@@ -362,6 +416,22 @@ def _build_campaign_item(
     if campaign_id is not None:
         data["campaign_id"] = campaign_id
     return CampaignItem(**data, match_status="not_found")
+
+
+def _campaign_item_create_from_parsed(item: ParsedCampaignLine) -> CampaignItemCreate:
+    return CampaignItemCreate(
+        raw_line=item.raw_line,
+        incoming_name=item.incoming_name,
+        display_name=item.display_name,
+        price=item.price,
+        old_price=item.old_price,
+        currency=item.currency,
+        unit_label=item.unit_label,
+        quantity_label=item.quantity_label,
+        category_hint=item.category_hint,
+        sort_order=item.sort_order,
+        parsed_payload=item.parsed_payload,
+    )
 
 
 def _find_item(campaign: Campaign, item_id: UUID) -> CampaignItem:

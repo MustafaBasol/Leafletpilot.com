@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,6 +53,7 @@ class CampaignItemCreate(BaseModel):
     category_hint: str | None = Field(default=None, max_length=120)
     sort_order: int = 0
     is_hero: bool = False
+    parsed_payload: dict[str, Any] | None = None
 
 
 class CampaignItemUpdate(BaseModel):
@@ -98,6 +99,7 @@ class CampaignItemRead(BaseModel):
     match_status: str
     match_confidence: Decimal | None
     matching_notes: str | None
+    parsed_payload: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
 
@@ -147,6 +149,59 @@ class CampaignSuggestionSummary(BaseModel):
     low_confidence: int
     not_found: int
     suggestions_created: int
+
+
+class CampaignParseRequest(BaseModel):
+    raw_text: str = ""
+    default_currency: str = Field(default="EUR", min_length=3, max_length=3)
+
+
+class ParsedCampaignLineRead(BaseModel):
+    raw_line: str
+    incoming_name: str
+    display_name: str
+    price: Decimal | None
+    old_price: Decimal | None
+    currency: str
+    unit_label: str | None = None
+    quantity_label: str | None = None
+    category_hint: str | None = None
+    sort_order: int
+    parsed_payload: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CampaignParseResponse(BaseModel):
+    items: list[ParsedCampaignLineRead]
+    total_lines: int
+    parsed_count: int
+    warning_count: int
+
+
+class CampaignCreateFromTextRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    raw_text: str = Field(min_length=1)
+    channel: CampaignChannel = "panel"
+    source_type: CampaignSourceType = "text"
+    template_id: UUID | None = None
+    campaign_start_date: date | None = None
+    campaign_end_date: date | None = None
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
+    language: str = Field(default="tr", min_length=2, max_length=16)
+    generate_suggestions: bool = True
+    suggestion_limit: int = Field(default=5, ge=1, le=20)
+
+
+class CampaignCreateFromTextResponse(BaseModel):
+    campaign_id: UUID
+    product_count: int
+    matched_count: int
+    missing_count: int
+    low_confidence_count: int
+    parsed_count: int
+    warning_count: int
+    suggestions_created: int = 0
+    campaign: "CampaignDetail"
 
 
 class CampaignCreate(BaseModel):
@@ -214,3 +269,4 @@ class CampaignDetail(CampaignListItem):
 from app.schemas.export import CampaignFileRead, ExportJobRead  # noqa: E402
 
 CampaignDetail.model_rebuild()
+CampaignCreateFromTextResponse.model_rebuild()

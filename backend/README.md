@@ -1,8 +1,9 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 10 adds deterministic product matching
-and generated campaign item suggestions on top of the catalog and campaign
-workflow APIs from earlier phases.
+FastAPI backend for LeafletPilot. Phase 11 adds deterministic pasted-text
+campaign item parsing and campaign creation from raw product lists on top of
+the catalog, campaign workflow, and deterministic matching APIs from earlier
+phases.
 
 ## Setup
 
@@ -84,6 +85,8 @@ active market.
 Implemented campaign routes:
 
 - `GET|POST /api/campaigns`
+- `POST /api/campaigns/parse-text`
+- `POST /api/campaigns/from-text`
 - `GET|PATCH|DELETE /api/campaigns/{campaign_id}`
 - `POST /api/campaigns/{campaign_id}/generate-suggestions`
 - `POST /api/campaigns/{campaign_id}/items`
@@ -132,6 +135,57 @@ Create a campaign with manual items:
   ]
 }
 ```
+
+Parse pasted campaign text without opening a database session:
+
+```powershell
+curl.exe -X POST -H "Content-Type: application/json" -d "{\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"default_currency\":\"EUR\"}" "http://127.0.0.1:8000/api/campaigns/parse-text"
+```
+
+The parse-only endpoint does not require `X-Market-Id` because it only applies
+deterministic text rules and does not read or write tenant data.
+
+Example parse response:
+
+```json
+{
+  "items": [
+    {
+      "raw_line": "Coca Cola 2L - 1.59€",
+      "incoming_name": "Coca Cola 2L",
+      "display_name": "Coca Cola 2L",
+      "price": "1.59",
+      "old_price": null,
+      "currency": "EUR",
+      "unit_label": "2L",
+      "quantity_label": null,
+      "category_hint": null,
+      "sort_order": 0,
+      "parsed_payload": {
+        "parser": "deterministic_text_v1",
+        "rule": "dash_separator",
+        "warnings": []
+      },
+      "warnings": []
+    }
+  ],
+  "total_lines": 1,
+  "parsed_count": 1,
+  "warning_count": 0
+}
+```
+
+Create a campaign from pasted text:
+
+```powershell
+curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"title\":\"Hafta 28 Kampanyası\",\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"channel\":\"panel\",\"source_type\":\"text\",\"currency\":\"EUR\",\"language\":\"tr\",\"generate_suggestions\":true,\"suggestion_limit\":5}" "http://127.0.0.1:8000/api/campaigns/from-text"
+```
+
+`POST /api/campaigns/from-text` requires `X-Market-Id`, creates a draft
+campaign, parses one non-empty line into one campaign item, stores parser
+metadata in `parsed_payload`, recalculates campaign counts, and optionally runs
+the existing deterministic product matcher. It does not create products, call
+AI, generate files, or send messages.
 
 Get campaign detail:
 
@@ -236,6 +290,32 @@ Auto-match behavior:
 
 `parsed_payload.barcode` is used as the optional campaign item barcode source
 until a later parsing phase adds a first-class input flow.
+
+## Deterministic Campaign Text Parser
+
+The parser lives in `app.services.campaign_parser`. It is intentionally simple
+and deterministic: one non-empty line becomes one campaign item candidate.
+
+Supported price examples:
+
+- `Coca Cola 2L - 1.59`
+- `Eti Burcak: 0.99€`
+- `Torku Sucuk 400g | €5.99`
+- `Pinar Sut 1L 0,89`
+- `Coca Cola 2L - 1.99€ -> 1.59€`
+- `Coca Cola 2L old 1.99 new 1.59`
+- `Coca Cola 2L 1.99 1.59`
+
+Supported separators are dash, colon, pipe, tab, and a terminal price separated
+by whitespace. Prices may use dot or comma decimals and optional prefix or
+suffix currency symbols. Lines with no price are still returned with
+`price=null` and a `no_price_found` warning; the parser does not hallucinate
+missing prices.
+
+The parser preserves useful package text such as `2L`, `400g`, and `10'lu` in
+the product name. It may detect simple `unit_label` and `quantity_label`, but it
+does not infer categories, parse OCR, read Excel/PDF files, call AI, or perform
+language-model normalization.
 
 Export jobs are placeholders only:
 
@@ -405,7 +485,7 @@ configured `DATABASE_URL`.
 - Auth and market tenancy are represented only by the temporary `X-Market-Id` header.
 - Product images accept metadata only; there is no upload or storage integration.
 - Product alias normalization is intentionally simple and is not the matching engine.
-- Campaign item creation is manual only; there is no AI parsing.
+- Campaign item text parsing is deterministic only; there is no AI parsing.
 - Matching is deterministic only; there is no AI-assisted normalization or scoring yet.
 - No OCR, PDF, Excel, or image parsing exists yet.
 - Campaign file and export job APIs store metadata only; no PDF/PNG generation or background worker runs.
@@ -417,7 +497,6 @@ configured `DATABASE_URL`.
 
 ## Next Phase
 
-Phase 11 should focus on a simple campaign text parsing service: create a
-campaign from a pasted product list, parse basic product lines into campaign
-items, keep AI disabled or behind an adapter interface only, and add an
-endpoint that turns pasted raw product text into campaign items.
+Phase 12 should focus on a minimal backend seed/dev-data strategy, optional
+local PostgreSQL setup documentation, and then frontend API integration
+planning.

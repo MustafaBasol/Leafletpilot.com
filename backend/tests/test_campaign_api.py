@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.database import Base
 from app.main import app
 from app.models import Campaign, CampaignItem, Market
-from app.schemas.campaign import CampaignCreate, CampaignItemResolveMatch
+from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign import recalculate_campaign_counts
 
@@ -40,17 +40,30 @@ def test_campaign_schemas_validate_sample_payloads() -> None:
     )
     file_payload = CampaignFileCreate(file_type="preview_png", format="png")
     export_payload = ExportJobCreate(job_type="preview", requested_formats=["preview_png"])
+    from_text = CampaignCreateFromTextRequest(
+        title="Hafta 28",
+        raw_text="Coca Cola 2L - 1.59€",
+        channel="panel",
+        source_type="text",
+        currency="EUR",
+        language="tr",
+        generate_suggestions=True,
+        suggestion_limit=5,
+    )
 
     assert campaign.items[0].price == Decimal("1.59")
     assert resolution.resolution == "manual_selected"
     assert file_payload.status == "pending"
     assert export_payload.status == "queued"
+    assert from_text.raw_text == "Coca Cola 2L - 1.59€"
 
 
 def test_openapi_schema_contains_campaign_routes() -> None:
     schema = client.get("/openapi.json").json()
 
     assert "/api/campaigns" in schema["paths"]
+    assert "/api/campaigns/parse-text" in schema["paths"]
+    assert "/api/campaigns/from-text" in schema["paths"]
     assert "/api/campaigns/{campaign_id}" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items/{item_id}/resolve-match" in schema["paths"]
@@ -73,6 +86,30 @@ def test_missing_market_id_returns_400_before_database_session_is_used() -> None
     campaign_response = client.post(f"/api/campaigns/{uuid4()}/generate-suggestions", json={})
     assert campaign_response.status_code == 400
     assert campaign_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    from_text_response = client.post(
+        "/api/campaigns/from-text",
+        json={"title": "Hafta 28", "raw_text": "Coca Cola 2L - 1.59"},
+    )
+    assert from_text_response.status_code == 400
+    assert from_text_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+
+def test_parse_text_endpoint_works_without_database() -> None:
+    response = client.post(
+        "/api/campaigns/parse-text",
+        json={"raw_text": "Coca Cola 2L - 1.59€\nNo Price", "default_currency": "EUR"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_lines"] == 2
+    assert body["parsed_count"] == 2
+    assert body["warning_count"] == 1
+    assert body["items"][0]["incoming_name"] == "Coca Cola 2L"
+    assert body["items"][0]["price"] == "1.59"
+    assert body["items"][1]["price"] is None
+    assert body["items"][1]["warnings"] == ["no_price_found"]
 
 
 def test_campaign_count_recalculation_uses_non_excluded_items() -> None:
@@ -169,6 +206,54 @@ async def test_campaign_api_crud_runs_when_test_database_url_is_configured() -> 
             detail_response = await async_client.get(f"/api/campaigns/{campaign['id']}", headers=headers)
             assert detail_response.status_code == 200
             assert detail_response.json()["items"][0]["incoming_name"] == "Coca Cola 2L"
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_campaign_from_text_runs_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed campaign from-text tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with session_factory() as session:
+            session.add(Market(id=market_id, name=f"Campaign Text Market {market_id}", slug=f"t-{market_id}"))
+            await session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as async_client:
+            response = await async_client.post(
+                "/api/campaigns/from-text",
+                headers={"X-Market-Id": str(market_id)},
+                json={
+                    "title": "Hafta 28",
+                    "raw_text": "Coca Cola 2L - 1.59€\nEti Burcak - 0.99€",
+                    "generate_suggestions": False,
+                },
+            )
+
+            assert response.status_code == 201
+            body = response.json()
+            assert body["parsed_count"] == 2
+            assert body["product_count"] == 2
+            assert body["missing_count"] == 2
+            assert body["suggestions_created"] == 0
+            assert body["campaign"]["items"][0]["parsed_payload"]["parser"] == "deterministic_text_v1"
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()
