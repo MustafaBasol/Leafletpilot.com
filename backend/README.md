@@ -1,7 +1,7 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 6 adds the first tenant-aware SQLAlchemy
-business models and Alembic migration for the core catalog foundation.
+FastAPI backend for LeafletPilot. Phase 7 adds the first usable catalog APIs for
+brands, categories, products, product aliases, and product image metadata.
 
 ## Setup
 
@@ -25,6 +25,66 @@ The health endpoint is available at:
 http://127.0.0.1:8000/api/health
 ```
 
+## Catalog APIs
+
+Catalog routes are mounted under `/api/catalog`:
+
+- `GET|POST /api/catalog/brands`
+- `GET|PATCH|DELETE /api/catalog/brands/{brand_id}`
+- `GET|POST /api/catalog/categories`
+- `GET|PATCH|DELETE /api/catalog/categories/{category_id}`
+- `GET|POST /api/catalog/products`
+- `GET|PATCH|DELETE /api/catalog/products/{product_id}`
+- `POST /api/catalog/products/{product_id}/aliases`
+- `DELETE /api/catalog/products/{product_id}/aliases/{alias_id}`
+
+List routes return:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Brands, categories, and products support global rows and market-specific rows.
+Use `include_global=true` on list routes to include global catalog entries
+beside market-specific records.
+
+Supported list filters:
+
+- Brands: `search`, `is_active`, `is_global`, `include_global`, `limit`, `offset`
+- Categories: `search`, `parent_id`, `is_active`, `is_global`, `include_global`, `limit`, `offset`
+- Products: `search`, `brand_id`, `category_id`, `barcode`, `is_active`, `is_global`, `include_global`, `has_image`, `limit`, `offset`
+
+Deletes are soft deletes and set `is_active=false`.
+
+Product create accepts optional aliases and image metadata. Alias normalization
+lowercases, trims, collapses whitespace, and removes common punctuation.
+Turkish characters are preserved in normalized aliases for MVP matching
+fidelity. Image metadata is stored only as database fields; there is no upload,
+S3, or file storage workflow yet.
+
+## Market Scoping Placeholder
+
+There is no real authentication or tenancy resolution yet. Catalog routes use a
+temporary header:
+
+```text
+X-Market-Id: <market uuid>
+```
+
+For market-specific create operations, `X-Market-Id` is required. Global create
+operations use `is_global=true` and do not store a market id. Read/list/update
+and soft-delete operations are scoped to global records plus the provided market
+when the header is present. Without the header, catalog reads return only global
+records.
+
+This placeholder should be replaced by the real auth/tenancy dependency in a
+future phase.
+
 ## Run Tests
 
 ```powershell
@@ -33,6 +93,18 @@ http://127.0.0.1:8000/api/health
 
 The normal test suite does not require PostgreSQL. The optional live database
 check skips automatically when `DATABASE_URL` is not configured or reachable.
+
+Catalog DB-backed CRUD tests also skip automatically unless
+`TEST_DATABASE_URL` is configured. To run them against a local PostgreSQL test
+database:
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test"
+.\.venv\Scripts\python -m pytest
+```
+
+The test creates missing tables with SQLAlchemy metadata. Use a disposable test
+database, not a production or shared database.
 
 ## Database Configuration
 
@@ -63,7 +135,8 @@ Current model groups:
 Catalog records support global rows with `market_id = null` and `is_global =
 true`, plus market-specific rows with `market_id` set and `is_global = false`.
 Product aliases and images are owned by products and can cascade when a product
-is deleted. Business CRUD APIs are not implemented yet.
+is deleted. Catalog CRUD APIs are implemented for brands, categories, products,
+and product aliases.
 
 ## Alembic
 
@@ -104,13 +177,17 @@ configured `DATABASE_URL`.
 
 ## Current Limitations
 
-- No product, brand, category, alias, image, or activity CRUD APIs yet.
+- Catalog APIs require `DATABASE_URL` for actual CRUD calls.
+- Auth and market tenancy are represented only by the temporary `X-Market-Id` header.
+- Product images accept metadata only; there is no upload or storage integration.
+- Product alias normalization is intentionally simple and is not the matching engine.
+- No activity CRUD APIs yet.
 - No campaign workflow, bot, AI, PDF, storage, auth, payment, or deployment features.
 - No seed data in the initial migration.
 - The frontend remains mock/local-state only.
 
 ## Next Phase
 
-Phase 7 should add Pydantic schemas and CRUD routes for products, brands, and
-categories, with basic filtering/search, a market-scoping dependency placeholder,
-and catalog API tests. Frontend API wiring should remain out of scope.
+Phase 8 should focus on campaign models and migration planning or implementation,
+including `Campaign`, `CampaignItem`, `CampaignFile`, `MatchingSuggestion`,
+`ExportJob`, and `IncomingMessage`/`Conversation` if they remain in scope.
