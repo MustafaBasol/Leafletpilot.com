@@ -27,6 +27,70 @@ The health endpoint is available at:
 http://127.0.0.1:8000/api/health
 ```
 
+## Local PostgreSQL And Demo Data
+
+See [docs/backend/09_LOCAL_DEVELOPMENT.md](../docs/backend/09_LOCAL_DEVELOPMENT.md)
+for Docker Desktop PostgreSQL, local PostgreSQL install notes, migrations, seed
+data, and PowerShell API smoke tests.
+
+For the default local setup, create `backend/.env`:
+
+```text
+DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot
+TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test
+```
+
+Apply migrations and seed repeatable development data:
+
+```powershell
+.\.venv\Scripts\python -m alembic upgrade head
+.\.venv\Scripts\python scripts\seed_dev_data.py
+```
+
+The seed command prints the demo market id, demo user email, created/updated
+counts, and a reminder to use the market id as `X-Market-Id` for market-scoped
+API calls.
+
+Docker Desktop PostgreSQL quick start:
+
+```powershell
+docker run --name leafletpilot-postgres `
+  -e POSTGRES_USER=leafletpilot `
+  -e POSTGRES_PASSWORD=leafletpilot `
+  -e POSTGRES_DB=leafletpilot `
+  -p 5432:5432 `
+  -d postgres:16-alpine
+```
+
+Useful commands:
+
+```powershell
+docker ps
+docker logs leafletpilot-postgres
+docker stop leafletpilot-postgres
+docker start leafletpilot-postgres
+docker rm -f leafletpilot-postgres
+```
+
+PowerShell API examples:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/health
+
+Invoke-RestMethod -Headers @{ "X-Market-Id" = "<market-id>" } http://127.0.0.1:8000/api/catalog/products
+
+Invoke-RestMethod -Method Post `
+  -ContentType "application/json" `
+  -Body '{"raw_text":"Coca Cola 2L - 1.59€","default_currency":"EUR"}' `
+  http://127.0.0.1:8000/api/campaigns/parse-text
+
+Invoke-RestMethod -Method Post `
+  -Headers @{ "X-Market-Id" = "<market-id>" } `
+  -ContentType "application/json" `
+  -Body '{"title":"Hafta 28 Kampanyası","raw_text":"Coca Cola 2L - 1.59€","generate_suggestions":true}' `
+  http://127.0.0.1:8000/api/campaigns/from-text
+```
+
 ## Catalog APIs
 
 Catalog routes are mounted under `/api/catalog`:
