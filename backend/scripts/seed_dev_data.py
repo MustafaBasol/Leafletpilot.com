@@ -273,7 +273,6 @@ async def upsert_products(
     for seed in DEMO_PRODUCTS:
         product = await session.scalar(
             select(Product)
-            .options(selectinload(Product.aliases), selectinload(Product.images))
             .where(Product.barcode == seed.barcode, Product.market_id.is_(None))
         )
         values = {
@@ -305,7 +304,10 @@ async def upsert_aliases(
     aliases: tuple[str, ...],
     counts: dict[str, int],
 ) -> None:
-    existing = {alias.normalized_alias for alias in product.aliases}
+    result = await session.execute(
+        select(ProductAlias.normalized_alias).where(ProductAlias.product_id == product.id)
+    )
+    existing = set(result.scalars().all())
     for alias in aliases:
         normalized = normalize_alias(alias)
         if normalized in existing:
@@ -323,7 +325,10 @@ async def upsert_product_image(
     seed: ProductSeed,
     counts: dict[str, int],
 ) -> None:
-    if product.images:
+    existing_image_id = await session.scalar(
+        select(ProductImage.id).where(ProductImage.product_id == product.id).limit(1)
+    )
+    if existing_image_id is not None:
         counts["unchanged"] += 1
         return
 
@@ -408,23 +413,23 @@ def update_fields(instance: Any, **values: Any) -> bool:
 
 async def main() -> None:
     require_database_url()
-    async with AsyncSessionLocal() as session:
-        result = await seed_dev_data(session)
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await seed_dev_data(session)
 
-    print("Seeded LeafletPilot development data.")
-    print(f"Demo market id: {result['market_id']}")
-    print(f"Demo user email: {result['user_email']}")
-    print(f"Demo campaign id: {result['campaign_id']}")
-    print(
-        "Rows created/updated/unchanged: "
-        f"{result['created']}/{result['updated']}/{result['unchanged']}"
-    )
-    print("Use the demo market id as X-Market-Id for market-scoped API calls.")
+        print("Seeded LeafletPilot development data.")
+        print(f"Demo market id: {result['market_id']}")
+        print(f"Demo user email: {result['user_email']}")
+        print(f"Demo campaign id: {result['campaign_id']}")
+        print(
+            "Rows created/updated/unchanged: "
+            f"{result['created']}/{result['updated']}/{result['unchanged']}"
+        )
+        print("Use the demo market id as X-Market-Id for market-scoped API calls.")
+    finally:
+        if engine is not None:
+            await engine.dispose()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    finally:
-        if engine is not None:
-            asyncio.run(engine.dispose())
+    asyncio.run(main())

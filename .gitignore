@@ -12,3 +12,23 @@ __pycache__/
 .venv/
 backend/.venv/
 backend/.pytest_cache/
+
+# Local environment files
+.env
+.env.local
+backend/.env
+backend/.env.local
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+backend/.venv/
+
+# Frontend generated files
+node_modules/
+dist/
