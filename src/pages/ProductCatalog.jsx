@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { products as initialProducts } from "../data/mockData.js";
 import { isRealApiEnabled } from "../api/config.js";
-import { getProducts } from "../data/dataSource.js";
+import { getProductCatalogData } from "../data/dataSource.js";
 import {
   Button,
   Card,
   FilterBar,
-  FilterChip,
   Input,
   Modal,
   PageHeader,
@@ -27,6 +26,32 @@ const emptyProduct = {
   alternativeNamesText: "",
   status: "Aktif",
 };
+
+const allFilters = {
+  brandId: "all",
+  categoryId: "all",
+  imageStatus: "all",
+  status: "all",
+};
+
+function normalizeSearch(value) {
+  return String(value || "").toLocaleLowerCase("tr-TR");
+}
+
+function FilterSelect({ label, value, onChange, options }) {
+  return (
+    <label className="filter-select">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} aria-label={label}>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 function ProductFormModal({ product, onClose, onSave }) {
   const [form, setForm] = useState(
@@ -93,37 +118,98 @@ function ProductFormModal({ product, onClose, onSave }) {
 }
 
 export function ProductCatalog() {
-  const [products, setProducts] = useState(initialProducts);
+  const [products, setProducts] = useState(() =>
+    initialProducts.map((product) => ({ ...product, brandId: product.brand, categoryId: product.category })),
+  );
+  const [brands, setBrands] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filters, setFilters] = useState(allFilters);
   const [editingProduct, setEditingProduct] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const [apiError, setApiError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadProducts() {
+    async function loadCatalog() {
       if (!isRealApiEnabled) return;
 
       try {
-        const apiProducts = await getProducts();
+        setIsLoading(true);
+        const catalogData = await getProductCatalogData();
         if (isMounted) {
-          setProducts(apiProducts);
+          setProducts(catalogData.products);
+          setBrands(catalogData.brands);
+          setCategories(catalogData.categories);
           setApiError("");
         }
       } catch (error) {
         if (isMounted) {
-          setProducts(initialProducts);
-          setApiError(`${error.message} Mock ürün listesi gösteriliyor.`);
+          setProducts([]);
+          setBrands([]);
+          setCategories([]);
+          setApiError(`${error.message} Ürün kataloğu şu anda yüklenemiyor.`);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
         }
       }
     }
 
-    loadProducts();
+    loadCatalog();
 
     return () => {
       isMounted = false;
     };
   }, []);
+
+  const fallbackBrands = useMemo(() => {
+    const names = Array.from(new Set(products.map((product) => product.brand).filter(Boolean)));
+    return names.map((name) => ({ id: name, name }));
+  }, [products]);
+
+  const fallbackCategories = useMemo(() => {
+    const names = Array.from(new Set(products.map((product) => product.category).filter(Boolean)));
+    return names.map((name) => ({ id: name, name }));
+  }, [products]);
+
+  const brandOptions = brands.length ? brands : fallbackBrands;
+  const categoryOptions = categories.length ? categories : fallbackCategories;
+
+  const filteredProducts = useMemo(() => {
+    const query = normalizeSearch(searchTerm);
+
+    return products.filter((product) => {
+      const searchable = [
+        product.name,
+        product.barcode,
+        product.brand,
+        product.category,
+        ...(product.alternativeNames || []),
+      ]
+        .map(normalizeSearch)
+        .join(" ");
+
+      const matchesSearch = !query || searchable.includes(query);
+      const matchesBrand = filters.brandId === "all" || product.brandId === filters.brandId || product.brand === filters.brandId;
+      const matchesCategory =
+        filters.categoryId === "all" || product.categoryId === filters.categoryId || product.category === filters.categoryId;
+      const matchesImage =
+        filters.imageStatus === "all" ||
+        (filters.imageStatus === "with" && product.imageStatus !== "Görsel yok") ||
+        (filters.imageStatus === "without" && product.imageStatus === "Görsel yok");
+      const matchesStatus = filters.status === "all" || product.status === filters.status;
+
+      return matchesSearch && matchesBrand && matchesCategory && matchesImage && matchesStatus;
+    });
+  }, [filters, products, searchTerm]);
+
+  function updateFilter(field, value) {
+    setFilters((current) => ({ ...current, [field]: value }));
+  }
 
   function closeModal() {
     setEditingProduct(null);
@@ -134,6 +220,8 @@ export function ProductCatalog() {
     const nextProduct = {
       ...form,
       id: form.id || `product-${Date.now()}`,
+      brandId: form.brandId || form.brand,
+      categoryId: form.categoryId || form.category,
       alternativeNames: form.alternativeNamesText
         .split(",")
         .map((item) => item.trim())
@@ -161,71 +249,114 @@ export function ProductCatalog() {
         }
       />
 
-      <FilterBar searchPlaceholder="Ürün, barkod, marka veya alternatif isim ara">
-        <FilterChip label="Marka" />
-        <FilterChip label="Kategori" />
-        <FilterChip label="Görsel Durumu" />
-        <FilterChip label="Aktif/Pasif" value="Aktif" />
+      <FilterBar
+        searchPlaceholder="Ürün, barkod, marka veya alternatif isim ara"
+        searchValue={searchTerm}
+        onSearchChange={(event) => setSearchTerm(event.target.value)}
+      >
+        <FilterSelect
+          label="Marka"
+          value={filters.brandId}
+          onChange={(value) => updateFilter("brandId", value)}
+          options={[{ id: "all", name: "Tüm markalar" }, ...brandOptions]}
+        />
+        <FilterSelect
+          label="Kategori"
+          value={filters.categoryId}
+          onChange={(value) => updateFilter("categoryId", value)}
+          options={[{ id: "all", name: "Tüm kategoriler" }, ...categoryOptions]}
+        />
+        <FilterSelect
+          label="Görsel Durumu"
+          value={filters.imageStatus}
+          onChange={(value) => updateFilter("imageStatus", value)}
+          options={[
+            { id: "all", name: "Tümü" },
+            { id: "with", name: "Görsel var" },
+            { id: "without", name: "Görsel yok" },
+          ]}
+        />
+        <FilterSelect
+          label="Aktif/Pasif"
+          value={filters.status}
+          onChange={(value) => updateFilter("status", value)}
+          options={[
+            { id: "all", name: "Tümü" },
+            { id: "Aktif", name: "Aktif" },
+            { id: "Pasif", name: "Pasif" },
+          ]}
+        />
       </FilterBar>
 
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
+      {isRealApiEnabled ? (
+        <p className="inline-result">Ürün yazma işlemleri bu hotfixte yerel önizleme olarak kalır.</p>
+      ) : null}
 
-      <Card title="Katalog Ürünleri">
-        <Table
-          columns={[
-            "Görsel",
-            "Ürün Adı",
-            "Marka",
-            "Barkod",
-            "Kategori",
-            "Alternatif İsimler",
-            "Kullanım",
-            "Durum",
-            "Aksiyonlar",
-          ]}
-        >
-          {products.map((product) => (
-            <tr key={product.id}>
-              <td>
-                <ProductThumbnail label={product.name} hasImage={product.imageStatus !== "Görsel yok"} />
-              </td>
-              <td>
-                <strong>{product.name}</strong>
-                <small>
-                  {product.packageSize} · {product.packageType}
-                </small>
-              </td>
-              <td>{product.brand}</td>
-              <td>{product.barcode}</td>
-              <td>{product.category}</td>
-              <td>{product.alternativeNames.length} isim</td>
-              <td>{product.usageCount} kampanya</td>
-              <td>
-                <StatusBadge status={product.status} />
-              </td>
-              <td>
-                <div className="table-actions">
-                  <button className="table-action" type="button" onClick={() => setEditingProduct(product)}>
-                    Düzenle
-                  </button>
-                  <button
-                    className="table-action"
-                    type="button"
-                    onClick={() =>
-                      setProducts((current) =>
-                        current.map((item) =>
-                          item.id === product.id ? { ...item, status: item.status === "Aktif" ? "Pasif" : "Aktif" } : item,
-                        ),
-                      )
-                    }
-                  >
-                    {product.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </Table>
+      <Card title="Katalog Ürünleri" action={<span className="card-summary">{filteredProducts.length} ürün</span>}>
+        {isLoading ? <p className="inline-result">Ürünler yükleniyor...</p> : null}
+        {!isLoading && filteredProducts.length === 0 ? (
+          <p className="catalog-empty">Bu filtrelerle eşleşen ürün bulunamadı.</p>
+        ) : null}
+        {!isLoading && filteredProducts.length > 0 ? (
+          <Table
+            columns={[
+              "Görsel",
+              "Ürün Adı",
+              "Marka",
+              "Barkod",
+              "Kategori",
+              "Alternatif İsimler",
+              "Kullanım",
+              "Durum",
+              "Aksiyonlar",
+            ]}
+          >
+            {filteredProducts.map((product) => (
+              <tr key={product.id}>
+                <td>
+                  <ProductThumbnail label={product.name} hasImage={product.imageStatus !== "Görsel yok"} />
+                </td>
+                <td>
+                  <strong>{product.name}</strong>
+                  <small>
+                    {[product.packageSize, product.packageType].filter(Boolean).join(" · ") || "-"}
+                  </small>
+                </td>
+                <td>{product.brand || "Marka yok"}</td>
+                <td>{product.barcode}</td>
+                <td>{product.category || "Kategori yok"}</td>
+                <td>{(product.alternativeNames || []).length} isim</td>
+                <td>{product.usageCount} kampanya</td>
+                <td>
+                  <StatusBadge status={product.status} />
+                </td>
+                <td>
+                  <div className="table-actions">
+                    <button className="table-action" type="button" onClick={() => setEditingProduct(product)}>
+                      Düzenle
+                    </button>
+                    <button
+                      className="table-action"
+                      type="button"
+                      onClick={() =>
+                        setProducts((current) =>
+                          current.map((item) =>
+                            item.id === product.id
+                              ? { ...item, status: item.status === "Aktif" ? "Pasif" : "Aktif" }
+                              : item,
+                          ),
+                        )
+                      }
+                    >
+                      {product.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        ) : null}
       </Card>
 
       {editingProduct || isAdding ? (

@@ -57,6 +57,18 @@ function unwrapList(response) {
   return Array.isArray(response) ? response : response?.items || [];
 }
 
+function uniqueByName(items, fallbackLabel) {
+  const seen = new Set();
+  return items
+    .map((item) => item || fallbackLabel)
+    .filter((name) => {
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    })
+    .map((name) => ({ id: name, name }));
+}
+
 function mapCampaign(campaign) {
   return {
     id: campaign.id,
@@ -75,21 +87,36 @@ function mapCampaign(campaign) {
   };
 }
 
-function mapProduct(product) {
+function mapProduct(product, { brandsById = new Map(), categoriesById = new Map() } = {}) {
+  const brandName = product.brand_id ? brandsById.get(product.brand_id)?.name || "Marka yok" : "Marka yok";
+  const categoryName = product.category_id
+    ? categoriesById.get(product.category_id)?.name || "Kategori yok"
+    : "Kategori yok";
+
   return {
     id: product.id,
     name: product.name,
     shortName: product.short_name || product.name,
     price: "",
-    brand: product.brand_id ? "API Marka" : "-",
-    category: product.category_id ? "API Kategori" : "-",
+    brandId: product.brand_id || "",
+    categoryId: product.category_id || "",
+    brand: brandName,
+    category: categoryName,
     barcode: product.barcode || "-",
     packageSize: product.package_size || "",
     packageType: product.package_type || "",
-    alternativeNames: (product.aliases || []).map((alias) => alias.alias),
+    alternativeNames: (product.aliases || []).map((alias) => (typeof alias === "string" ? alias : alias.alias)).filter(Boolean),
     status: product.is_active ? "Aktif" : "Pasif",
     imageStatus: product.images?.length ? "Var" : "Görsel yok",
     usageCount: product.usage_count || 0,
+  };
+}
+
+function mapMockProduct(product) {
+  return {
+    ...product,
+    brandId: product.brand,
+    categoryId: product.category,
   };
 }
 
@@ -122,8 +149,36 @@ export async function getProducts() {
   if (!isRealApiEnabled) return products;
   if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
 
-  const response = await catalogApi.listProducts({ limit: 100, offset: 0, include_global: true }, demoMarketId);
-  return unwrapList(response).map(mapProduct);
+  const { products: catalogProducts } = await getProductCatalogData();
+  return catalogProducts;
+}
+
+export async function getProductCatalogData() {
+  if (!isRealApiEnabled) {
+    const mockProducts = products.map(mapMockProduct);
+    return {
+      products: mockProducts,
+      brands: uniqueByName(mockProducts.map((product) => product.brand), "Marka yok"),
+      categories: uniqueByName(mockProducts.map((product) => product.category), "Kategori yok"),
+    };
+  }
+  if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
+
+  const [productsResponse, brandsResponse, categoriesResponse] = await Promise.all([
+    catalogApi.listProducts({ limit: 100, offset: 0, include_global: true }, demoMarketId),
+    catalogApi.listBrands({ limit: 100, offset: 0, include_global: true }, demoMarketId),
+    catalogApi.listCategories({ limit: 100, offset: 0, include_global: true }, demoMarketId),
+  ]);
+  const brands = unwrapList(brandsResponse);
+  const categories = unwrapList(categoriesResponse);
+  const brandsById = new Map(brands.map((brand) => [brand.id, brand]));
+  const categoriesById = new Map(categories.map((category) => [category.id, category]));
+
+  return {
+    products: unwrapList(productsResponse).map((product) => mapProduct(product, { brandsById, categoriesById })),
+    brands,
+    categories,
+  };
 }
 
 export function getTemplates() {

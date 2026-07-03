@@ -68,19 +68,22 @@ Restart Vite after changing env variables.
 Currently wired read operations:
 
 - Campaigns list calls `GET /api/campaigns`.
-- Product Catalog initial list calls `GET /api/catalog/products`.
+- Product Catalog calls `GET /api/catalog/products`, `GET /api/catalog/brands`,
+  and `GET /api/catalog/categories`.
+- Product Catalog maps `brand_id` and `category_id` to display names, and search
+  plus brand/category/image/status filters run client-side on the loaded rows.
 - Settings shows an API status panel and calls `GET /api/health`.
 
-If a real API read fails, the page shows a friendly inline error and keeps the
-mock data visible so the demo remains usable.
+If a real API read fails, the page shows a friendly inline error. Mock mode
+continues to use local demo data without requiring the backend.
 
 ## Current Limitations
 
 - Product create/edit/toggle actions remain local frontend state.
+- Product write operations are still limited; real API mode does not persist
+  create/edit/toggle changes yet.
 - Campaign detail still uses mock page data.
 - New Campaign still uses the deterministic mock wizard data.
-- Brand and category names are not expanded on product rows yet because current
-  product responses expose `brand_id` and `category_id`.
 - No auth token is sent; `X-Market-Id` is the temporary tenancy placeholder.
 - No Telegram, WhatsApp, AI parsing, PDF/PNG generation, S3, payments,
   deployment, or real auth is implemented here.
@@ -92,4 +95,3 @@ Phase 14 should run the backend with PostgreSQL and seed data, enable
 real API data. After that, wire New Campaign pasted text to
 `POST /api/campaigns/from-text` and map the created campaign into the detail
 workflow.
-

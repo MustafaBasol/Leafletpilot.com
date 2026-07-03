@@ -1,11 +1,11 @@
 import { Icon } from "./Icon.jsx";
 
-export function FilterBar({ searchPlaceholder = "Ara", children }) {
+export function FilterBar({ searchPlaceholder = "Ara", searchValue, onSearchChange, children }) {
   return (
     <section className="filter-bar">
       <label className="filter-search">
         <Icon name="search" />
-        <input aria-label="Ara" placeholder={searchPlaceholder} />
+        <input aria-label="Ara" placeholder={searchPlaceholder} value={searchValue} onChange={onSearchChange} />
       </label>
       <div className="filter-controls">{children}</div>
     </section>
