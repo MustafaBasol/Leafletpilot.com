@@ -1,11 +1,43 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { isRealApiEnabled } from "../api/config.js";
+import { getTemplateDetail } from "../data/dataSource.js";
 import { findTemplateById, generatedFiles, outputFormats, products } from "../data/mockData.js";
 import { Badge, Button, Card, ExportPanel, PageHeader, PreviewFrame, StatusBadge } from "../components/ui/index.js";
 
 export function TemplateDetail({ templateId }) {
-  const template = findTemplateById(templateId);
+  const [template, setTemplate] = useState(() => findTemplateById(templateId));
   const [message, setMessage] = useState("");
+  const [apiError, setApiError] = useState("");
+  const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const formats = outputFormats.filter((format) => template.formats.includes(format.label));
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTemplate() {
+      try {
+        setIsLoading(isRealApiEnabled);
+        const detail = await getTemplateDetail(templateId);
+        if (isMounted) {
+          setTemplate(detail);
+          setApiError("");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setTemplate(findTemplateById(templateId));
+          setApiError(`${error.message || "Şablon detayı yüklenemedi."} Mock şablon detayı gösteriliyor.`);
+        }
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadTemplate();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [templateId]);
 
   return (
     <>
@@ -24,6 +56,8 @@ export function TemplateDetail({ templateId }) {
         }
       />
       {message ? <p className="inline-result">{message}</p> : null}
+      {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
+      {isLoading ? <p className="inline-result">Şablon detayı yükleniyor...</p> : null}
 
       <section className="detail-hero card">
         <div>

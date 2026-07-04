@@ -489,6 +489,15 @@ Permissions: Market admin or operator.
 
 ## Templates
 
+Phase 15 implemented the local FastAPI template routes under `/api/templates`
+using the temporary `X-Market-Id` market header, matching the current backend
+route style rather than the older `/markets/{marketId}` planning paths below.
+Implemented fields are `id`, `market_id`, `name`, `slug`, `description`,
+`template_type`, `is_global`, `is_active`, `config_json`, `created_at`, and
+`updated_at`. Global templates are visible to all markets; market templates are
+visible only to the same market. Rendering, preview URLs, file generation, and
+storage are not implemented.
+
 ### `GET /markets/{marketId}/templates`
 
 Purpose: List global and market templates.

@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
-import { markets, parsedWizardProducts, templates } from "../data/mockData.js";
-import { createCampaignFromText, parseCampaignTextPreview } from "../data/dataSource.js";
+import { markets, parsedWizardProducts, templates as mockTemplates } from "../data/mockData.js";
+import { createCampaignFromText, getTemplates, parseCampaignTextPreview } from "../data/dataSource.js";
 import {
   Badge,
   Button,
@@ -35,7 +35,8 @@ function formatParsedPrice(value, currency) {
 
 export function NewCampaign() {
   const [step, setStep] = useState(1);
-  const [selectedTemplate, setSelectedTemplate] = useState(templates[0].id);
+  const [templateItems, setTemplateItems] = useState(mockTemplates);
+  const [selectedTemplate, setSelectedTemplate] = useState(mockTemplates[0].id);
   const [selectedFormats, setSelectedFormats] = useState(["Baskı PDF", "PNG Broşür"]);
   const [campaignName, setCampaignName] = useState("Hafta 29 İndirimleri");
   const [rawText, setRawText] = useState(sampleList);
@@ -48,6 +49,30 @@ export function NewCampaign() {
   const [isCreating, setIsCreating] = useState(false);
 
   const parsedCount = useMemo(() => parsedItems.length, [parsedItems]);
+  const selectedTemplateItem = templateItems.find((template) => template.id === selectedTemplate) || templateItems[0];
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTemplates() {
+      try {
+        const items = await getTemplates();
+        if (!isMounted) return;
+        setTemplateItems(items);
+        setSelectedTemplate((current) => (items.some((template) => template.id === current) ? current : items[0]?.id || ""));
+      } catch (error) {
+        if (isMounted) {
+          setApiError(`${error.message || "Şablonlar yüklenemedi."} Mock şablon listesi gösteriliyor.`);
+        }
+      }
+    }
+
+    loadTemplates();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function toggleFormat(format) {
     setSelectedFormats((current) =>
@@ -77,7 +102,7 @@ export function NewCampaign() {
     try {
       setIsCreating(true);
       setApiError("");
-      const response = await createCampaignFromText({ title: campaignName, rawText, currency, language });
+      const response = await createCampaignFromText({ title: campaignName, rawText, templateId: selectedTemplate, currency, language });
       const campaignId = response?.campaign_id || response?.campaign?.id;
       if (!campaignId) throw new Error("Backend kampanya kimliği döndürmedi.");
       window.location.hash = `#/campaigns/${campaignId}`;
@@ -130,7 +155,7 @@ export function NewCampaign() {
               <Input label="Para Birimi" value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} />
               <Input label="Dil" value={language} onChange={(event) => setLanguage(event.target.value)} />
               <SelectPlaceholder label="Kanal" value="Panel" />
-              <SelectPlaceholder label="Şablon" value={templates[0].name} />
+              <SelectPlaceholder label="Şablon" value={selectedTemplateItem?.name || "Şablon yok"} />
             </div>
           ) : null}
 
@@ -177,7 +202,7 @@ export function NewCampaign() {
 
           {step === 4 ? (
             <div className="template-grid">
-              {templates.map((template) => (
+              {templateItems.map((template) => (
                 <button
                   className={`template-card ${selectedTemplate === template.id ? "is-selected" : ""}`.trim()}
                   type="button"

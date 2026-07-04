@@ -1,7 +1,8 @@
 # Frontend API Integration
 
-Phase 14 keeps mock mode as the default and expands opt-in real API mode across
-campaign creation/detail and core catalog management screens.
+Phase 15 keeps mock mode as the default and expands opt-in real API mode across
+campaign creation/detail, core catalog management screens, and minimal template
+selection.
 
 ## Environment Variables
 
@@ -53,8 +54,8 @@ Either omit `.env.local` or keep:
 VITE_USE_REAL_API=false
 ```
 
-Campaign, product, brand, and category screens continue using local demo data or
-local UI state.
+Campaign, product, brand, category, and template screens continue using local
+demo data or local UI state.
 
 ## Real API Mode
 
@@ -98,6 +99,15 @@ Currently wired operations:
   `POST /api/catalog/brands`.
 - Categories page calls `GET /api/catalog/categories` and can create with
   `POST /api/catalog/categories`.
+- Templates page calls `GET /api/templates`, displays global plus visible
+  market templates, and can toggle active/passive state with
+  `PATCH /api/templates/{template_id}`.
+- Template Detail calls `GET /api/templates/{template_id}` in real API mode.
+- New Campaign loads templates from `GET /api/templates` and sends the selected
+  `template_id` to `POST /api/campaigns/from-text`.
+- Campaign list/detail displays `template_name` when the backend can resolve the
+  selected template. If only `template_id` exists, the UI shows a clear
+  placeholder instead of inventing a name.
 - Settings shows an API status panel and calls `GET /api/health`.
 
 Backend validation errors are displayed inline with readable field messages when
@@ -119,6 +129,18 @@ the API returns structured validation details.
 10. Verify new campaign appears in list/detail.
 11. Check Product Catalog search/filter/write actions.
 12. Check Brands/Categories.
+13. Check Templates list/detail.
+14. Create a New Campaign with a selected template and verify the template name
+    appears in Campaigns and Campaign Detail.
+
+## Known Mock/Real Differences
+
+- Mock template actions such as duplicate and default selection are local UI
+  simulations. Real API mode persists active/passive status only.
+- Mock campaign preview and generated files are illustrative. Real API mode
+  stores export-job/file metadata placeholders but does not render files.
+- Mock mode can create local product, brand, category, and template-like UI
+  state without validation. Real API mode returns backend validation messages.
 
 ## Current Limitations
 
@@ -127,12 +149,13 @@ the API returns structured validation details.
 - No S3 uploads or downloads.
 - No Telegram or WhatsApp integration.
 - No AI parsing; pasted text uses deterministic backend parsing.
-- No real template engine yet.
+- Minimal Template model/API exists for selection and visibility, but no real
+  template rendering engine exists yet.
 - Product image upload remains a placeholder.
 - Campaign brochure preview frame remains placeholder UI.
 
-## Recommended Phase 15
+## Recommended Phase 16
 
-- Fix backend/frontend consistency issues found during manual real API testing.
-- Add a minimal Template model/API if templates become blocking.
-- Then plan Telegram MVP scope.
+- Start preview/export architecture planning with template-driven HTML/CSS and
+  placeholder storage boundaries, but no S3 yet.
+- Keep Telegram MVP planning next after the preview/export architecture is clear.

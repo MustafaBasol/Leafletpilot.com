@@ -1,9 +1,8 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 11 adds deterministic pasted-text
-campaign item parsing and campaign creation from raw product lists on top of
-the catalog, campaign workflow, and deterministic matching APIs from earlier
-phases.
+FastAPI backend for LeafletPilot. Phase 15 includes deterministic pasted-text
+campaign creation, catalog APIs, campaign matching workflows, placeholder
+export-job metadata, and a minimal Template API for template selection.
 
 ## Setup
 
@@ -133,6 +132,32 @@ Turkish characters are preserved in normalized aliases for MVP matching
 fidelity. Image metadata is stored only as database fields; there is no upload,
 S3, or file storage workflow yet.
 
+## Template APIs
+
+Template routes are mounted under `/api/templates`. Reads include global
+templates plus templates for the current market when `X-Market-Id` is provided.
+Global templates are visible to every market; market templates are visible only
+to the same market.
+
+- `GET|POST /api/templates`
+- `GET|PATCH /api/templates/{template_id}`
+
+List routes support `search`, `is_active`, `is_global`, `include_global`,
+`limit`, and `offset`, and return the shared list envelope.
+
+Templates store selection metadata only:
+
+- `name`
+- `slug`
+- `description`
+- `template_type`
+- `is_global`
+- `is_active`
+- `config_json`
+
+There is no HTML/CSS renderer, PDF/PNG generation, file upload, S3 integration,
+or template preview worker yet.
+
 ## Campaign APIs
 
 Campaign routes are mounted under `/api/campaigns` and require the temporary
@@ -258,7 +283,8 @@ curl.exe -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns/<c
 ```
 
 Detail responses include campaign metadata, items, files, export jobs, and
-matching suggestions. Money and score fields use Pydantic `Decimal`; JSON
+matching suggestions. `template_name` is included when the selected template is
+visible and loaded. Money and score fields use Pydantic `Decimal`; JSON
 responses serialize them as strings.
 
 Generate deterministic suggestions for one item:
@@ -402,6 +428,7 @@ Phase 8 adds SQLAlchemy models and an Alembic migration for the campaign
 workflow:
 
 - `Campaign`: brochure generation workflow, status counters, source text, and selected template id.
+- `Template`: global or market-scoped template selection metadata.
 - `CampaignItem`: parsed product lines with raw text, decimal-safe prices, optional product matches, and match state.
 - `MatchingSuggestion`: candidate product matches with decimal-safe scores.
 - `CampaignFile`: preview, source upload, and future final export file records.
@@ -419,8 +446,8 @@ revision_requested, failed, and cancelled are terminal or recovery states depend
 
 All workflow records are scoped by `market_id` where appropriate. Campaign child
 records cascade when their campaign is deleted; market deletion does not cascade
-through workflow data. `Campaign.template_id` is a nullable UUID for now because
-the `Template` model has not been implemented yet.
+through workflow data. `Campaign.template_id` is nullable and references
+`Template.id`.
 
 Campaign CRUD/list/detail APIs, item update APIs, matching resolution APIs,
 matching suggestion placeholder APIs, campaign file metadata APIs, and export
@@ -554,13 +581,14 @@ configured `DATABASE_URL`.
 - No OCR, PDF, Excel, or image parsing exists yet.
 - Campaign file and export job APIs store metadata only; no PDF/PNG generation or background worker runs.
 - No activity CRUD APIs yet.
-- Campaign template references use a nullable UUID without a foreign key until the `Template` model is added.
-- No Telegram or WhatsApp integration, S3 storage, frontend API integration, payment, or deployment features.
+- Minimal Template model/API exists, but it stores metadata only and does not render outputs.
+- No Telegram or WhatsApp integration, S3 storage, payment, or deployment features.
 - No seed data in the initial migration.
-- The frontend remains mock/local-state only.
+- Frontend real API mode is supported for campaign, catalog, and template flows;
+  mock mode remains available.
 
 ## Next Phase
 
-Phase 12 should focus on a minimal backend seed/dev-data strategy, optional
-local PostgreSQL setup documentation, and then frontend API integration
-planning.
+Phase 16 should focus on preview/export architecture planning with
+template-driven HTML/CSS, without adding S3 yet. Telegram MVP planning should
+follow once the preview/export boundary is clear.

@@ -256,3 +256,43 @@ npm.cmd run build
 ```
 
 Next step: Execute deployment setup as a separate implementation phase.
+
+## Phase 15: Real API Consistency And Minimal Templates
+
+Goal: Harden Phase 14 real API flows and remove the template selection blocker
+without adding a rendering engine.
+
+Implemented scope:
+
+- Campaign list/detail mapping uses backend count fields, Turkish labels, and
+  resolved `template_name` when available.
+- Campaign export-job/file placeholder statuses are displayed with Turkish UI
+  labels.
+- Missing `VITE_DEMO_MARKET_ID`, backend validation errors, and network errors
+  remain visible as inline screen errors.
+- Minimal `Template` model/API was added with global/market visibility.
+- Seed data creates `Premium Market` and `Compact Weekly`.
+- New Campaign can load templates and send `template_id` during text campaign
+  creation.
+
+Excluded work:
+
+- No Telegram or WhatsApp.
+- No AI parsing, OCR, Excel/PDF import, or real template rendering.
+- No PDF/PNG generation, S3, deployment, payments, or full auth.
+
+Validation commands:
+
+```bash
+python -m pytest -q
+python -m alembic heads
+python -m alembic upgrade head
+python scripts/seed_dev_data.py
+npm.cmd run validate
+npm.cmd run build
+npm.cmd run smoke
+```
+
+Next step: Phase 16 should plan preview/export architecture with
+template-driven HTML/CSS and no S3 yet, then continue toward Telegram MVP
+planning.

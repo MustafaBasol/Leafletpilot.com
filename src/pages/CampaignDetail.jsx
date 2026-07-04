@@ -37,14 +37,48 @@ function needsAttention(status) {
   return ["Kontrol gerekli", "Bulunamadı", "Yeni ürün gerekli", "Görselsiz devam"].includes(status);
 }
 
+const fileStatusLabels = {
+  pending: "Bekliyor",
+  generating: "Oluşturuluyor",
+  ready: "Hazır",
+  failed: "Başarısız",
+  sent: "Gönderildi",
+};
+
+const exportJobStatusLabels = {
+  queued: "Kuyrukta",
+  running: "Çalışıyor",
+  completed: "Tamamlandı",
+  failed: "Başarısız",
+  cancelled: "İptal edildi",
+};
+
+const exportJobTypeLabels = {
+  preview: "Önizleme",
+  final_export: "Final çıktı",
+  regenerate_preview: "Önizlemeyi yenile",
+  send_files: "Dosya gönderimi",
+};
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 function mapFileForPanel(file) {
   return {
     name: file.storage_key || file.url || `${file.file_type || "dosya"}-${String(file.id || "").slice(0, 8)}`,
     type: file.file_type || "Kampanya dosyası",
     format: file.format || "-",
     size: file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : "-",
-    status: file.status || "Bekliyor",
-    createdAt: file.created_at || "",
+    status: fileStatusLabels[file.status] || file.status || "Bekliyor",
+    createdAt: formatDateTime(file.created_at),
   };
 }
 
@@ -355,13 +389,13 @@ export function CampaignDetail({ campaignId }) {
               <Table columns={["Tip", "Durum", "Formatlar", "Deneme", "Oluşturma"]}>
                 {exportJobs.map((job) => (
                   <tr key={job.id}>
-                    <td>{job.job_type}</td>
+                    <td>{exportJobTypeLabels[job.job_type] || job.job_type}</td>
                     <td>
-                      <StatusBadge status={job.status || "Bekliyor"} />
+                      <StatusBadge status={exportJobStatusLabels[job.status] || job.status || "Bekliyor"} />
                     </td>
                     <td>{(job.requested_formats || []).join(", ") || "-"}</td>
                     <td>{job.attempts ?? 0}</td>
-                    <td>{job.created_at || "-"}</td>
+                    <td>{formatDateTime(job.created_at)}</td>
                   </tr>
                 ))}
               </Table>
