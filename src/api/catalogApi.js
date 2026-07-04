@@ -12,6 +12,14 @@ export function updateProduct(productId, payload, marketId) {
   return apiClient.patch(`/catalog/products/${productId}`, payload, { marketId });
 }
 
+export function createProductAlias(productId, payload, marketId) {
+  return apiClient.post(`/catalog/products/${productId}/aliases`, payload, { marketId });
+}
+
+export function deleteProductAlias(productId, aliasId, marketId) {
+  return apiClient.delete(`/catalog/products/${productId}/aliases/${aliasId}`, { marketId });
+}
+
 export function listBrands(params, marketId) {
   return apiClient.get("/catalog/brands", { params, marketId });
 }
@@ -27,4 +35,3 @@ export function listCategories(params, marketId) {
 export function createCategory(payload, marketId) {
   return apiClient.post("/catalog/categories", payload, { marketId });
 }
-

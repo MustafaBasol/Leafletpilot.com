@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { products as initialProducts } from "../data/mockData.js";
 import { isRealApiEnabled } from "../api/config.js";
-import { getProductCatalogData } from "../data/dataSource.js";
+import {
+  createCatalogProduct,
+  getProductCatalogData,
+  updateCatalogProduct,
+  updateCatalogProductStatus,
+} from "../data/dataSource.js";
 import {
   Button,
   Card,
@@ -20,6 +25,8 @@ const emptyProduct = {
   shortName: "",
   brand: "",
   category: "",
+  brandId: "",
+  categoryId: "",
   barcode: "",
   packageSize: "",
   packageType: "",
@@ -53,11 +60,27 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function ProductFormModal({ product, onClose, onSave }) {
+function FieldSelect({ label, value, onChange, options }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <select value={value || ""} onChange={(event) => onChange(event.target.value)} aria-label={label}>
+        <option value="">Seçilmedi</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ProductFormModal({ product, brands, categories, onClose, onSave, isSaving, error }) {
   const [form, setForm] = useState(
     product
-      ? { ...product, alternativeNamesText: product.alternativeNames.join(", ") }
-      : { ...emptyProduct, name: "Yeni Ürün" },
+      ? { ...product, alternativeNamesText: (product.alternativeNames || []).join(", ") }
+      : { ...emptyProduct },
   );
 
   function updateField(field, value) {
@@ -71,13 +94,14 @@ function ProductFormModal({ product, onClose, onSave }) {
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>İptal</Button>
-          <Button variant="primary" onClick={() => onSave(form)}>
-            Kaydet
+          <Button onClick={onClose} disabled={isSaving}>İptal</Button>
+          <Button variant="primary" onClick={() => onSave(form)} disabled={isSaving}>
+            {isSaving ? "Kaydediliyor..." : "Kaydet"}
           </Button>
         </>
       }
     >
+      {error ? <p className="inline-result inline-result-warning">{error}</p> : null}
       <div className="product-form-layout">
         <div className="form-grid modal-form-grid">
           <Input label="Ürün Adı" value={form.name} onChange={(event) => updateField("name", event.target.value)} />
@@ -86,8 +110,21 @@ function ProductFormModal({ product, onClose, onSave }) {
             value={form.shortName}
             onChange={(event) => updateField("shortName", event.target.value)}
           />
-          <Input label="Marka" value={form.brand} onChange={(event) => updateField("brand", event.target.value)} />
-          <Input label="Kategori" value={form.category} onChange={(event) => updateField("category", event.target.value)} />
+          {isRealApiEnabled ? (
+            <FieldSelect label="Marka" value={form.brandId} onChange={(value) => updateField("brandId", value)} options={brands} />
+          ) : (
+            <Input label="Marka" value={form.brand} onChange={(event) => updateField("brand", event.target.value)} />
+          )}
+          {isRealApiEnabled ? (
+            <FieldSelect
+              label="Kategori"
+              value={form.categoryId}
+              onChange={(value) => updateField("categoryId", value)}
+              options={categories}
+            />
+          ) : (
+            <Input label="Kategori" value={form.category} onChange={(event) => updateField("category", event.target.value)} />
+          )}
           <Input label="Barkod" value={form.barcode} onChange={(event) => updateField("barcode", event.target.value)} />
           <Input
             label="Paket Boyutu"
@@ -128,42 +165,34 @@ export function ProductCatalog() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTogglingId, setIsTogglingId] = useState("");
   const [apiError, setApiError] = useState("");
+  const [modalError, setModalError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  async function loadCatalog() {
+    if (!isRealApiEnabled) return;
+
+    try {
+      setIsLoading(true);
+      const catalogData = await getProductCatalogData();
+      setProducts(catalogData.products);
+      setBrands(catalogData.brands);
+      setCategories(catalogData.categories);
+      setApiError("");
+    } catch (error) {
+      setProducts([]);
+      setBrands([]);
+      setCategories([]);
+      setApiError(`${error.message} Ürün kataloğu şu anda yüklenemiyor.`);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function loadCatalog() {
-      if (!isRealApiEnabled) return;
-
-      try {
-        setIsLoading(true);
-        const catalogData = await getProductCatalogData();
-        if (isMounted) {
-          setProducts(catalogData.products);
-          setBrands(catalogData.brands);
-          setCategories(catalogData.categories);
-          setApiError("");
-        }
-      } catch (error) {
-        if (isMounted) {
-          setProducts([]);
-          setBrands([]);
-          setCategories([]);
-          setApiError(`${error.message} Ürün kataloğu şu anda yüklenemiyor.`);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    }
-
     loadCatalog();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
   const fallbackBrands = useMemo(() => {
@@ -214,9 +243,31 @@ export function ProductCatalog() {
   function closeModal() {
     setEditingProduct(null);
     setIsAdding(false);
+    setModalError("");
   }
 
-  function saveProduct(form) {
+  async function saveProduct(form) {
+    if (isRealApiEnabled) {
+      try {
+        setIsSaving(true);
+        setModalError("");
+        if (form.id) {
+          await updateCatalogProduct(form.id, form);
+          setSuccessMessage("Ürün kaydedildi.");
+        } else {
+          await createCatalogProduct(form);
+          setSuccessMessage("Ürün eklendi.");
+        }
+        closeModal();
+        await loadCatalog();
+      } catch (error) {
+        setModalError(error.message || "Ürün kaydedilemedi.");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     const nextProduct = {
       ...form,
       id: form.id || `product-${Date.now()}`,
@@ -234,6 +285,27 @@ export function ProductCatalog() {
       form.id ? current.map((item) => (item.id === form.id ? nextProduct : item)) : [nextProduct, ...current],
     );
     closeModal();
+  }
+
+  async function toggleProductStatus(product) {
+    const nextStatus = product.status === "Aktif" ? "Pasif" : "Aktif";
+
+    if (isRealApiEnabled) {
+      try {
+        setIsTogglingId(product.id);
+        setApiError("");
+        await updateCatalogProductStatus(product.id, nextStatus === "Aktif");
+        setSuccessMessage(nextStatus === "Aktif" ? "Ürün aktifleştirildi." : "Ürün pasifleştirildi.");
+        await loadCatalog();
+      } catch (error) {
+        setApiError(error.message || "Ürün durumu güncellenemedi.");
+      } finally {
+        setIsTogglingId("");
+      }
+      return;
+    }
+
+    setProducts((current) => current.map((item) => (item.id === product.id ? { ...item, status: nextStatus } : item)));
   }
 
   return (
@@ -289,9 +361,7 @@ export function ProductCatalog() {
       </FilterBar>
 
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
-      {isRealApiEnabled ? (
-        <p className="inline-result">Ürün yazma işlemleri bu hotfixte yerel önizleme olarak kalır.</p>
-      ) : null}
+      {successMessage ? <p className="inline-result">{successMessage}</p> : null}
 
       <Card title="Katalog Ürünleri" action={<span className="card-summary">{filteredProducts.length} ürün</span>}>
         {isLoading ? <p className="inline-result">Ürünler yükleniyor...</p> : null}
@@ -339,17 +409,14 @@ export function ProductCatalog() {
                     <button
                       className="table-action"
                       type="button"
-                      onClick={() =>
-                        setProducts((current) =>
-                          current.map((item) =>
-                            item.id === product.id
-                              ? { ...item, status: item.status === "Aktif" ? "Pasif" : "Aktif" }
-                              : item,
-                          ),
-                        )
-                      }
+                      onClick={() => toggleProductStatus(product)}
+                      disabled={isTogglingId === product.id}
                     >
-                      {product.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}
+                      {isTogglingId === product.id
+                        ? "Güncelleniyor..."
+                        : product.status === "Aktif"
+                          ? "Pasifleştir"
+                          : "Aktifleştir"}
                     </button>
                   </div>
                 </td>
@@ -360,7 +427,15 @@ export function ProductCatalog() {
       </Card>
 
       {editingProduct || isAdding ? (
-        <ProductFormModal product={editingProduct} onClose={closeModal} onSave={saveProduct} />
+        <ProductFormModal
+          product={editingProduct}
+          brands={brandOptions}
+          categories={categoryOptions}
+          onClose={closeModal}
+          onSave={saveProduct}
+          isSaving={isSaving}
+          error={modalError}
+        />
       ) : null}
     </>
   );

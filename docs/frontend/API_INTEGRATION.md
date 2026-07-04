@@ -1,7 +1,7 @@
 # Frontend API Integration
 
 Phase 13 keeps the frontend in mock mode by default and adds an opt-in real API
-mode for safe read-only integration work.
+mode for safe catalog integration work.
 
 ## Environment Variables
 
@@ -65,13 +65,22 @@ VITE_DEMO_MARKET_ID=<market-id>
 
 Restart Vite after changing env variables.
 
-Currently wired read operations:
+Currently wired operations:
 
 - Campaigns list calls `GET /api/campaigns`.
 - Product Catalog calls `GET /api/catalog/products`, `GET /api/catalog/brands`,
   and `GET /api/catalog/categories`.
 - Product Catalog maps `brand_id` and `category_id` to display names, and search
   plus brand/category/image/status filters run client-side on the loaded rows.
+- Product Catalog create calls `POST /api/catalog/products` with `X-Market-Id`.
+- Product Catalog edit calls `PATCH /api/catalog/products/{product_id}` with
+  backend-supported fields only.
+- Product Catalog alias edits call `POST /api/catalog/products/{product_id}/aliases`
+  and `DELETE /api/catalog/products/{product_id}/aliases/{alias_id}` as needed.
+- Product Catalog active/passive toggle calls
+  `PATCH /api/catalog/products/{product_id}` with `is_active`.
+- Product Add/Edit uses real brand/category selectors in real API mode and sends
+  `brand_id` / `category_id` instead of plain display names.
 - Settings shows an API status panel and calls `GET /api/health`.
 
 If a real API read fails, the page shows a friendly inline error. Mock mode
@@ -79,9 +88,10 @@ continues to use local demo data without requiring the backend.
 
 ## Current Limitations
 
-- Product create/edit/toggle actions remain local frontend state.
-- Product write operations are still limited; real API mode does not persist
-  create/edit/toggle changes yet.
+- Product image upload remains a placeholder; no files or image metadata are
+  uploaded.
+- Product create sends comma-separated aliases as a de-duplicated string list;
+  edit syncs alias additions/removals through the dedicated alias endpoints.
 - Campaign detail still uses mock page data.
 - New Campaign still uses the deterministic mock wizard data.
 - No auth token is sent; `X-Market-Id` is the temporary tenancy placeholder.

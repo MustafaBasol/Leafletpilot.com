@@ -702,6 +702,7 @@ tbody tr:hover {
 
 .field input,
 .field textarea,
+.field select,
 .select-placeholder {
   width: 100%;
   border: 1px solid var(--neutral-300);
@@ -713,6 +714,7 @@ tbody tr:hover {
 }
 
 .field input,
+.field select,
 .select-placeholder {
   height: 42px;
 }
@@ -729,6 +731,7 @@ tbody tr:hover {
 
 .field input:focus,
 .field textarea:focus,
+.field select:focus,
 .select-placeholder:focus {
   border-color: var(--primary-600);
   box-shadow: 0 0 0 3px var(--primary-100);

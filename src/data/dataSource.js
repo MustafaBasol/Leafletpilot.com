@@ -106,6 +106,7 @@ function mapProduct(product, { brandsById = new Map(), categoriesById = new Map(
     packageSize: product.package_size || "",
     packageType: product.package_type || "",
     alternativeNames: (product.aliases || []).map((alias) => (typeof alias === "string" ? alias : alias.alias)).filter(Boolean),
+    alternativeNameItems: (product.aliases || []).filter((alias) => typeof alias !== "string"),
     status: product.is_active ? "Aktif" : "Pasif",
     imageStatus: product.images?.length ? "Var" : "Görsel yok",
     usageCount: product.usage_count || 0,
@@ -179,6 +180,101 @@ export async function getProductCatalogData() {
     brands,
     categories,
   };
+}
+
+function cleanText(value) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function cleanOptionalId(value) {
+  return value ? value : null;
+}
+
+function parseAliasText(value) {
+  const seen = new Set();
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => {
+      const normalized = item.toLocaleLowerCase("tr-TR");
+      if (!item || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+}
+
+function buildProductPayload(form, { includeAliases = false } = {}) {
+  const payload = {
+    name: cleanText(form.name),
+    short_name: cleanText(form.shortName),
+    barcode: cleanText(form.barcode),
+    brand_id: cleanOptionalId(form.brandId),
+    category_id: cleanOptionalId(form.categoryId),
+    package_size: cleanText(form.packageSize),
+    package_type: cleanText(form.packageType),
+    is_active: form.status ? form.status === "Aktif" : undefined,
+  };
+
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined) {
+      delete payload[key];
+    }
+  });
+
+  if (includeAliases) {
+    payload.aliases = parseAliasText(form.alternativeNamesText);
+  }
+
+  return payload;
+}
+
+async function syncProductAliases(productId, form) {
+  const desiredAliases = parseAliasText(form.alternativeNamesText);
+  const desiredByName = new Map(desiredAliases.map((alias) => [alias.toLocaleLowerCase("tr-TR"), alias]));
+  const existingAliases = form.alternativeNameItems || [];
+  const existingKeys = new Set();
+
+  await Promise.all(
+    existingAliases
+      .filter((item) => item?.id && !desiredByName.has(String(item.alias || "").toLocaleLowerCase("tr-TR")))
+      .map((item) => catalogApi.deleteProductAlias(productId, item.id, demoMarketId)),
+  );
+
+  existingAliases.forEach((item) => {
+    if (item?.alias) {
+      existingKeys.add(item.alias.toLocaleLowerCase("tr-TR"));
+    }
+  });
+
+  await Promise.all(
+    desiredAliases
+      .filter((alias) => !existingKeys.has(alias.toLocaleLowerCase("tr-TR")))
+      .map((alias) => catalogApi.createProductAlias(productId, { alias }, demoMarketId)),
+  );
+}
+
+export async function createCatalogProduct(form) {
+  if (!isRealApiEnabled) return null;
+  if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
+
+  return catalogApi.createProduct(buildProductPayload(form, { includeAliases: true }), demoMarketId);
+}
+
+export async function updateCatalogProduct(productId, form) {
+  if (!isRealApiEnabled) return null;
+  if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
+
+  const product = await catalogApi.updateProduct(productId, buildProductPayload(form), demoMarketId);
+  await syncProductAliases(productId, form);
+  return product;
+}
+
+export async function updateCatalogProductStatus(productId, isActive) {
+  if (!isRealApiEnabled) return null;
+  if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
+
+  return catalogApi.updateProduct(productId, { is_active: isActive }, demoMarketId);
 }
 
 export function getTemplates() {
