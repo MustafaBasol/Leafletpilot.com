@@ -36,7 +36,17 @@ async function readResponseBody(response) {
 
 function getErrorMessage(response, body) {
   const detail = typeof body === "object" && body !== null ? body.detail || body.message : body;
-  const suffix = detail ? `: ${typeof detail === "string" ? detail : JSON.stringify(detail)}` : "";
+  const formattedDetail = Array.isArray(detail)
+    ? detail
+        .map((item) => {
+          const path = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
+          return [path, item.msg].filter(Boolean).join(": ");
+        })
+        .join("; ")
+    : detail;
+  const suffix = formattedDetail
+    ? `: ${typeof formattedDetail === "string" ? formattedDetail : JSON.stringify(formattedDetail)}`
+    : "";
   return `API isteği başarısız oldu (${response.status} ${response.statusText})${suffix}`;
 }
 
@@ -84,4 +94,3 @@ export const apiClient = {
   patch: (path, body, options) => apiRequest(path, { ...options, method: "PATCH", body }),
   delete: (path, options) => apiRequest(path, { ...options, method: "DELETE" }),
 };
-

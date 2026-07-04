@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { isRealApiEnabled } from "../api/config.js";
 import { markets, parsedWizardProducts, templates } from "../data/mockData.js";
+import { createCampaignFromText, parseCampaignTextPreview } from "../data/dataSource.js";
 import {
   Badge,
   Button,
@@ -21,16 +23,81 @@ Eti Burçak - 0.99€
 Torku Sucuk 400g - 5.99€
 Ülker Halley - 1.49€`;
 
+function normalizeParsedItems(response) {
+  if (Array.isArray(response)) return response;
+  return response?.items || response?.parsed_items || [];
+}
+
+function formatParsedPrice(value, currency) {
+  if (value === undefined || value === null || value === "") return "-";
+  return `${value} ${currency || ""}`.trim();
+}
+
 export function NewCampaign() {
   const [step, setStep] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState(templates[0].id);
   const [selectedFormats, setSelectedFormats] = useState(["Baskı PDF", "PNG Broşür"]);
   const [campaignName, setCampaignName] = useState("Hafta 29 İndirimleri");
+  const [rawText, setRawText] = useState(sampleList);
+  const [currency, setCurrency] = useState("EUR");
+  const [language, setLanguage] = useState("tr");
+  const [parsedItems, setParsedItems] = useState(parsedWizardProducts);
+  const [apiError, setApiError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const parsedCount = useMemo(() => parsedItems.length, [parsedItems]);
 
   function toggleFormat(format) {
     setSelectedFormats((current) =>
       current.includes(format) ? current.filter((item) => item !== format) : [...current, format],
     );
+  }
+
+  async function parseText() {
+    if (!isRealApiEnabled) return true;
+    try {
+      setIsParsing(true);
+      setApiError("");
+      const response = await parseCampaignTextPreview({ rawText, currency, language });
+      setParsedItems(normalizeParsedItems(response));
+      setNotice("Ürün listesi backend parser ile önizlendi.");
+      return true;
+    } catch (error) {
+      setApiError(error.message || "Ürün listesi ayrıştırılamadı.");
+      return false;
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
+  async function createCampaign() {
+    if (!isRealApiEnabled) return;
+    try {
+      setIsCreating(true);
+      setApiError("");
+      const response = await createCampaignFromText({ title: campaignName, rawText, currency, language });
+      const campaignId = response?.campaign_id || response?.campaign?.id;
+      if (!campaignId) throw new Error("Backend kampanya kimliği döndürmedi.");
+      window.location.hash = `#/campaigns/${campaignId}`;
+    } catch (error) {
+      setApiError(error.message || "Kampanya oluşturulamadı.");
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function goNext() {
+    if (step === 2) {
+      const parsed = await parseText();
+      if (!parsed) return;
+    }
+    if (step === steps.length && isRealApiEnabled) {
+      await createCampaign();
+      return;
+    }
+    setStep((current) => Math.min(steps.length, current + 1));
   }
 
   return (
@@ -40,11 +107,15 @@ export function NewCampaign() {
         description="Panelden ürün listesi girerek broşür önizlemesi ve çıktı formatlarını hazırlayın."
         actions={
           <>
-            <Button>Taslak Kaydet</Button>
-            <Button variant="primary">Önizleme Oluştur</Button>
+            <Button onClick={() => setNotice("Taslak kaydetme bu fazda yerel olarak simüle edildi.")}>Taslak Kaydet</Button>
+            <Button variant="primary" onClick={() => setStep(5)}>
+              Önizleme Oluştur
+            </Button>
           </>
         }
       />
+      {notice ? <p className="inline-result">{notice}</p> : null}
+      {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
 
       <Card>
         <Stepper steps={steps} currentStep={step} />
@@ -56,7 +127,8 @@ export function NewCampaign() {
             <div className="form-grid">
               <Input label="Kampanya Adı" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
               <SelectPlaceholder label="Market" value={markets[0].name} />
-              <Input label="Tarih Aralığı" value="01.07.2026 - 07.07.2026" readOnly />
+              <Input label="Para Birimi" value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} />
+              <Input label="Dil" value={language} onChange={(event) => setLanguage(event.target.value)} />
               <SelectPlaceholder label="Kanal" value="Panel" />
               <SelectPlaceholder label="Şablon" value={templates[0].name} />
             </div>
@@ -66,29 +138,37 @@ export function NewCampaign() {
             <div className="product-list-step">
               <label className="field field-full">
                 <span>Ürün Listesi</span>
-                <textarea defaultValue={sampleList} />
+                <textarea value={rawText} onChange={(event) => setRawText(event.target.value)} />
               </label>
               <div className="upload-zone">
                 <strong>Excel veya PDF dosyası yükle</strong>
                 <p>.xlsx, .csv veya .pdf dosyaları için görsel yükleme alanı. Bu fazda dosya işlenmez.</p>
               </div>
+              {isRealApiEnabled ? (
+                <Button disabled={isParsing || !rawText.trim()} onClick={parseText}>
+                  {isParsing ? "Ayrıştırılıyor..." : "Parser Önizleme"}
+                </Button>
+              ) : null}
             </div>
           ) : null}
 
           {step === 3 ? (
-            <Table columns={["Gelen Ürün", "Fiyat", "Eşleşen Ürün", "Güven", "Durum"]}>
-              {parsedWizardProducts.map((product) => (
-                <tr key={product.incomingName}>
-                  <td>{product.incomingName}</td>
-                  <td>{product.price}</td>
-                  <td>{product.match}</td>
+            <Table columns={["Ham Satır", "Gelen Ürün", "Fiyat", "Eski Fiyat", "Para Birimi", "Uyarılar"]}>
+              {parsedItems.map((product, index) => (
+                <tr key={`${product.raw_line || product.incomingName || product.incoming_name}-${index}`}>
+                  <td>{product.raw_line || "-"}</td>
+                  <td>{product.incoming_name || product.incomingName}</td>
+                  <td>{formatParsedPrice(product.price, product.currency)}</td>
+                  <td>{formatParsedPrice(product.old_price, product.currency)}</td>
+                  <td>{product.currency || currency}</td>
                   <td>
-                    <Badge tone={product.score > 90 ? "success" : product.score > 70 ? "warning" : "danger"}>
-                      %{product.score}
-                    </Badge>
-                  </td>
-                  <td>
-                    <StatusBadge status={product.status} />
+                    {Array.isArray(product.warnings) && product.warnings.length ? (
+                      product.warnings.join(", ")
+                    ) : product.status ? (
+                      <StatusBadge status={product.status} />
+                    ) : (
+                      "-"
+                    )}
                   </td>
                 </tr>
               ))}
@@ -119,14 +199,11 @@ export function NewCampaign() {
             <div className="checkbox-grid">
               {outputFormats.map((format) => (
                 <label className="check-row" key={format}>
-                  <input
-                    checked={selectedFormats.includes(format)}
-                    type="checkbox"
-                    onChange={() => toggleFormat(format)}
-                  />
+                  <input checked={selectedFormats.includes(format)} type="checkbox" onChange={() => toggleFormat(format)} />
                   <span>{format}</span>
                 </label>
               ))}
+              {isRealApiEnabled ? <Badge tone="primary">Final aksiyon kampanyayı metinden oluşturur.</Badge> : null}
             </div>
           ) : null}
         </Card>
@@ -143,7 +220,7 @@ export function NewCampaign() {
             </div>
             <div>
               <dt>Ürün</dt>
-              <dd>{parsedWizardProducts.length}</dd>
+              <dd>{parsedCount}</dd>
             </div>
             <div>
               <dt>Çıktı</dt>
@@ -151,15 +228,15 @@ export function NewCampaign() {
             </div>
           </dl>
           <div className="card-actions">
-            <Button disabled={step === 1} onClick={() => setStep((current) => Math.max(1, current - 1))}>
+            <Button disabled={step === 1 || isParsing || isCreating} onClick={() => setStep((current) => Math.max(1, current - 1))}>
               Geri
             </Button>
             <Button
               variant="primary"
-              disabled={step === steps.length}
-              onClick={() => setStep((current) => Math.min(steps.length, current + 1))}
+              disabled={isParsing || isCreating || (!isRealApiEnabled && step === steps.length)}
+              onClick={goNext}
             >
-              İleri
+              {isParsing ? "Ayrıştırılıyor..." : isCreating ? "Oluşturuluyor..." : step === steps.length ? "Kampanyayı Oluştur" : "İleri"}
             </Button>
           </div>
         </Card>
