@@ -4,6 +4,7 @@ import { BotConnections } from "./pages/BotConnections.jsx";
 import { CampaignDetail } from "./pages/CampaignDetail.jsx";
 import { Campaigns } from "./pages/Campaigns.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
+import { Landing } from "./pages/Landing.jsx";
 import { Login } from "./pages/Login.jsx";
 import { NewCampaign } from "./pages/NewCampaign.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
@@ -61,11 +62,15 @@ export function App() {
   function logout() {
     localStorage.removeItem(AUTH_KEY);
     setAuthenticated(false);
-    window.location.hash = "#/login";
+    window.location.hash = "#/";
   }
 
-  if (path === "/login" || !isAuthenticated) {
+  if (path === "/login") {
     return <Login onLogin={login} />;
+  }
+
+  if (!isAuthenticated) {
+    return <Landing />;
   }
 
   return (
