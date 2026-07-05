@@ -141,10 +141,10 @@ DEMO_TEMPLATES = (
             "max_products_per_page": 18,
             "preview_tone": "premium",
             "accent_color": "#b91c1c",
-            "accent_soft_color": "#fee2e2",
+            "accent_soft_color": "#fff1f2",
             "columns": 3,
             "show_old_price": True,
-            "show_badges": True,
+            "show_badges": False,
         },
     },
     {
@@ -161,7 +161,7 @@ DEMO_TEMPLATES = (
             "accent_soft_color": "#ccfbf1",
             "columns": 2,
             "show_old_price": True,
-            "show_badges": True,
+            "show_badges": False,
         },
     },
 )

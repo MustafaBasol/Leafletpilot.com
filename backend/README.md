@@ -1,8 +1,8 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 17 includes deterministic pasted-text
+FastAPI backend for LeafletPilot. Phase 18A includes deterministic pasted-text
 campaign creation, catalog APIs, campaign matching workflows, template-backed
-HTML preview rendering, and local PDF/PNG export generation.
+customer brochure preview rendering, and local PDF/PNG export generation.
 
 ## Setup
 
@@ -157,9 +157,11 @@ Templates store selection metadata only:
 - `is_active`
 - `config_json`
 
-Templates are used by the deterministic HTML preview renderer and local PDF/PNG
-export flow. There is no visual template editor, file upload, S3 integration,
-or template preview worker yet.
+Templates are used by the deterministic customer-facing HTML preview renderer
+and local PDF/PNG export flow. The brochure renderer hides internal match
+statuses, formats EUR prices as `1,59€`, and renders old prices with
+strikethrough styling. There is no visual template editor, file upload, S3
+integration, or template preview worker yet.
 
 ## Campaign APIs
 
@@ -422,10 +424,12 @@ Create a local PDF/PNG export:
 ```
 
 `POST /api/campaigns/{campaign_id}/export-jobs` creates an `ExportJob`, renders
-the deterministic HTML preview through Playwright, writes local PDF/PNG files
-under `LOCAL_STORAGE_DIR`, creates `CampaignFile` rows, and marks the job
-`completed` or `failed`. Rendering is synchronous for this MVP. There is no
-Celery/RQ worker, S3/R2 upload, or message sending yet.
+the deterministic customer brochure HTML through Playwright, writes local
+PDF/PNG files under `LOCAL_STORAGE_DIR`, creates `CampaignFile` rows, and marks
+the job `completed` or `failed`. Rendering is synchronous for this MVP. The same
+customer-facing HTML is returned by the preview endpoint and exported to PDF/PNG:
+it does not print match badges such as `Eşleşti`, technical statuses, or raw ISO
+timestamps. There is no Celery/RQ worker, S3/R2 upload, or message sending yet.
 
 On Windows, the FastAPI service keeps its public render function async but runs
 Playwright's sync API in a background thread. This avoids launching Chromium
@@ -598,13 +602,14 @@ configured `DATABASE_URL`.
 - Catalog and campaign APIs require `DATABASE_URL` for actual CRUD calls.
 - Auth and market tenancy are represented only by the temporary `X-Market-Id` header.
 - Product images accept metadata only; there is no upload or storage integration.
+- Customer brochures use a neutral placeholder when no real product image exists.
 - Product alias normalization is intentionally simple and is not the matching engine.
 - Campaign item text parsing is deterministic only; there is no AI parsing.
 - Matching is deterministic only; there is no AI-assisted normalization or scoring yet.
 - No OCR, PDF, Excel, or image parsing exists yet.
 - PDF/PNG exports are generated locally and synchronously; no background worker or cloud storage runs.
 - No activity CRUD APIs yet.
-- Minimal Template model/API exists, but it stores metadata only and does not render outputs.
+- Minimal Template model/API exists, but it stores metadata only and does not include a visual template editor.
 - No Telegram or WhatsApp integration, S3 storage, payment, or deployment features.
 - No seed data in the initial migration.
 - Frontend real API mode is supported for campaign, catalog, and template flows;
