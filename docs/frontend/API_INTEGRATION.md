@@ -8,6 +8,9 @@ Phase 16 adds real campaign HTML preview loading in opt-in real API mode. Phase
 17 adds real local PDF/PNG generation and protected downloads. Phase 18A makes
 the real preview/export renderer customer-facing for sales demos. Mock mode
 still uses local placeholder preview and file cards.
+Phase 18B keeps mock mode available but removes silent mock replacement in real
+API mode: supported screens show inline API errors when backend data cannot be
+loaded.
 
 ## Environment Variables
 
@@ -129,6 +132,15 @@ Currently wired operations:
 Backend validation errors are displayed inline with readable field messages when
 the API returns structured validation details.
 
+In real API mode, API failures on Campaigns, Campaign Detail, New Campaign
+template loading, Product Catalog, Brands/Categories, Templates, and Template
+Detail are visible inline. Mock data is not silently shown as backend data. Mock
+mode continues to use local demo data normally.
+
+Destructive or risky operator actions now ask for confirmation before changing
+state: product active/passive, campaign item removal, missing-product removal,
+and template active/passive.
+
 ## Manual Real API Smoke Checklist
 
 1. Run backend.
@@ -169,6 +181,8 @@ the API returns structured validation details.
 ## Current Limitations
 
 - No real auth; `X-Market-Id` is the temporary tenancy placeholder.
+- No real tenancy or role authorization; production/live use still needs those
+  foundations before external customer access.
 - PDF/PNG file generation is local and synchronous only.
 - No S3 uploads or signed cloud downloads.
 - No Telegram or WhatsApp integration.
@@ -183,7 +197,8 @@ the API returns structured validation details.
 
 ## Recommended Phase 18
 
-- Add operational hardening before live use: auth/tenancy foundation,
-  destructive action confirmations, stricter CORS/security headers, and removal
-  of silent mock fallback.
-- Telegram MVP should come after file generation is stable.
+- Phase 18B operational hardening is in place for confirmations, visible
+  real-mode errors, and backend CORS/security-header baseline.
+- Next phase should start minimal auth/tenancy and role authorization. Telegram
+  MVP should come after file generation and operational safety are stable, or
+  behind a clearly internal-only deployment boundary.

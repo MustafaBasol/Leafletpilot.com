@@ -14,8 +14,9 @@ import {
 } from "../components/ui/index.js";
 
 export function Campaigns() {
-  const [campaigns, setCampaigns] = useState(mockCampaigns);
+  const [campaigns, setCampaigns] = useState(() => (isRealApiEnabled ? [] : mockCampaigns));
   const [apiError, setApiError] = useState("");
+  const [isLoading, setIsLoading] = useState(isRealApiEnabled);
 
   useEffect(() => {
     let isMounted = true;
@@ -24,6 +25,7 @@ export function Campaigns() {
       if (!isRealApiEnabled) return;
 
       try {
+        setIsLoading(true);
         const apiCampaigns = await getCampaigns();
         if (isMounted) {
           setCampaigns(apiCampaigns);
@@ -31,9 +33,11 @@ export function Campaigns() {
         }
       } catch (error) {
         if (isMounted) {
-          setCampaigns(mockCampaigns);
-          setApiError(`${error.message} Mock kampanya listesi gösteriliyor.`);
+          setCampaigns([]);
+          setApiError(error.message || "Kampanyalar yüklenemedi.");
         }
+      } finally {
+        if (isMounted) setIsLoading(false);
       }
     }
 
@@ -70,60 +74,64 @@ export function Campaigns() {
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
 
       <Card title="Kampanya Listesi">
-        <Table
-          columns={[
-            "Kampanya",
-            "Market",
-            "Ürün Sayısı",
-            "Durum",
-            "Kanal",
-            "Oluşturma Tarihi",
-            "Son Güncelleme",
-            "Dosyalar",
-            "Aksiyonlar",
-          ]}
-        >
-          {campaigns.map((campaign) => (
-            <tr key={campaign.id}>
-              <td>
-                <strong>{campaign.name}</strong>
-                <small>{campaign.template}</small>
-              </td>
-              <td>{campaign.market}</td>
-              <td>
-                {campaign.productCount} ürün
-                {campaign.missingCount ? <small>{campaign.missingCount} eksik ürün</small> : null}
-              </td>
-              <td>
-                <StatusBadge status={campaign.status} />
-              </td>
-              <td>{campaign.channel}</td>
-              <td>{campaign.createdAt}</td>
-              <td>{campaign.updatedAt}</td>
-              <td>
-                <div className="file-badges">
-                  {campaign.files.length ? campaign.files.map((file) => <span key={file}>{file}</span>) : <span>Yok</span>}
-                </div>
-              </td>
-              <td>
-                <div className="table-actions">
-                  <a className="table-action" href={`#/campaigns/${campaign.id}`}>
-                    Detay
-                  </a>
-                  <button className="table-action" type="button">
-                    <Icon name="eye" /> Önizleme
-                  </button>
-                  <button className="table-action" type="button">
-                    <Icon name="download" /> PDF
-                  </button>
-                  <button className="table-action" type="button">
-                    <Icon name="refresh" /> Yeniden Oluştur
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </Table>
+        {isLoading ? <p className="inline-result">Kampanyalar yükleniyor...</p> : null}
+        {!isLoading && campaigns.length === 0 ? <p className="catalog-empty">Kampanya verisi gösterilemiyor.</p> : null}
+        {!isLoading && campaigns.length > 0 ? (
+          <Table
+            columns={[
+              "Kampanya",
+              "Market",
+              "Ürün Sayısı",
+              "Durum",
+              "Kanal",
+              "Oluşturma Tarihi",
+              "Son Güncelleme",
+              "Dosyalar",
+              "Aksiyonlar",
+            ]}
+          >
+            {campaigns.map((campaign) => (
+              <tr key={campaign.id}>
+                <td>
+                  <strong>{campaign.name}</strong>
+                  <small>{campaign.template}</small>
+                </td>
+                <td>{campaign.market}</td>
+                <td>
+                  {campaign.productCount} ürün
+                  {campaign.missingCount ? <small>{campaign.missingCount} eksik ürün</small> : null}
+                </td>
+                <td>
+                  <StatusBadge status={campaign.status} />
+                </td>
+                <td>{campaign.channel}</td>
+                <td>{campaign.createdAt}</td>
+                <td>{campaign.updatedAt}</td>
+                <td>
+                  <div className="file-badges">
+                    {campaign.files.length ? campaign.files.map((file) => <span key={file}>{file}</span>) : <span>Yok</span>}
+                  </div>
+                </td>
+                <td>
+                  <div className="table-actions">
+                    <a className="table-action" href={`#/campaigns/${campaign.id}`}>
+                      Detay
+                    </a>
+                    <button className="table-action" type="button">
+                      <Icon name="eye" /> Önizleme
+                    </button>
+                    <button className="table-action" type="button">
+                      <Icon name="download" /> PDF
+                    </button>
+                    <button className="table-action" type="button">
+                      <Icon name="refresh" /> Yeniden Oluştur
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        ) : null}
       </Card>
     </>
   );

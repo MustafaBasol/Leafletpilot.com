@@ -56,7 +56,7 @@ class CampaignFileRead(BaseModel):
 
 class ExportJobCreate(BaseModel):
     job_type: ExportJobType = "final_export"
-    requested_formats: list[ExportFormat] | None = None
+    requested_formats: list[ExportFormat] | None = Field(default=None, min_length=1, max_length=2)
     status: ExportJobStatus = "queued"
 
 

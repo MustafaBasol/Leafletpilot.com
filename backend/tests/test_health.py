@@ -40,4 +40,4 @@ def test_config_loads_default_values(monkeypatch) -> None:
     assert settings.environment == "development"
     assert settings.debug is False
     assert settings.api_prefix == "/api"
-    assert settings.backend_cors_origins == ["http://localhost:5173"]
+    assert settings.backend_cors_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]

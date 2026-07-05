@@ -3,6 +3,9 @@
 FastAPI backend for LeafletPilot. Phase 18A includes deterministic pasted-text
 campaign creation, catalog APIs, campaign matching workflows, template-backed
 customer brochure preview rendering, and local PDF/PNG export generation.
+Phase 18B adds operator hardening: visible real-mode API errors, destructive
+action confirmations in the panel, basic security headers, guarded credentialed
+CORS, and request limits for text parsing/export creation.
 
 ## Setup
 
@@ -39,6 +42,7 @@ For the default local setup, create `backend/.env`:
 DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot
 TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test
 LOCAL_STORAGE_DIR=storage
+DEBUG=false
 ```
 
 Apply migrations and seed repeatable development data:
@@ -591,7 +595,7 @@ configured `DATABASE_URL`.
 | `ENVIRONMENT` | `development` | Runtime environment label. |
 | `DEBUG` | `false` | FastAPI debug mode. |
 | `API_PREFIX` | `/api` | Prefix for API routes. |
-| `BACKEND_CORS_ORIGINS` | `http://localhost:5173` | Comma-separated frontend origins. |
+| `BACKEND_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated frontend origins. Wildcard `*` is rejected while CORS credentials are enabled. |
 | `DATABASE_URL` | unset | PostgreSQL async SQLAlchemy URL. |
 | `TEST_DATABASE_URL` | unset | Optional database URL for future integration tests. |
 | `LOCAL_STORAGE_DIR` | `storage` | Local root for generated campaign export files. Relative paths resolve under `backend/`. |
@@ -600,7 +604,7 @@ configured `DATABASE_URL`.
 ## Current Limitations
 
 - Catalog and campaign APIs require `DATABASE_URL` for actual CRUD calls.
-- Auth and market tenancy are represented only by the temporary `X-Market-Id` header.
+- Auth, real tenancy, and role authorization are not implemented; the temporary `X-Market-Id` header is only an internal-demo placeholder.
 - Product images accept metadata only; there is no upload or storage integration.
 - Customer brochures use a neutral placeholder when no real product image exists.
 - Product alias normalization is intentionally simple and is not the matching engine.
@@ -613,7 +617,21 @@ configured `DATABASE_URL`.
 - No Telegram or WhatsApp integration, S3 storage, payment, or deployment features.
 - No seed data in the initial migration.
 - Frontend real API mode is supported for campaign, catalog, and template flows;
-  mock mode remains available.
+  mock mode remains available. In real API mode, backend failures are shown
+  inline instead of silently replacing backend data with mock data.
+
+## Operational Hardening Baseline
+
+- FastAPI adds `X-Content-Type-Options: nosniff`, `X-Frame-Options:
+  SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, and a basic
+  `Permissions-Policy`.
+- Credentialed CORS is limited to configured origins. Local Vite development
+  works for `localhost:5173` and `127.0.0.1:5173`.
+- `POST /api/campaigns/parse-text` and `POST /api/campaigns/from-text` cap
+  `raw_text` at 20,000 characters.
+- Export jobs accept only `pdf` and `png`, with at most two requested formats.
+- Telegram MVP should still wait until file output, visible error handling, and
+  internal deployment boundaries are stable.
 
 ## Next Phase
 

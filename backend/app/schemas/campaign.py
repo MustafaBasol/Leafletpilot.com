@@ -39,6 +39,7 @@ MatchResolution = Literal[
     "not_found",
 ]
 MatchingSuggestionReason = Literal["exact", "alias", "barcode", "fuzzy", "ai_normalized", "manual"]
+RAW_TEXT_MAX_LENGTH = 20_000
 
 
 class CampaignItemCreate(BaseModel):
@@ -152,7 +153,7 @@ class CampaignSuggestionSummary(BaseModel):
 
 
 class CampaignParseRequest(BaseModel):
-    raw_text: str = ""
+    raw_text: str = Field(default="", max_length=RAW_TEXT_MAX_LENGTH)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
 
 
@@ -180,7 +181,7 @@ class CampaignParseResponse(BaseModel):
 
 class CampaignCreateFromTextRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    raw_text: str = Field(min_length=1)
+    raw_text: str = Field(min_length=1, max_length=RAW_TEXT_MAX_LENGTH)
     channel: CampaignChannel = "panel"
     source_type: CampaignSourceType = "text"
     template_id: UUID | None = None

@@ -1,4 +1,4 @@
-import { demoMarketId, isRealApiEnabled } from "../api/config.js";
+﻿import { demoMarketId, isRealApiEnabled } from "../api/config.js";
 import * as catalogApi from "../api/catalogApi.js";
 import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
@@ -16,24 +16,24 @@ import {
 
 const statusLabels = {
   draft: "Taslak",
-  parsing: "Ürünler analiz ediliyor",
-  matching: "Ürünler eşleştiriliyor",
-  missing_products: "Eksik ürün var",
-  preview_ready: "Önizleme hazır",
+  parsing: "ÃœrÃ¼nler analiz ediliyor",
+  matching: "ÃœrÃ¼nler eÅŸleÅŸtiriliyor",
+  missing_products: "Eksik Ã¼rÃ¼n var",
+  preview_ready: "Ã–nizleme hazÄ±r",
   waiting_approval: "Onay bekliyor",
   revision_requested: "Revizyon istendi",
-  approved: "Onaylandı",
-  generating_files: "Dosyalar oluşturuluyor",
-  completed: "Tamamlandı",
-  failed: "Başarısız",
-  cancelled: "İptal edildi",
+  approved: "OnaylandÄ±",
+  generating_files: "Dosyalar oluÅŸturuluyor",
+  completed: "TamamlandÄ±",
+  failed: "BaÅŸarÄ±sÄ±z",
+  cancelled: "Ä°ptal edildi",
 };
 
 const channelLabels = {
   panel: "Panel",
   telegram: "Telegram",
   whatsapp: "WhatsApp",
-  import: "İçe Aktarım",
+  import: "Ä°Ã§e AktarÄ±m",
 };
 
 const sourceTypeLabels = {
@@ -45,21 +45,21 @@ const sourceTypeLabels = {
 };
 
 const matchStatusLabels = {
-  matched: "Eşleşti",
+  matched: "EÅŸleÅŸti",
   low_confidence: "Kontrol gerekli",
-  not_found: "Bulunamadı",
-  manual_selected: "Manuel seçildi",
-  new_product_needed: "Yeni ürün gerekli",
-  use_without_image: "Görselsiz devam",
-  excluded: "Kampanyadan çıkarıldı",
+  not_found: "BulunamadÄ±",
+  manual_selected: "Manuel seÃ§ildi",
+  new_product_needed: "Yeni Ã¼rÃ¼n gerekli",
+  use_without_image: "GÃ¶rselsiz devam",
+  excluded: "Kampanyadan Ã§Ä±karÄ±ldÄ±",
 };
 
 const resolutionByStatus = {
-  Eşleşti: "manual_selected",
-  "Yeni ürün gerekli": "new_product_needed",
-  "Görselsiz devam": "use_without_image",
-  "Kampanyadan çıkarıldı": "excluded",
-  Bulunamadı: "not_found",
+  "EÅŸleÅŸti": "manual_selected",
+  "Yeni Ã¼rÃ¼n gerekli": "new_product_needed",
+  "GÃ¶rselsiz devam": "use_without_image",
+  "Kampanyadan Ã§Ä±karÄ±ldÄ±": "excluded",
+  "BulunamadÄ±": "not_found",
 };
 
 function requireDemoMarketId() {
@@ -131,7 +131,7 @@ function mapCampaign(campaign) {
     missingCount: campaign.missing_count ?? 0,
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
     templateId: campaign.template_id || "",
-    template: campaign.template_name || (campaign.template_id ? "Şablon adı yok" : "Şablon yok"),
+    template: campaign.template_name || (campaign.template_id ? "Åžablon adÄ± yok" : "Åžablon yok"),
     createdAt: formatDate(campaign.created_at),
     updatedAt: formatUpdatedAt(campaign.updated_at),
     date: formatDate(campaign.campaign_start_date || campaign.created_at),
@@ -148,7 +148,7 @@ function mapCampaignItem(item, suggestions = []) {
     productId: item.product_id || "",
     rawLine: item.raw_line,
     incomingName: item.incoming_name,
-    matchedProduct: item.display_name || "Eşleşme yok",
+    matchedProduct: item.display_name || "EÅŸleÅŸme yok",
     price: formatMoney(item.price, item.currency),
     oldPrice: formatMoney(item.old_price, item.currency),
     currency: item.currency,
@@ -213,7 +213,7 @@ function mapProduct(product, { brandsById = new Map(), categoriesById = new Map(
     alternativeNames: (product.aliases || []).map((alias) => (typeof alias === "string" ? alias : alias.alias)).filter(Boolean),
     alternativeNameItems: (product.aliases || []).filter((alias) => typeof alias !== "string"),
     status: product.is_active ? "Aktif" : "Pasif",
-    imageStatus: product.images?.length ? "Var" : "Görsel yok",
+    imageStatus: product.images?.length ? "Var" : "GÃ¶rsel yok",
     usageCount: product.usage_count || 0,
   };
 }
@@ -238,13 +238,13 @@ function mapTemplate(template) {
     type: template.template_type || "market",
     templateType: template.template_type || "market",
     formats,
-    capacity: maxProductsPerPage ? `${maxProductsPerPage} ürün / sayfa` : "Kapasite belirtilmedi",
+    capacity: maxProductsPerPage ? `${maxProductsPerPage} Ã¼rÃ¼n / sayfa` : "Kapasite belirtilmedi",
     maxProductsPerPage,
     status: template.is_active ? "Aktif" : "Pasif",
     isDefault: template.slug === "premium-market",
     isGlobal: Boolean(template.is_global),
-    recommendation: template.description || "Bu şablon için açıklama henüz girilmedi.",
-    bestFor: template.is_global ? "Tüm marketler" : "Bu market",
+    recommendation: template.description || "Bu ÅŸablon iÃ§in aÃ§Ä±klama henÃ¼z girilmedi.",
+    bestFor: template.is_global ? "TÃ¼m marketler" : "Bu market",
     previewTone: config.preview_tone || "classic",
     createdAt: formatDateTime(template.created_at),
     updatedAt: formatDateTime(template.updated_at),
@@ -421,7 +421,7 @@ export async function resolveCampaignItem(campaignId, item, resolutionStatus, su
       resolution,
       product_id: suggestion?.product_id || item.productId || null,
       display_name: suggestion?.suggested_name || item.matchedProduct || item.incomingName,
-      notes: suggestion ? "Öneri üzerinden eşleştirildi." : "Panel üzerinden güncellendi.",
+      notes: suggestion ? "Ã–neri Ã¼zerinden eÅŸleÅŸtirildi." : "Panel Ã¼zerinden gÃ¼ncellendi.",
     },
     marketId,
   );

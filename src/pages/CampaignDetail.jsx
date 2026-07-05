@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import {
   campaignActivities,
@@ -20,6 +20,7 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   ExportPanel,
   MissingProductModal,
   PageHeader,
@@ -36,30 +37,30 @@ function scoreTone(score) {
 }
 
 function needsAttention(status) {
-  return ["Kontrol gerekli", "Bulunamadı", "Yeni ürün gerekli", "Görselsiz devam"].includes(status);
+  return ["Kontrol gerekli", "BulunamadÄ±", "Yeni Ã¼rÃ¼n gerekli", "GÃ¶rselsiz devam"].includes(status);
 }
 
 const fileStatusLabels = {
   pending: "Bekliyor",
-  generating: "Oluşturuluyor",
-  ready: "Hazır",
-  failed: "Başarısız",
-  sent: "Gönderildi",
+  generating: "OluÅŸturuluyor",
+  ready: "HazÄ±r",
+  failed: "BaÅŸarÄ±sÄ±z",
+  sent: "GÃ¶nderildi",
 };
 
 const exportJobStatusLabels = {
   queued: "Kuyrukta",
-  running: "Çalışıyor",
-  completed: "Tamamlandı",
-  failed: "Başarısız",
-  cancelled: "İptal edildi",
+  running: "Ã‡alÄ±ÅŸÄ±yor",
+  completed: "TamamlandÄ±",
+  failed: "BaÅŸarÄ±sÄ±z",
+  cancelled: "Ä°ptal edildi",
 };
 
 const exportJobTypeLabels = {
-  preview: "Önizleme",
-  final_export: "Final çıktı",
-  regenerate_preview: "Önizlemeyi yenile",
-  send_files: "Dosya gönderimi",
+  preview: "Ã–nizleme",
+  final_export: "Final Ã§Ä±ktÄ±",
+  regenerate_preview: "Ã–nizlemeyi yenile",
+  send_files: "Dosya gÃ¶nderimi",
 };
 
 function formatDateTime(value) {
@@ -81,7 +82,7 @@ function mapFileForPanel(file) {
     id: file.id,
     name,
     downloadName: name,
-    type: file.file_type || "Kampanya dosyası",
+    type: file.file_type || "Kampanya dosyasÄ±",
     format: file.format || "-",
     size: file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : "-",
     status: fileStatusLabels[file.status] || file.status || "Bekliyor",
@@ -92,9 +93,9 @@ function mapFileForPanel(file) {
 function emptyCampaign(campaignId) {
   return {
     id: campaignId,
-    name: "Kampanya yükleniyor",
+    name: "Kampanya yÃ¼kleniyor",
     market: "Demo Market",
-    template: "Şablon yok",
+    template: "Åžablon yok",
     channel: "Panel",
     sourceType: "-",
     status: "Taslak",
@@ -115,6 +116,7 @@ export function CampaignDetail({ campaignId }) {
   const [campaign, setCampaign] = useState(() => (isRealApiEnabled ? emptyCampaign(campaignId) : mockCampaign));
   const [rows, setRows] = useState(() => (isRealApiEnabled ? [] : campaignProducts));
   const [selectedMissing, setSelectedMissing] = useState(null);
+  const [confirmRemoveProduct, setConfirmRemoveProduct] = useState(null);
   const [notice, setNotice] = useState("");
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
@@ -133,7 +135,7 @@ export function CampaignDetail({ campaignId }) {
       setRows(detail.items || []);
       setApiError("");
     } catch (error) {
-      setApiError(error.message || "Kampanya detayı yüklenemedi.");
+      setApiError(error.message || "Kampanya detayÄ± yÃ¼klenemedi.");
     } finally {
       setIsLoading(false);
     }
@@ -149,7 +151,7 @@ export function CampaignDetail({ campaignId }) {
       setPreviewError("");
     } catch (error) {
       setPreview(null);
-      setPreviewError(error.message || "Önizleme yüklenemedi. Placeholder gösteriliyor.");
+      setPreviewError(error.message || "Ã–nizleme yÃ¼klenemedi. Placeholder gÃ¶steriliyor.");
     } finally {
       setIsPreviewLoading(false);
     }
@@ -168,7 +170,7 @@ export function CampaignDetail({ campaignId }) {
       await loadCampaign();
       setNotice(successMessage);
     } catch (error) {
-      setApiError(error.message || "İşlem tamamlanamadı.");
+      setApiError(error.message || "Ä°ÅŸlem tamamlanamadÄ±.");
     } finally {
       setActionLoading("");
     }
@@ -179,7 +181,7 @@ export function CampaignDetail({ campaignId }) {
       currentRows.map((row) => (row.id === selectedMissing?.id ? { ...row, status, score: Math.max(row.score, 82) } : row)),
     );
     setSelectedMissing(null);
-    setNotice("Eksik ürün eşleştirmesi yerel olarak güncellendi.");
+    setNotice("Eksik Ã¼rÃ¼n eÅŸleÅŸtirmesi yerel olarak gÃ¼ncellendi.");
   }
 
   async function resolveProduct(status, suggestion) {
@@ -190,29 +192,36 @@ export function CampaignDetail({ campaignId }) {
 
     const item = selectedMissing;
     if (!item) return;
-    if (status === "Eşleşti" && !suggestion?.product_id && !item.productId) {
-      setApiError("Real API modunda eşleştirme için backend önerisinden ürün seçin.");
+    if (status === "EÅŸleÅŸti" && !suggestion?.product_id && !item.productId) {
+      setApiError("Real API modunda eÅŸleÅŸtirme iÃ§in backend Ã¶nerisinden Ã¼rÃ¼n seÃ§in.");
       return;
     }
     setSelectedMissing(null);
     await runRealAction(
       `resolve-${item.id}`,
       () => resolveCampaignItem(campaignId, item, status, suggestion),
-      "Ürün eşleştirmesi güncellendi.",
+      "ÃœrÃ¼n eÅŸleÅŸtirmesi gÃ¼ncellendi.",
     );
+  }
+
+  function removeMockCampaignItem(product) {
+    if (!product) return;
+    setRows((currentRows) => currentRows.filter((row) => row.id !== product.id));
+    setConfirmRemoveProduct(null);
+    setNotice("ÃœrÃ¼n kampanyadan Ã§Ä±karÄ±ldÄ±.");
   }
 
   async function generateFiles(formats) {
     await runRealAction(
       "export-job",
       () => createCampaignExportJob(campaignId, formats),
-      formats?.length === 1 ? `${formats[0].toUpperCase()} dosyası üretildi.` : "PDF ve PNG dosyaları üretildi.",
+      formats?.length === 1 ? `${formats[0].toUpperCase()} dosyasÄ± Ã¼retildi.` : "PDF ve PNG dosyalarÄ± Ã¼retildi.",
     );
   }
 
   async function downloadFile(file) {
     if (!isRealApiEnabled) {
-      setNotice("Mock modda indirme simüle edildi.");
+      setNotice("Mock modda indirme simÃ¼le edildi.");
       return;
     }
     try {
@@ -235,7 +244,7 @@ export function CampaignDetail({ campaignId }) {
     <>
       <PageHeader
         title={campaign.name}
-        description={`${campaign.market} · ${campaign.template} · ${campaign.channel} · ${campaign.createdAt}`}
+        description={`${campaign.market} Â· ${campaign.template} Â· ${campaign.channel} Â· ${campaign.createdAt}`}
         actions={
           <>
             <Button
@@ -245,12 +254,12 @@ export function CampaignDetail({ campaignId }) {
                   ? runRealAction(
                       "all-suggestions",
                       () => generateCampaignDetailSuggestions(campaignId),
-                      "Tüm ürünler için öneriler güncellendi.",
+                      "TÃ¼m Ã¼rÃ¼nler iÃ§in Ã¶neriler gÃ¼ncellendi.",
                     )
-                  : setNotice("Öneri üretimi mock modda simüle edildi.")
+                  : setNotice("Ã–neri Ã¼retimi mock modda simÃ¼le edildi.")
               }
             >
-              {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
+              {actionLoading === "all-suggestions" ? "Ã–neriler Ã¼retiliyor..." : "TÃ¼m Ã–nerileri Ãœret"}
             </Button>
             <Button
               disabled={isLoading || actionLoading === "export-job"}
@@ -259,28 +268,28 @@ export function CampaignDetail({ campaignId }) {
                   ? runRealAction(
                       "export-job",
                       () => createCampaignExportJob(campaignId, ["pdf", "png"]),
-                      "PDF ve PNG dosyaları üretildi.",
+                      "PDF ve PNG dosyalarÄ± Ã¼retildi.",
                     )
-                  : setNotice("Final dosyaları üretim için hazırlandı.")
+                  : setNotice("Final dosyalarÄ± Ã¼retim iÃ§in hazÄ±rlandÄ±.")
               }
             >
-              {actionLoading === "export-job" ? "Dosya üretiliyor..." : "Dosya Üret"}
+              {actionLoading === "export-job" ? "Dosya Ã¼retiliyor..." : "Dosya Ãœret"}
             </Button>
-            <Button variant="primary" onClick={() => setNotice("Dosya gönderimi bu fazda placeholder olarak kalıyor.")}>
-              Kullanıcıya Gönder
+            <Button variant="primary" onClick={() => setNotice("Dosya gÃ¶nderimi bu fazda placeholder olarak kalÄ±yor.")}>
+              KullanÄ±cÄ±ya GÃ¶nder
             </Button>
           </>
         }
       />
       {notice ? <p className="inline-result">{notice}</p> : null}
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
-      {isLoading ? <p className="inline-result">Kampanya detayı yükleniyor...</p> : null}
+      {isLoading ? <p className="inline-result">Kampanya detayÄ± yÃ¼kleniyor...</p> : null}
 
       <section className="detail-hero card">
         <div>
           <StatusBadge status={campaign.status} />
           <h2>{campaign.name}</h2>
-          <p>Market, kaynak, kanal ve ürün eşleşme durumu bu kampanya üzerinden takip ediliyor.</p>
+          <p>Market, kaynak, kanal ve Ã¼rÃ¼n eÅŸleÅŸme durumu bu kampanya Ã¼zerinden takip ediliyor.</p>
         </div>
         <dl className="summary-grid">
           <div>
@@ -296,11 +305,11 @@ export function CampaignDetail({ campaignId }) {
             <dd>{campaign.channel}</dd>
           </div>
           <div>
-            <dt>Ürün</dt>
+            <dt>ÃœrÃ¼n</dt>
             <dd>{campaign.productCount}</dd>
           </div>
           <div>
-            <dt>Eşleşen</dt>
+            <dt>EÅŸleÅŸen</dt>
             <dd>{campaign.matchedCount ?? "-"}</dd>
           </div>
           <div>
@@ -308,27 +317,27 @@ export function CampaignDetail({ campaignId }) {
             <dd>{campaign.missingCount ?? "-"}</dd>
           </div>
           <div>
-            <dt>Düşük Güven</dt>
+            <dt>DÃ¼ÅŸÃ¼k GÃ¼ven</dt>
             <dd>{campaign.lowConfidenceCount ?? "-"}</dd>
           </div>
           <div>
-            <dt>Güncelleme</dt>
+            <dt>GÃ¼ncelleme</dt>
             <dd>{campaign.updatedAtFull || campaign.updatedAt}</dd>
           </div>
         </dl>
       </section>
 
       <section className="dashboard-grid">
-        <Card title="Broşür Önizleme" className="span-8">
+        <Card title="BroÅŸÃ¼r Ã–nizleme" className="span-8">
           {isRealApiEnabled ? (
             <div className="real-preview-panel">
               <div className="real-preview-toolbar">
                 <div>
                   <strong>{preview?.template_name || campaign.template}</strong>
-                  <small>{preview?.generated_at ? `Son üretim: ${formatDateTime(preview.generated_at)}` : "HTML önizleme"}</small>
+                  <small>{preview?.generated_at ? `Son Ã¼retim: ${formatDateTime(preview.generated_at)}` : "HTML Ã¶nizleme"}</small>
                 </div>
                 <Button disabled={isPreviewLoading} onClick={loadPreview}>
-                  {isPreviewLoading ? "Önizleme yükleniyor..." : "Önizlemeyi Yenile"}
+                  {isPreviewLoading ? "Ã–nizleme yÃ¼kleniyor..." : "Ã–nizlemeyi Yenile"}
                 </Button>
               </div>
               {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
@@ -337,20 +346,20 @@ export function CampaignDetail({ campaignId }) {
                   className="campaign-preview-iframe"
                   sandbox=""
                   srcDoc={preview.html}
-                  title={`${campaign.name} önizleme`}
+                  title={`${campaign.name} Ã¶nizleme`}
                 />
               ) : (
-                <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
+                <PreviewFrame title={campaign.name} status="Placeholder Ã¶nizleme" />
               )}
             </div>
           ) : (
-            <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
+            <PreviewFrame title={campaign.name} status="Placeholder Ã¶nizleme" />
           )}
         </Card>
 
-        <Card title="Eksik Ürünler" className="span-4">
+        <Card title="Eksik ÃœrÃ¼nler" className="span-4">
           <div className="stack-list">
-            {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren ürün yok.</p> : null}
+            {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren Ã¼rÃ¼n yok.</p> : null}
             {missingRows.map((product) => (
               <article className="missing-action-row" key={product.id}>
                 <div>
@@ -359,7 +368,7 @@ export function CampaignDetail({ campaignId }) {
                 </div>
                 <StatusBadge status={product.status} />
                 <div className="row-actions">
-                  <Button onClick={() => setSelectedMissing(product)}>Eşleştir</Button>
+                  <Button onClick={() => setSelectedMissing(product)}>EÅŸleÅŸtir</Button>
                   {isRealApiEnabled ? (
                     <Button
                       disabled={actionLoading === `item-suggestions-${product.id}`}
@@ -367,14 +376,14 @@ export function CampaignDetail({ campaignId }) {
                         runRealAction(
                           `item-suggestions-${product.id}`,
                           () => generateCampaignItemSuggestions(campaignId, product.id),
-                          "Ürün önerileri güncellendi.",
+                          "ÃœrÃ¼n Ã¶nerileri gÃ¼ncellendi.",
                         )
                       }
                     >
-                      Öneri Üret
+                      Ã–neri Ãœret
                     </Button>
                   ) : (
-                    <Button onClick={() => setRows(rows.filter((row) => row.id !== product.id))}>Kampanyadan Çıkar</Button>
+                    <Button onClick={() => setConfirmRemoveProduct(product)}>Kampanyadan çıkar</Button>
                   )}
                 </div>
               </article>
@@ -382,18 +391,18 @@ export function CampaignDetail({ campaignId }) {
           </div>
         </Card>
 
-        <Card title="Ürün Eşleştirme Tablosu" className="span-12">
+        <Card title="ÃœrÃ¼n EÅŸleÅŸtirme Tablosu" className="span-12">
           <Table
             columns={[
-              "Görsel",
-              "Gelen Ürün Adı",
-              "Eşleşen Ürün",
+              "GÃ¶rsel",
+              "Gelen ÃœrÃ¼n AdÄ±",
+              "EÅŸleÅŸen ÃœrÃ¼n",
               "Fiyat",
               "Eski Fiyat",
               "Kategori",
-              "Eşleşme Skoru",
+              "EÅŸleÅŸme Skoru",
               "Durum",
-              "Öneriler",
+              "Ã–neriler",
               "Aksiyon",
             ]}
           >
@@ -428,19 +437,19 @@ export function CampaignDetail({ campaignId }) {
                       onClick={() =>
                         runRealAction(
                           `resolve-${product.id}`,
-                          () => resolveCampaignItem(campaignId, product, "Eşleşti", suggestion),
-                          "Ürün eşleştirmesi güncellendi.",
+                          () => resolveCampaignItem(campaignId, product, "EÅŸleÅŸti", suggestion),
+                          "ÃœrÃ¼n eÅŸleÅŸtirmesi gÃ¼ncellendi.",
                         )
                       }
                     >
-                      {suggestion.suggested_name || "Öneri"} (%{Math.round(Number(suggestion.score || 0))})
+                      {suggestion.suggested_name || "Ã–neri"} (%{Math.round(Number(suggestion.score || 0))})
                     </button>
                   ))}
-                  {isRealApiEnabled && !(product.suggestions || []).length ? <small>Öneri yok</small> : null}
+                  {isRealApiEnabled && !(product.suggestions || []).length ? <small>Ã–neri yok</small> : null}
                 </td>
                 <td>
                   <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>
-                    Eşleştir
+                    EÅŸleÅŸtir
                   </button>
                 </td>
               </tr>
@@ -448,7 +457,7 @@ export function CampaignDetail({ campaignId }) {
           </Table>
         </Card>
 
-        <Card title="Çıktılar" className="span-12">
+        <Card title="Ã‡Ä±ktÄ±lar" className="span-12">
           <ExportPanel
             files={files}
             isGenerating={actionLoading === "export-job"}
@@ -462,10 +471,10 @@ export function CampaignDetail({ campaignId }) {
         </Card>
 
         {isRealApiEnabled ? (
-          <Card title="Çıktı İşleri" className="span-12">
-            {exportJobs.length === 0 ? <p className="catalog-empty">Henüz çıktı işi yok.</p> : null}
+          <Card title="Ã‡Ä±ktÄ± Ä°ÅŸleri" className="span-12">
+            {exportJobs.length === 0 ? <p className="catalog-empty">HenÃ¼z Ã§Ä±ktÄ± iÅŸi yok.</p> : null}
             {exportJobs.length ? (
-              <Table columns={["Tip", "Durum", "Formatlar", "Deneme", "Oluşturma"]}>
+              <Table columns={["Tip", "Durum", "Formatlar", "Deneme", "OluÅŸturma"]}>
                 {exportJobs.map((job) => (
                   <tr key={job.id}>
                     <td>{exportJobTypeLabels[job.job_type] || job.job_type}</td>
@@ -482,7 +491,7 @@ export function CampaignDetail({ campaignId }) {
           </Card>
         ) : null}
 
-        <Card title="Mesaj Geçmişi" className="span-6">
+        <Card title="Mesaj GeÃ§miÅŸi" className="span-6">
           <div className="message-list">
             {messages.map((message) => (
               <article key={`${message.sender}-${message.time}`}>
@@ -494,7 +503,7 @@ export function CampaignDetail({ campaignId }) {
           </div>
         </Card>
 
-        <Card title="İşlem Geçmişi" className="span-6">
+        <Card title="Ä°ÅŸlem GeÃ§miÅŸi" className="span-6">
           <ol className="activity-timeline">
             {campaignActivities.map((activity) => (
               <li key={activity.label}>
@@ -507,6 +516,18 @@ export function CampaignDetail({ campaignId }) {
       </section>
 
       <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} />
+      <ConfirmDialog
+        isOpen={Boolean(confirmRemoveProduct)}
+        title="Ürünü kampanyadan çıkar"
+        description={
+          confirmRemoveProduct
+            ? `${confirmRemoveProduct.incomingName} kampanya ürün listesinden çıkarılacak. Devam edilsin mi?`
+            : ""
+        }
+        confirmLabel="Kampanyadan çıkar"
+        onCancel={() => setConfirmRemoveProduct(null)}
+        onConfirm={() => removeMockCampaignItem(confirmRemoveProduct)}
+      />
     </>
   );
 }

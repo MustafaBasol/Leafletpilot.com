@@ -34,16 +34,21 @@ async function readResponseBody(response) {
   }
 }
 
+function formatValidationDetail(detail) {
+  if (!Array.isArray(detail)) return detail;
+
+  return detail
+    .map((item) => {
+      if (!item || typeof item !== "object") return String(item);
+      const path = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
+      return [path, item.msg || item.message || JSON.stringify(item)].filter(Boolean).join(": ");
+    })
+    .join("; ");
+}
+
 function getErrorMessage(response, body) {
   const detail = typeof body === "object" && body !== null ? body.detail || body.message : body;
-  const formattedDetail = Array.isArray(detail)
-    ? detail
-        .map((item) => {
-          const path = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
-          return [path, item.msg].filter(Boolean).join(": ");
-        })
-        .join("; ")
-    : detail;
+  const formattedDetail = formatValidationDetail(detail);
   const suffix = formattedDetail
     ? `: ${typeof formattedDetail === "string" ? formattedDetail : JSON.stringify(formattedDetail)}`
     : "";

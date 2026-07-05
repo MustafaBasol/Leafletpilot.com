@@ -35,8 +35,8 @@ function formatParsedPrice(value, currency) {
 
 export function NewCampaign() {
   const [step, setStep] = useState(1);
-  const [templateItems, setTemplateItems] = useState(mockTemplates);
-  const [selectedTemplate, setSelectedTemplate] = useState(mockTemplates[0].id);
+  const [templateItems, setTemplateItems] = useState(() => (isRealApiEnabled ? [] : mockTemplates));
+  const [selectedTemplate, setSelectedTemplate] = useState(() => (isRealApiEnabled ? "" : mockTemplates[0].id));
   const [selectedFormats, setSelectedFormats] = useState(["Baskı PDF", "PNG Broşür"]);
   const [campaignName, setCampaignName] = useState("Hafta 29 İndirimleri");
   const [rawText, setRawText] = useState(sampleList);
@@ -62,7 +62,9 @@ export function NewCampaign() {
         setSelectedTemplate((current) => (items.some((template) => template.id === current) ? current : items[0]?.id || ""));
       } catch (error) {
         if (isMounted) {
-          setApiError(`${error.message || "Şablonlar yüklenemedi."} Mock şablon listesi gösteriliyor.`);
+          setTemplateItems([]);
+          setSelectedTemplate("");
+          setApiError(error.message || "Şablonlar yüklenemedi.");
         }
       }
     }
@@ -215,6 +217,7 @@ export function NewCampaign() {
                   <span>{template.capacity}</span>
                 </button>
               ))}
+              {!templateItems.length ? <p className="catalog-empty">Şablon verisi gösterilemiyor.</p> : null}
             </div>
           ) : null}
 

@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import { outputFormats, templates as mockTemplates } from "../data/mockData.js";
 import { getTemplates, updateTemplateStatus } from "../data/dataSource.js";
-import { FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
+import { ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
 
 export function Templates() {
-  const [items, setItems] = useState(mockTemplates);
+  const [items, setItems] = useState(() => (isRealApiEnabled ? [] : mockTemplates));
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const [confirmTemplate, setConfirmTemplate] = useState(null);
 
   async function loadTemplates() {
     try {
@@ -16,8 +17,8 @@ export function Templates() {
       setItems(templates);
       setApiError("");
     } catch (error) {
-      setItems(mockTemplates);
-      setApiError(`${error.message || "Şablonlar yüklenemedi."} Mock şablon listesi gösteriliyor.`);
+      setItems([]);
+      setApiError(error.message || "Şablonlar yüklenemedi.");
     } finally {
       setIsLoading(false);
     }
@@ -46,13 +47,13 @@ export function Templates() {
     ]);
   }
 
-  async function toggleStatus(id) {
-    const template = items.find((item) => item.id === id);
+  async function toggleStatus(template) {
     if (!template) return;
+    const nextStatus = template.status === "Aktif" ? "Pasif" : "Aktif";
 
     if (isRealApiEnabled) {
       try {
-        await updateTemplateStatus(id, template.status !== "Aktif");
+        await updateTemplateStatus(template.id, nextStatus === "Aktif");
         await loadTemplates();
         return;
       } catch (error) {
@@ -62,10 +63,14 @@ export function Templates() {
     }
 
     setItems((current) =>
-      current.map((template) =>
-        template.id === id ? { ...template, status: template.status === "Aktif" ? "Pasif" : "Aktif", isDefault: false } : template,
-      ),
+      current.map((item) => (item.id === template.id ? { ...item, status: nextStatus, isDefault: false } : item)),
     );
+  }
+
+  async function confirmToggleStatus() {
+    const template = confirmTemplate;
+    setConfirmTemplate(null);
+    await toggleStatus(template);
   }
 
   return (
@@ -81,6 +86,7 @@ export function Templates() {
       </FilterBar>
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
       {isLoading ? <p className="inline-result">Şablonlar yükleniyor...</p> : null}
+      {!isLoading && items.length === 0 ? <p className="catalog-empty">Şablon verisi gösterilemiyor.</p> : null}
       <section className="template-management-grid">
         {items.map((template) => (
           <TemplateCard
@@ -88,10 +94,22 @@ export function Templates() {
             template={template}
             onMakeDefault={makeDefault}
             onDuplicate={duplicateTemplate}
-            onToggle={toggleStatus}
+            onToggle={() => setConfirmTemplate(template)}
           />
         ))}
       </section>
+      <ConfirmDialog
+        isOpen={Boolean(confirmTemplate)}
+        title="Şablon durumunu değiştir"
+        description={
+          confirmTemplate
+            ? `${confirmTemplate.name} şablonu ${confirmTemplate.status === "Aktif" ? "pasifleştirilecek" : "aktifleştirilecek"}. Devam edilsin mi?`
+            : ""
+        }
+        confirmLabel={confirmTemplate?.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}
+        onCancel={() => setConfirmTemplate(null)}
+        onConfirm={confirmToggleStatus}
+      />
     </>
   );
 }

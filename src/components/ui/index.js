@@ -2,6 +2,7 @@ export { Badge } from "./Badge.jsx";
 export { Button } from "./Button.jsx";
 export { Card } from "./Card.jsx";
 export { Checkbox } from "./Checkbox.jsx";
+export { ConfirmDialog } from "./ConfirmDialog.jsx";
 export { EmptyState } from "./EmptyState.jsx";
 export { ExportPanel } from "./ExportPanel.jsx";
 export { FileCard } from "./FileCard.jsx";

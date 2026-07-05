@@ -357,7 +357,65 @@ Required local renderer setup:
 .\.venv\Scripts\python -m playwright install chromium
 ```
 
-Next step: Phase 18 should focus on operational hardening before live use:
-auth/tenancy foundation, destructive action confirmations, CORS/security
-headers, and removal of silent mock fallback. Telegram MVP should follow once
-file generation is stable.
+Next step: Phase 18B should focus on operational hardening before live use:
+destructive action confirmations, visible real API errors, CORS/security
+headers, and simple input/export guardrails. Full auth/tenancy should follow
+before external customer access.
+
+## Phase 18A: Customer-Facing Brochure Output
+
+Implemented scope:
+
+- Campaign preview/export renderer hides internal match badges and raw technical
+  timestamps.
+- EUR prices render in customer-facing format such as `1,59€`.
+- Old prices use strikethrough styling.
+- Premium Market and Compact Weekly layouts are improved for demo brochures.
+- Campaign Detail can generate and download local PDF/PNG files.
+
+Excluded work:
+
+- No Telegram or WhatsApp.
+- No auth/tenancy beyond `X-Market-Id`.
+- No cloud storage, payments, deployment, AI parsing, OCR, or imports.
+
+## Phase 18B: Operational Hardening
+
+Implemented scope:
+
+- Reusable frontend confirmation dialog for risky actions.
+- Product active/passive, campaign item removal, missing-product removal, and
+  template active/passive actions ask for confirmation.
+- Real API mode shows inline API errors instead of silently replacing failed
+  backend data with mock data.
+- Shared API errors surface backend validation details, network failures, and
+  missing `VITE_DEMO_MARKET_ID` clearly.
+- Backend rejects wildcard CORS origins while credentials are enabled and keeps
+  local Vite origins working.
+- Backend adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+  and basic `Permissions-Policy` headers.
+- `parse-text` and `from-text` cap `raw_text` at 20,000 characters.
+- Export jobs accept only `pdf`/`png` and at most two requested formats.
+
+Excluded work:
+
+- No Telegram or WhatsApp.
+- No full auth, real tenancy, or role authorization.
+- No AI parsing, OCR, Excel/PDF import, S3/R2/cloud storage, payments,
+  deployment, React Query, state management library, or visual template editor.
+
+Validation commands:
+
+```bash
+python -m pytest -q
+python -m alembic heads
+python -m alembic upgrade head
+python scripts/seed_dev_data.py
+npm.cmd run validate
+npm.cmd run build
+npm.cmd run smoke
+```
+
+Next step: Phase 18C or Phase 19 should start minimal auth/tenancy and role
+authorization. Telegram MVP should come after that foundation, or only behind a
+clear internal-only deployment boundary.
