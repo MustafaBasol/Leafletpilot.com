@@ -4,6 +4,9 @@ Phase 15 keeps mock mode as the default and expands opt-in real API mode across
 campaign creation/detail, core catalog management screens, and minimal template
 selection.
 
+Phase 16 adds real campaign HTML preview loading in opt-in real API mode. Mock
+mode still uses the local placeholder preview.
+
 ## Environment Variables
 
 Create a frontend `.env.local` file when you want to use the backend:
@@ -75,6 +78,9 @@ Currently wired operations:
 - Campaign Detail calls `GET /api/campaigns/{campaign_id}` and displays backend
   campaign metadata, item counts, campaign items, match status, suggestions,
   files, and export jobs when present.
+- Campaign Detail calls `GET /api/campaigns/{campaign_id}/preview-html` and
+  displays the returned deterministic HTML inside a sandboxed iframe. The
+  "Önizlemeyi Yenile" button refetches this endpoint.
 - Campaign Detail can call:
   - `POST /api/campaigns/{campaign_id}/generate-suggestions`
   - `POST /api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions`
@@ -124,13 +130,15 @@ the API returns structured validation details.
 5. Check Settings health.
 6. Check Campaigns.
 7. Open Campaign Detail.
-8. Generate suggestions from Campaign Detail.
-9. Create New Campaign from pasted text.
-10. Verify new campaign appears in list/detail.
-11. Check Product Catalog search/filter/write actions.
-12. Check Brands/Categories.
-13. Check Templates list/detail.
-14. Create a New Campaign with a selected template and verify the template name
+8. Verify the HTML preview loads and the template name matches the campaign.
+9. Click "Önizlemeyi Yenile" and verify the preview reloads.
+10. Generate suggestions from Campaign Detail.
+11. Create New Campaign from pasted text.
+12. Verify new campaign appears in list/detail.
+13. Check Product Catalog search/filter/write actions.
+14. Check Brands/Categories.
+15. Check Templates list/detail.
+16. Create a New Campaign with a selected template and verify the template name
     appears in Campaigns and Campaign Detail.
 
 ## Known Mock/Real Differences
@@ -138,24 +146,27 @@ the API returns structured validation details.
 - Mock template actions such as duplicate and default selection are local UI
   simulations. Real API mode persists active/passive status only.
 - Mock campaign preview and generated files are illustrative. Real API mode
-  stores export-job/file metadata placeholders but does not render files.
+  renders campaign preview HTML but export-job/file records remain metadata
+  placeholders.
 - Mock mode can create local product, brand, category, and template-like UI
   state without validation. Real API mode returns backend validation messages.
 
 ## Current Limitations
 
 - No real auth; `X-Market-Id` is the temporary tenancy placeholder.
-- No file generation.
+- No production PDF/PNG file generation.
 - No S3 uploads or downloads.
 - No Telegram or WhatsApp integration.
 - No AI parsing; pasted text uses deterministic backend parsing.
-- Minimal Template model/API exists for selection and visibility, but no real
-  template rendering engine exists yet.
+- Minimal Template model/API exists for selection and visibility. The current
+  renderer supports deterministic HTML preview only.
 - Product image upload remains a placeholder.
-- Campaign brochure preview frame remains placeholder UI.
+- Campaign brochure preview uses sandboxed HTML in real API mode and placeholder
+  UI in mock mode or when the preview endpoint fails.
 
-## Recommended Phase 16
+## Recommended Phase 17
 
-- Start preview/export architecture planning with template-driven HTML/CSS and
-  placeholder storage boundaries, but no S3 yet.
-- Keep Telegram MVP planning next after the preview/export architecture is clear.
+- If HTML preview is stable, add isolated local PDF/PNG generation in a worker
+  flow, still without S3.
+- If preview needs refinement, improve template config and preview layouts
+  before file generation.

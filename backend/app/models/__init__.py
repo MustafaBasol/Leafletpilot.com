@@ -4,6 +4,7 @@ from app.models.catalog import Brand, Category, Product, ProductAlias, ProductIm
 from app.models.export import CampaignFile, ExportJob
 from app.models.market import MARKET_USER_ROLES, Market, MarketUser
 from app.models.messaging import Conversation, IncomingMessage
+from app.models.template import Template
 from app.models.user import User
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "Product",
     "ProductAlias",
     "ProductImage",
+    "Template",
     "User",
 ]

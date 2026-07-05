@@ -12,6 +12,7 @@ import {
   generateCampaignDetailSuggestions,
   generateCampaignItemSuggestions,
   getCampaignDetail,
+  getCampaignPreviewHtml,
   resolveCampaignItem,
 } from "../data/dataSource.js";
 import {
@@ -112,6 +113,9 @@ export function CampaignDetail({ campaignId }) {
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const [actionLoading, setActionLoading] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState("");
+  const [isPreviewLoading, setIsPreviewLoading] = useState(isRealApiEnabled);
 
   async function loadCampaign() {
     if (!isRealApiEnabled) return;
@@ -129,8 +133,25 @@ export function CampaignDetail({ campaignId }) {
     }
   }
 
+  async function loadPreview() {
+    if (!isRealApiEnabled) return;
+
+    try {
+      setIsPreviewLoading(true);
+      const previewResponse = await getCampaignPreviewHtml(campaignId);
+      setPreview(previewResponse);
+      setPreviewError("");
+    } catch (error) {
+      setPreview(null);
+      setPreviewError(error.message || "Önizleme yüklenemedi. Placeholder gösteriliyor.");
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadCampaign();
+    loadPreview();
   }, [campaignId]);
 
   async function runRealAction(key, action, successMessage) {
@@ -268,7 +289,32 @@ export function CampaignDetail({ campaignId }) {
 
       <section className="dashboard-grid">
         <Card title="Broşür Önizleme" className="span-8">
-          <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
+          {isRealApiEnabled ? (
+            <div className="real-preview-panel">
+              <div className="real-preview-toolbar">
+                <div>
+                  <strong>{preview?.template_name || campaign.template}</strong>
+                  <small>{preview?.generated_at ? `Son üretim: ${formatDateTime(preview.generated_at)}` : "HTML önizleme"}</small>
+                </div>
+                <Button disabled={isPreviewLoading} onClick={loadPreview}>
+                  {isPreviewLoading ? "Önizleme yükleniyor..." : "Önizlemeyi Yenile"}
+                </Button>
+              </div>
+              {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
+              {preview?.html ? (
+                <iframe
+                  className="campaign-preview-iframe"
+                  sandbox=""
+                  srcDoc={preview.html}
+                  title={`${campaign.name} önizleme`}
+                />
+              ) : (
+                <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
+              )}
+            </div>
+          ) : (
+            <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
+          )}
         </Card>
 
         <Card title="Eksik Ürünler" className="span-4">

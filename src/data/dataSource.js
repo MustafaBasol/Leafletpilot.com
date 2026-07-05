@@ -276,6 +276,12 @@ export async function getCampaignDetail(id) {
   return mapCampaignDetail(await campaignApi.getCampaign(id, marketId));
 }
 
+export async function getCampaignPreviewHtml(campaignId) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireDemoMarketId();
+  return campaignApi.getCampaignPreviewHtml(campaignId, marketId);
+}
+
 export async function getProducts() {
   if (!isRealApiEnabled) return products;
   requireDemoMarketId();

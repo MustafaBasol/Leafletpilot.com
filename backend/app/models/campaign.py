@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.export import CampaignFile, ExportJob
     from app.models.market import Market
     from app.models.messaging import Conversation
+    from app.models.template import Template
     from app.models.user import User
 
 
@@ -83,7 +84,7 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     channel: Mapped[str | None] = mapped_column(String(32))
     source_type: Mapped[str | None] = mapped_column(String(32))
     raw_input_text: Mapped[str | None] = mapped_column(Text)
-    template_id: Mapped[UUID | None]
+    template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
     campaign_start_date: Mapped[date | None]
     campaign_end_date: Mapped[date | None]
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
@@ -99,6 +100,7 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     market: Mapped[Market] = relationship()
     created_by_user: Mapped[User | None] = relationship()
+    template: Mapped[Template | None] = relationship()
     items: Mapped[list[CampaignItem]] = relationship(
         back_populates="campaign",
         cascade="all, delete-orphan",
@@ -116,6 +118,10 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     conversation: Mapped[Conversation | None] = relationship(back_populates="campaign", uselist=False)
+
+    @property
+    def template_name(self) -> str | None:
+        return self.template.name if self.template is not None else None
 
 
 class CampaignItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):

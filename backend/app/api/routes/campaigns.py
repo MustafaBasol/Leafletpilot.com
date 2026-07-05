@@ -16,6 +16,7 @@ from app.schemas.campaign import (
     CampaignItemSuggestionResult,
     CampaignItemUpdate,
     CampaignListItem,
+    CampaignPreviewHtml,
     CampaignSuggestionSummary,
     CampaignUpdate,
     GenerateCampaignSuggestionsRequest,
@@ -110,6 +111,15 @@ async def get_campaign(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.get_campaign(session, campaign_id, market_id)
+
+
+@router.get("/{campaign_id}/preview-html", response_model=CampaignPreviewHtml)
+async def get_campaign_preview_html(
+    campaign_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignPreviewHtml:
+    return await campaign_service.get_campaign_preview_html(session, campaign_id, market_id)
 
 
 @router.patch("/{campaign_id}", response_model=CampaignDetail)

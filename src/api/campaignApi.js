@@ -8,6 +8,10 @@ export function getCampaign(campaignId, marketId) {
   return apiClient.get(`/campaigns/${campaignId}`, { marketId });
 }
 
+export function getCampaignPreviewHtml(campaignId, marketId) {
+  return apiClient.get(`/campaigns/${campaignId}/preview-html`, { marketId });
+}
+
 export function createCampaign(payload, marketId) {
   return apiClient.post("/campaigns", payload, { marketId });
 }
@@ -47,4 +51,3 @@ export function listCampaignFiles(campaignId, marketId) {
 export function createExportJob(campaignId, payload, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/export-jobs`, payload, { marketId });
 }
-

@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product
+from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product, Template
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignCreateFromTextRequest,
@@ -16,11 +16,13 @@ from app.schemas.campaign import (
     CampaignItemCreate,
     CampaignItemResolveMatch,
     CampaignItemUpdate,
+    CampaignPreviewHtml,
     CampaignUpdate,
     MatchingSuggestionCreate,
 )
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
+from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
@@ -63,7 +65,7 @@ async def list_campaigns(
     offset: int,
 ) -> tuple[list[Campaign], int]:
     scoped_market_id = require_market_id(market_id)
-    statement = select(Campaign).where(Campaign.market_id == scoped_market_id)
+    statement = select(Campaign).options(selectinload(Campaign.template)).where(Campaign.market_id == scoped_market_id)
     if search:
         statement = statement.where(
             or_(
@@ -92,6 +94,8 @@ async def create_campaign(
 ) -> Campaign:
     scoped_market_id = require_market_id(market_id)
     data = payload.model_dump(exclude={"items"})
+    if data.get("template_id") is not None:
+        await validate_visible_template(session, data["template_id"], scoped_market_id)
     campaign = Campaign(**data, market_id=scoped_market_id, status="draft")
     campaign.items = [
         _build_campaign_item(item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
@@ -159,6 +163,7 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
         select(Campaign)
         .options(
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
+            selectinload(Campaign.template),
             selectinload(Campaign.files),
             selectinload(Campaign.export_jobs),
             selectinload(Campaign.matching_suggestions),
@@ -171,6 +176,26 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
     return campaign
 
 
+async def get_campaign_preview_html(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+) -> CampaignPreviewHtml:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    template = campaign.template
+    if template is None:
+        template = await _get_default_template(session, campaign.market_id)
+
+    generated_at = datetime.now(UTC).replace(microsecond=0)
+    return CampaignPreviewHtml(
+        campaign_id=campaign.id,
+        template_id=template.id if template else None,
+        template_name=template.name if template else DEFAULT_TEMPLATE_NAME,
+        html=render_campaign_preview_html(campaign, template, generated_at=generated_at),
+        generated_at=generated_at,
+    )
+
+
 async def update_campaign(
     session: AsyncSession,
     campaign_id: UUID,
@@ -179,6 +204,8 @@ async def update_campaign(
 ) -> Campaign:
     campaign = await get_campaign(session, campaign_id, market_id)
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("template_id") is not None:
+        await validate_visible_template(session, updates["template_id"], campaign.market_id)
     for key, value in updates.items():
         setattr(campaign, key, value)
     if "status" in updates:
@@ -376,6 +403,41 @@ async def validate_visible_product(session: AsyncSession, product_id: UUID, mark
             detail="product_id must reference an active product visible to the current market.",
         )
     return product
+
+
+async def validate_visible_template(session: AsyncSession, template_id: UUID, market_id: UUID) -> Template:
+    template = await session.scalar(
+        select(Template).where(
+            Template.id == template_id,
+            Template.is_active.is_(True),
+            or_(
+                Template.market_id == market_id,
+                and_(Template.is_global.is_(True), Template.market_id.is_(None)),
+            ),
+        )
+    )
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="template_id must reference an active template visible to the current market.",
+        )
+    return template
+
+
+async def _get_default_template(session: AsyncSession, market_id: UUID) -> Template | None:
+    return await session.scalar(
+        select(Template)
+        .where(
+            Template.slug == DEFAULT_TEMPLATE_SLUG,
+            Template.is_active.is_(True),
+            or_(
+                Template.market_id == market_id,
+                and_(Template.is_global.is_(True), Template.market_id.is_(None)),
+            ),
+        )
+        .order_by(Template.market_id.is_(None).desc())
+        .limit(1)
+    )
 
 
 async def _list(

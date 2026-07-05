@@ -498,6 +498,41 @@ Implemented fields are `id`, `market_id`, `name`, `slug`, `description`,
 visible only to the same market. Rendering, preview URLs, file generation, and
 storage are not implemented.
 
+Phase 16 adds deterministic campaign HTML preview rendering. This is not a file
+export and does not create export jobs.
+
+### `GET /api/campaigns/{campaign_id}/preview-html`
+
+Purpose: Render a campaign with its selected template into safe deterministic
+HTML for browser preview.
+
+Headers:
+
+```text
+X-Market-Id: <market-id>
+```
+
+Response:
+
+```json
+{
+  "campaign_id": "cmp_uuid",
+  "template_id": "tpl_uuid",
+  "template_name": "Premium Market",
+  "html": "<!doctype html>...",
+  "generated_at": "2026-07-05T10:00:00Z"
+}
+```
+
+Behavior:
+
+- Uses `campaign.template_id` when available.
+- Falls back to the active `premium-market` template when no template is set.
+- Escapes user-generated text and does not execute template code.
+- Supports `premium-market` and `compact-weekly` renderer styles.
+- Does not write files, upload to storage, generate PDF/PNG, or create export
+  jobs.
+
 ### `GET /markets/{marketId}/templates`
 
 Purpose: List global and market templates.

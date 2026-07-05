@@ -240,6 +240,8 @@ class CampaignListItem(BaseModel):
     status: str
     channel: str | None
     source_type: str | None
+    template_id: UUID | None = None
+    template_name: str | None = None
     product_count: int
     matched_count: int
     missing_count: int
@@ -255,7 +257,6 @@ class CampaignListItem(BaseModel):
 class CampaignDetail(CampaignListItem):
     slug: str | None
     raw_input_text: str | None
-    template_id: UUID | None
     approved_at: datetime | None
     completed_at: datetime | None
     failed_at: datetime | None
@@ -264,6 +265,14 @@ class CampaignDetail(CampaignListItem):
     files: list["CampaignFileRead"] = Field(default_factory=list)
     export_jobs: list["ExportJobRead"] = Field(default_factory=list)
     matching_suggestions: list[MatchingSuggestionRead] = Field(default_factory=list)
+
+
+class CampaignPreviewHtml(BaseModel):
+    campaign_id: UUID
+    template_id: UUID | None = None
+    template_name: str
+    html: str
+    generated_at: datetime
 
 
 from app.schemas.export import CampaignFileRead, ExportJobRead  # noqa: E402

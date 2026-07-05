@@ -23,6 +23,7 @@ from app.models import (  # noqa: E402
     Product,
     ProductAlias,
     ProductImage,
+    Template,
     User,
 )
 from app.schemas.campaign import CampaignCreateFromTextRequest  # noqa: E402
@@ -128,6 +129,43 @@ DEMO_PRODUCTS = (
     ),
 )
 
+DEMO_TEMPLATES = (
+    {
+        "name": "Premium Market",
+        "slug": "premium-market",
+        "description": "Modern market kampanyaları için geniş görsel alanlı temel şablon.",
+        "template_type": "premium",
+        "config_json": {
+            "layout": "premium-market",
+            "formats": ["A4 PDF", "A4 PNG", "Instagram Post", "WhatsApp Görseli"],
+            "max_products_per_page": 18,
+            "preview_tone": "premium",
+            "accent_color": "#b91c1c",
+            "accent_soft_color": "#fee2e2",
+            "columns": 3,
+            "show_old_price": True,
+            "show_badges": True,
+        },
+    },
+    {
+        "name": "Compact Weekly",
+        "slug": "compact-weekly",
+        "description": "Haftalık fiyat listeleri için yoğun ve sade kampanya şablonu.",
+        "template_type": "compact",
+        "config_json": {
+            "layout": "compact-weekly",
+            "formats": ["A4 PNG", "Instagram Story", "WhatsApp Görseli"],
+            "max_products_per_page": 24,
+            "preview_tone": "classic",
+            "accent_color": "#0f766e",
+            "accent_soft_color": "#ccfbf1",
+            "columns": 2,
+            "show_old_price": True,
+            "show_badges": True,
+        },
+    },
+)
+
 
 def require_database_url() -> None:
     if not settings.database_url or AsyncSessionLocal is None:
@@ -143,7 +181,8 @@ async def seed_dev_data(session: AsyncSession) -> dict[str, Any]:
     brands = await upsert_brands(session, counts)
     categories = await upsert_categories(session, counts)
     await upsert_products(session, brands, categories, counts)
-    campaign = await upsert_demo_campaign(session, market, counts)
+    templates = await upsert_templates(session, counts)
+    campaign = await upsert_demo_campaign(session, market, templates["premium-market"], counts)
 
     await session.commit()
     return {
@@ -350,9 +389,36 @@ async def upsert_product_image(
     await session.flush()
 
 
+async def upsert_templates(session: AsyncSession, counts: dict[str, int]) -> dict[str, Template]:
+    templates: dict[str, Template] = {}
+    for seed in DEMO_TEMPLATES:
+        template = await session.scalar(
+            select(Template).where(Template.slug == seed["slug"], Template.market_id.is_(None))
+        )
+        values = {
+            "name": seed["name"],
+            "description": seed["description"],
+            "template_type": seed["template_type"],
+            "is_global": True,
+            "is_active": True,
+            "config_json": seed["config_json"],
+        }
+        if template is None:
+            template = Template(slug=seed["slug"], market_id=None, **values)
+            session.add(template)
+            counts["created"] += 1
+            await session.flush()
+        else:
+            changed = update_fields(template, **values)
+            counts["updated" if changed else "unchanged"] += 1
+        templates[seed["slug"]] = template
+    return templates
+
+
 async def upsert_demo_campaign(
     session: AsyncSession,
     market: Market,
+    template: Template,
     counts: dict[str, int],
 ) -> Campaign:
     campaign = await session.scalar(
@@ -372,6 +438,7 @@ async def upsert_demo_campaign(
             source_type="text",
             channel="panel",
             raw_input_text=DEMO_CAMPAIGN_RAW_TEXT,
+            template_id=template.id,
             currency="EUR",
             language="tr",
         )
@@ -383,6 +450,7 @@ async def upsert_demo_campaign(
         CampaignCreateFromTextRequest(
             title=DEMO_CAMPAIGN_TITLE,
             raw_text=DEMO_CAMPAIGN_RAW_TEXT,
+            template_id=template.id,
             currency="EUR",
             language="tr",
             generate_suggestions=True,

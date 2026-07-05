@@ -11,7 +11,7 @@ from app.api.deps import get_catalog_session
 from app.core.config import settings
 from app.core.database import Base
 from app.main import app
-from app.models import Campaign, CampaignItem, Market
+from app.models import Campaign, CampaignItem, Market, Template
 from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign import recalculate_campaign_counts
@@ -65,6 +65,7 @@ def test_openapi_schema_contains_campaign_routes() -> None:
     assert "/api/campaigns/parse-text" in schema["paths"]
     assert "/api/campaigns/from-text" in schema["paths"]
     assert "/api/campaigns/{campaign_id}" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/preview-html" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items/{item_id}/resolve-match" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions" in schema["paths"]
@@ -86,6 +87,10 @@ def test_missing_market_id_returns_400_before_database_session_is_used() -> None
     campaign_response = client.post(f"/api/campaigns/{uuid4()}/generate-suggestions", json={})
     assert campaign_response.status_code == 400
     assert campaign_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    preview_response = client.get(f"/api/campaigns/{uuid4()}/preview-html")
+    assert preview_response.status_code == 400
+    assert preview_response.json()["detail"] == "X-Market-Id is required for campaign routes."
 
     from_text_response = client.post(
         "/api/campaigns/from-text",
@@ -254,6 +259,73 @@ async def test_campaign_from_text_runs_when_test_database_url_is_configured() ->
             assert body["missing_count"] == 2
             assert body["suggestions_created"] == 0
             assert body["campaign"]["items"][0]["parsed_payload"]["parser"] == "deterministic_text_v1"
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_campaign_preview_html_runs_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed campaign preview tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with session_factory() as session:
+            market = Market(id=market_id, name=f"Campaign Preview Market {market_id}", slug=f"p-{market_id}")
+            template = Template(
+                name=f"Premium Market {market_id}",
+                slug=f"premium-market-{market_id}",
+                template_type="premium",
+                is_global=True,
+                is_active=True,
+                config_json={"layout": "premium-market", "columns": 3},
+            )
+            campaign = Campaign(title="Preview <Campaign>", market_id=market_id, template=template)
+            campaign.items = [
+                CampaignItem(
+                    raw_line="Coca Cola 2L - 1.59",
+                    incoming_name="Coca Cola 2L",
+                    display_name="Coca Cola 2L",
+                    price=Decimal("1.59"),
+                    old_price=Decimal("1.99"),
+                    currency="EUR",
+                    market_id=market_id,
+                    match_status="not_found",
+                )
+            ]
+            session.add_all([market, template, campaign])
+            await session.commit()
+            campaign_id = campaign.id
+            template_id = template.id
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as async_client:
+            response = await async_client.get(
+                f"/api/campaigns/{campaign_id}/preview-html",
+                headers={"X-Market-Id": str(market_id)},
+            )
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["campaign_id"] == str(campaign_id)
+            assert body["template_id"] == str(template_id)
+            assert body["template_name"] == f"Premium Market {market_id}"
+            assert "Preview &lt;Campaign&gt;" in body["html"]
+            assert "Coca Cola 2L" in body["html"]
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()

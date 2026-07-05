@@ -12,6 +12,7 @@ from app.schemas.campaign import (
     CampaignListItem,
     CampaignParseRequest,
     CampaignParseResponse,
+    CampaignPreviewHtml,
     CampaignUpdate,
     MatchingSuggestionCreate,
     MatchingSuggestionRead,
@@ -28,6 +29,7 @@ from app.schemas.product import (
     ProductRead,
     ProductUpdate,
 )
+from app.schemas.template import TemplateCreate, TemplateRead, TemplateUpdate
 
 __all__ = [
     "BrandCreate",
@@ -49,6 +51,7 @@ __all__ = [
     "CampaignListItem",
     "CampaignParseRequest",
     "CampaignParseResponse",
+    "CampaignPreviewHtml",
     "CampaignUpdate",
     "ExportJobCreate",
     "ExportJobRead",
@@ -63,4 +66,7 @@ __all__ = [
     "ProductImageRead",
     "ProductRead",
     "ProductUpdate",
+    "TemplateCreate",
+    "TemplateRead",
+    "TemplateUpdate",
 ]
