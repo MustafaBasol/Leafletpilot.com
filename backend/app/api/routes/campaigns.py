@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_campaign_session, get_required_market_id
@@ -282,6 +283,22 @@ async def create_export_job(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> ExportJobRead:
     return await campaign_service.create_export_job(session, campaign_id, payload, market_id)
+
+
+@router.get("/{campaign_id}/files/{file_id}/download")
+async def download_campaign_file(
+    campaign_id: UUID,
+    file_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> FileResponse:
+    path, media_type, filename = await campaign_service.get_campaign_file_download(
+        session,
+        campaign_id,
+        file_id,
+        market_id,
+    )
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @router.get("/{campaign_id}/export-jobs", response_model=list[ExportJobRead])

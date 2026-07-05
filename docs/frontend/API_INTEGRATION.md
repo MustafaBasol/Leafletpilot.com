@@ -4,8 +4,9 @@ Phase 15 keeps mock mode as the default and expands opt-in real API mode across
 campaign creation/detail, core catalog management screens, and minimal template
 selection.
 
-Phase 16 adds real campaign HTML preview loading in opt-in real API mode. Mock
-mode still uses the local placeholder preview.
+Phase 16 adds real campaign HTML preview loading in opt-in real API mode. Phase
+17 adds real local PDF/PNG generation and protected downloads. Mock mode still
+uses local placeholder preview and file cards.
 
 ## Environment Variables
 
@@ -32,6 +33,7 @@ From `backend/`, set up PostgreSQL and dependencies using
 ```powershell
 .\.venv\Scripts\python -m alembic upgrade head
 .\.venv\Scripts\python scripts\seed_dev_data.py
+.\.venv\Scripts\python -m playwright install chromium
 .\.venv\Scripts\python -m uvicorn app.main:app --reload
 ```
 
@@ -86,6 +88,10 @@ Currently wired operations:
   - `POST /api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions`
   - `POST /api/campaigns/{campaign_id}/items/{item_id}/resolve-match`
   - `POST /api/campaigns/{campaign_id}/export-jobs`
+  - `GET /api/campaigns/{campaign_id}/files/{file_id}/download`
+- Campaign Detail can generate PDF, PNG, or both. After generation it reloads
+  campaign detail and displays generated files with type, format, size, status,
+  created time, and download action.
 - New Campaign pasted text Step 2 calls `POST /api/campaigns/parse-text` for a
   deterministic parser preview.
 - New Campaign final create calls `POST /api/campaigns/from-text` with
@@ -132,13 +138,15 @@ the API returns structured validation details.
 7. Open Campaign Detail.
 8. Verify the HTML preview loads and the template name matches the campaign.
 9. Click "Önizlemeyi Yenile" and verify the preview reloads.
-10. Generate suggestions from Campaign Detail.
-11. Create New Campaign from pasted text.
-12. Verify new campaign appears in list/detail.
-13. Check Product Catalog search/filter/write actions.
-14. Check Brands/Categories.
-15. Check Templates list/detail.
-16. Create a New Campaign with a selected template and verify the template name
+10. Click "Dosya Üret" and verify PDF and PNG files appear.
+11. Download the generated PDF and PNG.
+12. Generate suggestions from Campaign Detail.
+13. Create New Campaign from pasted text.
+14. Verify new campaign appears in list/detail.
+15. Check Product Catalog search/filter/write actions.
+16. Check Brands/Categories.
+17. Check Templates list/detail.
+18. Create a New Campaign with a selected template and verify the template name
     appears in Campaigns and Campaign Detail.
 
 ## Known Mock/Real Differences
@@ -146,16 +154,16 @@ the API returns structured validation details.
 - Mock template actions such as duplicate and default selection are local UI
   simulations. Real API mode persists active/passive status only.
 - Mock campaign preview and generated files are illustrative. Real API mode
-  renders campaign preview HTML but export-job/file records remain metadata
-  placeholders.
+  renders campaign preview HTML and can generate local PDF/PNG files through
+  the backend.
 - Mock mode can create local product, brand, category, and template-like UI
   state without validation. Real API mode returns backend validation messages.
 
 ## Current Limitations
 
 - No real auth; `X-Market-Id` is the temporary tenancy placeholder.
-- No production PDF/PNG file generation.
-- No S3 uploads or downloads.
+- PDF/PNG file generation is local and synchronous only.
+- No S3 uploads or signed cloud downloads.
 - No Telegram or WhatsApp integration.
 - No AI parsing; pasted text uses deterministic backend parsing.
 - Minimal Template model/API exists for selection and visibility. The current
@@ -164,9 +172,9 @@ the API returns structured validation details.
 - Campaign brochure preview uses sandboxed HTML in real API mode and placeholder
   UI in mock mode or when the preview endpoint fails.
 
-## Recommended Phase 17
+## Recommended Phase 18
 
-- If HTML preview is stable, add isolated local PDF/PNG generation in a worker
-  flow, still without S3.
-- If preview needs refinement, improve template config and preview layouts
-  before file generation.
+- Add operational hardening before live use: auth/tenancy foundation,
+  destructive action confirmations, stricter CORS/security headers, and removal
+  of silent mock fallback.
+- Telegram MVP should come after file generation is stable.

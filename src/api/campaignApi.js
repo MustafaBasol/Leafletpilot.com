@@ -1,4 +1,5 @@
-import { apiClient } from "./client.js";
+import { apiBaseUrl } from "./config.js";
+import { apiClient, ApiError } from "./client.js";
 
 export function listCampaigns(params, marketId) {
   return apiClient.get("/campaigns", { params, marketId });
@@ -50,4 +51,18 @@ export function listCampaignFiles(campaignId, marketId) {
 
 export function createExportJob(campaignId, payload, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/export-jobs`, payload, { marketId });
+}
+
+export async function downloadCampaignFile(campaignId, fileId, marketId) {
+  const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/files/${fileId}/download`, {
+    headers: {
+      "X-Market-Id": marketId,
+    },
+  });
+
+  if (!response.ok) {
+    throw new ApiError(`Dosya indirilemedi (${response.status} ${response.statusText})`, { status: response.status });
+  }
+
+  return response.blob();
 }

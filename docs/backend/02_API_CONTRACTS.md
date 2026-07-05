@@ -498,8 +498,8 @@ Implemented fields are `id`, `market_id`, `name`, `slug`, `description`,
 visible only to the same market. Rendering, preview URLs, file generation, and
 storage are not implemented.
 
-Phase 16 adds deterministic campaign HTML preview rendering. This is not a file
-export and does not create export jobs.
+Phase 16 adds deterministic campaign HTML preview rendering. Phase 17 adds
+local PDF/PNG generation from the same HTML renderer.
 
 ### `GET /api/campaigns/{campaign_id}/preview-html`
 
@@ -530,8 +530,8 @@ Behavior:
 - Falls back to the active `premium-market` template when no template is set.
 - Escapes user-generated text and does not execute template code.
 - Supports `premium-market` and `compact-weekly` renderer styles.
-- Does not write files, upload to storage, generate PDF/PNG, or create export
-  jobs.
+- Does not write files or create export jobs; file generation is handled by the
+  export-job endpoint.
 
 ### `GET /markets/{marketId}/templates`
 
@@ -623,7 +623,10 @@ MVP/later: Telegram only in MVP; WhatsApp later.
 
 ## Files And Export Jobs
 
-### `GET /markets/{marketId}/campaigns/{campaignId}/files`
+Current implemented local API routes use `/api/campaigns` plus `X-Market-Id`
+rather than the older planning path style below.
+
+### `GET /api/campaigns/{campaignId}/files`
 
 Purpose: List campaign uploads, previews, and final exports.
 
@@ -638,40 +641,79 @@ Response:
       "format": "png",
       "status": "ready",
       "sizeBytes": 1800000,
-      "downloadUrl": "https://storage.example/signed"
+      "storage_key": "markets/.../campaign.pdf"
     }
   ]
 }
 ```
 
-Permissions: Market member.
+Headers: `X-Market-Id: <market-id>`.
 
-### `POST /markets/{marketId}/campaigns/{campaignId}/export-jobs`
+Permissions: Temporary market header; real auth later.
 
-Purpose: Queue final export generation.
+### `POST /api/campaigns/{campaignId}/export-jobs`
+
+Purpose: Generate local PDF/PNG files from deterministic HTML preview.
 
 Request:
 
 ```json
-{ "jobType": "final_exports", "formats": ["a4_pdf", "a4_png", "instagram_post"] }
+{ "job_type": "final_export", "requested_formats": ["pdf", "png"], "status": "queued" }
 ```
 
 Response:
 
 ```json
-{ "id": "job_1", "status": "queued" }
+{
+  "id": "job_uuid",
+  "campaign_id": "campaign_uuid",
+  "market_id": "market_uuid",
+  "job_type": "final_export",
+  "status": "completed",
+  "requested_formats": ["pdf", "png"],
+  "result_file_ids": ["file_uuid"],
+  "error_message": null,
+  "attempts": 1
+}
 ```
 
-Permissions: Market staff or operator.
+Behavior:
 
-### `GET /markets/{marketId}/export-jobs/{jobId}`
+- Requires `X-Market-Id`.
+- Supports only `pdf` and `png`.
+- Creates `CampaignFile` rows with `file_type=brochure_pdf` or
+  `file_type=brochure_png`.
+- Writes local files below `LOCAL_STORAGE_DIR`.
+- Uses `running` as the current processing status because that is the existing
+  database enum value; this maps to the planned `processing` concept.
+- Runs synchronously for the MVP. Background workers and S3/R2 are deferred.
 
-Purpose: Poll export status.
+### `GET /api/campaigns/{campaignId}/files/{fileId}/download`
 
-Response:
+Purpose: Download a generated local campaign file.
+
+Headers:
+
+```text
+X-Market-Id: <market-id>
+```
+
+Behavior:
+
+- Verifies campaign and file belong to the header market.
+- Resolves only stored relative `storage_key` values under `LOCAL_STORAGE_DIR`.
+- Returns `application/pdf` for PDF and `image/png` for PNG.
+- Returns `404` when the row is missing, cross-market, not ready, path-invalid,
+  or the local file is missing.
+
+### `GET /api/campaigns/{campaignId}/export-jobs`
+
+Purpose: List export status for a campaign.
+
+Response item:
 
 ```json
-{ "id": "job_1", "status": "running", "attemptCount": 1, "files": [] }
+{ "id": "job_1", "status": "running", "attempts": 1, "result_file_ids": [] }
 ```
 
 Permissions: Market member.

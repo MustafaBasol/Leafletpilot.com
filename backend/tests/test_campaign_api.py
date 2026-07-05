@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -39,7 +40,7 @@ def test_campaign_schemas_validate_sample_payloads() -> None:
         notes="Operator picked exact product.",
     )
     file_payload = CampaignFileCreate(file_type="preview_png", format="png")
-    export_payload = ExportJobCreate(job_type="preview", requested_formats=["preview_png"])
+    export_payload = ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"])
     from_text = CampaignCreateFromTextRequest(
         title="Hafta 28",
         raw_text="Coca Cola 2L - 1.59€",
@@ -55,6 +56,9 @@ def test_campaign_schemas_validate_sample_payloads() -> None:
     assert resolution.resolution == "manual_selected"
     assert file_payload.status == "pending"
     assert export_payload.status == "queued"
+    assert export_payload.requested_formats == ["pdf", "png"]
+    with pytest.raises(ValidationError):
+        ExportJobCreate(job_type="final_export", requested_formats=["docx"])
     assert from_text.raw_text == "Coca Cola 2L - 1.59€"
 
 
@@ -71,6 +75,7 @@ def test_openapi_schema_contains_campaign_routes() -> None:
     assert "/api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/generate-suggestions" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/files" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/files/{file_id}/download" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/export-jobs" in schema["paths"]
 
 
@@ -91,6 +96,17 @@ def test_missing_market_id_returns_400_before_database_session_is_used() -> None
     preview_response = client.get(f"/api/campaigns/{uuid4()}/preview-html")
     assert preview_response.status_code == 400
     assert preview_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    export_response = client.post(
+        f"/api/campaigns/{uuid4()}/export-jobs",
+        json={"job_type": "final_export", "requested_formats": ["pdf", "png"]},
+    )
+    assert export_response.status_code == 400
+    assert export_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+
+    download_response = client.get(f"/api/campaigns/{uuid4()}/files/{uuid4()}/download")
+    assert download_response.status_code == 400
+    assert download_response.json()["detail"] == "X-Market-Id is required for campaign routes."
 
     from_text_response = client.post(
         "/api/campaigns/from-text",

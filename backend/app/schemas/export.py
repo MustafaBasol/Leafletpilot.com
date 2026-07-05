@@ -17,6 +17,7 @@ CampaignFileType = Literal[
 CampaignFileStatus = Literal["pending", "generating", "ready", "failed", "sent"]
 ExportJobType = Literal["preview", "final_export", "regenerate_preview", "send_files"]
 ExportJobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+ExportFormat = Literal["pdf", "png"]
 
 
 class CampaignFileCreate(BaseModel):
@@ -54,8 +55,8 @@ class CampaignFileRead(BaseModel):
 
 
 class ExportJobCreate(BaseModel):
-    job_type: ExportJobType
-    requested_formats: list[str] | None = None
+    job_type: ExportJobType = "final_export"
+    requested_formats: list[ExportFormat] | None = None
     status: ExportJobStatus = "queued"
 
 
