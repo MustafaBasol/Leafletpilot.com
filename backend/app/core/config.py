@@ -1,5 +1,6 @@
 import json
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,7 +21,15 @@ class Settings(BaseSettings):
     backend_cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"], alias="BACKEND_CORS_ORIGINS")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
+    local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    @property
+    def local_storage_path(self) -> Path:
+        path = Path(self.local_storage_dir)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        return path.resolve()
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod

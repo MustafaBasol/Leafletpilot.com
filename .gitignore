@@ -18,6 +18,8 @@ backend/.pytest_cache/
 .env.local
 backend/.env
 backend/.env.local
+backend/storage/
+storage/
 
 # Python generated files
 __pycache__/

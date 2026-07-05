@@ -21,6 +21,12 @@ from app.schemas.campaign import (
     MatchingSuggestionCreate,
 )
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
+from app.services.rendering import (
+    FORMAT_MEDIA_TYPES,
+    normalize_requested_formats,
+    render_campaign_export,
+    storage_path_for_key,
+)
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
 
@@ -368,8 +374,26 @@ async def create_export_job(
     market_id: UUID | None,
 ) -> ExportJob:
     campaign = await get_campaign(session, campaign_id, market_id)
-    export_job = ExportJob(**payload.model_dump(), campaign_id=campaign.id, market_id=campaign.market_id)
-    return await _persist(session, export_job)
+    formats = normalize_requested_formats(payload.requested_formats)
+    export_job = ExportJob(
+        **payload.model_dump(exclude={"requested_formats", "status"}),
+        campaign_id=campaign.id,
+        market_id=campaign.market_id,
+        requested_formats=formats,
+        status="queued",
+    )
+    session.add(export_job)
+    await session.commit()
+    await session.refresh(export_job)
+    await render_campaign_export(
+        session,
+        market_id=campaign.market_id,
+        campaign_id=campaign.id,
+        requested_formats=formats,
+        export_job_id=export_job.id,
+    )
+    await session.refresh(export_job)
+    return export_job
 
 
 async def list_export_jobs(
@@ -384,6 +408,40 @@ async def list_export_jobs(
         .order_by(ExportJob.created_at.desc())
     )
     return list(result.all())
+
+
+async def get_campaign_file_download(
+    session: AsyncSession,
+    campaign_id: UUID,
+    file_id: UUID,
+    market_id: UUID | None,
+) -> tuple[str, str, str]:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    statement = select(CampaignFile).where(
+        CampaignFile.id == file_id,
+        CampaignFile.campaign_id == campaign.id,
+        CampaignFile.market_id == campaign.market_id,
+    )
+    campaign_file = await session.scalar(statement)
+    if campaign_file is None or campaign_file.storage_key is None:
+        raise _not_found("Campaign file")
+    if campaign_file.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign file is not ready for download.",
+        )
+
+    try:
+        file_path = storage_path_for_key(campaign_file.storage_key)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign file not found.") from None
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign file not found.")
+
+    file_format = (campaign_file.format or "").lower()
+    media_type = FORMAT_MEDIA_TYPES.get(file_format, "application/octet-stream")
+    return str(file_path), media_type, file_path.name
 
 
 async def validate_visible_product(session: AsyncSession, product_id: UUID, market_id: UUID) -> Product:

@@ -1,8 +1,8 @@
 # LeafletPilot Backend
 
-FastAPI backend for LeafletPilot. Phase 15 includes deterministic pasted-text
-campaign creation, catalog APIs, campaign matching workflows, placeholder
-export-job metadata, and a minimal Template API for template selection.
+FastAPI backend for LeafletPilot. Phase 17 includes deterministic pasted-text
+campaign creation, catalog APIs, campaign matching workflows, template-backed
+HTML preview rendering, and local PDF/PNG export generation.
 
 ## Setup
 
@@ -12,6 +12,7 @@ From the `backend` folder:
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -U pip
 .\.venv\Scripts\python -m pip install -e .[dev]
+.\.venv\Scripts\python -m playwright install chromium
 ```
 
 ## Run The API
@@ -37,6 +38,7 @@ For the default local setup, create `backend/.env`:
 ```text
 DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot
 TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test
+LOCAL_STORAGE_DIR=storage
 ```
 
 Apply migrations and seed repeatable development data:
@@ -155,7 +157,8 @@ Templates store selection metadata only:
 - `is_active`
 - `config_json`
 
-There is no HTML/CSS renderer, PDF/PNG generation, file upload, S3 integration,
+Templates are used by the deterministic HTML preview renderer and local PDF/PNG
+export flow. There is no visual template editor, file upload, S3 integration,
 or template preview worker yet.
 
 ## Campaign APIs
@@ -184,6 +187,7 @@ Implemented campaign routes:
 - `POST /api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions`
 - `GET|POST /api/campaigns/{campaign_id}/items/{item_id}/suggestions`
 - `GET|POST /api/campaigns/{campaign_id}/files`
+- `GET /api/campaigns/{campaign_id}/files/{file_id}/download`
 - `GET|POST /api/campaigns/{campaign_id}/export-jobs`
 
 List campaigns:
@@ -407,20 +411,38 @@ the product name. It may detect simple `unit_label` and `quantity_label`, but it
 does not infer categories, parse OCR, read Excel/PDF files, call AI, or perform
 language-model normalization.
 
-Export jobs are placeholders only:
+Create a local PDF/PNG export:
 
 ```json
 {
-  "job_type": "preview",
-  "requested_formats": ["preview_png"],
+  "job_type": "final_export",
+  "requested_formats": ["pdf", "png"],
   "status": "queued"
 }
 ```
 
-Creating an export job stores a queued `ExportJob` row. It does not start a
-worker, generate files, upload to storage, or send messages. Campaign file
-routes similarly store metadata only; there is no upload or generation path in
-this phase.
+`POST /api/campaigns/{campaign_id}/export-jobs` creates an `ExportJob`, renders
+the deterministic HTML preview through Playwright, writes local PDF/PNG files
+under `LOCAL_STORAGE_DIR`, creates `CampaignFile` rows, and marks the job
+`completed` or `failed`. Rendering is synchronous for this MVP. There is no
+Celery/RQ worker, S3/R2 upload, or message sending yet.
+
+On Windows, the FastAPI service keeps its public render function async but runs
+Playwright's sync API in a background thread. This avoids launching Chromium
+from Uvicorn's request event loop. If Chromium is missing, the failed
+`ExportJob.error_message` tells the operator to run
+`python -m playwright install chromium`. Failed exports also log the full stack
+trace and keep the failure visible in the API response.
+
+Generated files use storage keys under:
+
+```text
+markets/{market_id}/campaigns/{campaign_id}/exports/{export_job_id}/...
+```
+
+Downloads use `GET /api/campaigns/{campaign_id}/files/{file_id}/download` with
+`X-Market-Id`. The endpoint verifies market, campaign, file ownership, and safe
+local storage paths before returning `application/pdf` or `image/png`.
 
 ## Campaign Workflow Models
 
@@ -568,6 +590,7 @@ configured `DATABASE_URL`.
 | `BACKEND_CORS_ORIGINS` | `http://localhost:5173` | Comma-separated frontend origins. |
 | `DATABASE_URL` | unset | PostgreSQL async SQLAlchemy URL. |
 | `TEST_DATABASE_URL` | unset | Optional database URL for future integration tests. |
+| `LOCAL_STORAGE_DIR` | `storage` | Local root for generated campaign export files. Relative paths resolve under `backend/`. |
 | `LOG_LEVEL` | `INFO` | Python logging level. |
 
 ## Current Limitations
@@ -579,7 +602,7 @@ configured `DATABASE_URL`.
 - Campaign item text parsing is deterministic only; there is no AI parsing.
 - Matching is deterministic only; there is no AI-assisted normalization or scoring yet.
 - No OCR, PDF, Excel, or image parsing exists yet.
-- Campaign file and export job APIs store metadata only; no PDF/PNG generation or background worker runs.
+- PDF/PNG exports are generated locally and synchronously; no background worker or cloud storage runs.
 - No activity CRUD APIs yet.
 - Minimal Template model/API exists, but it stores metadata only and does not render outputs.
 - No Telegram or WhatsApp integration, S3 storage, payment, or deployment features.
@@ -589,6 +612,7 @@ configured `DATABASE_URL`.
 
 ## Next Phase
 
-Phase 16 should focus on preview/export architecture planning with
-template-driven HTML/CSS, without adding S3 yet. Telegram MVP planning should
-follow once the preview/export boundary is clear.
+Phase 18 should add operational hardening before live use: auth/tenancy
+foundation, destructive action confirmations, stricter CORS/security headers,
+and removal of silent mock fallback. Telegram MVP should follow once local file
+generation is stable.

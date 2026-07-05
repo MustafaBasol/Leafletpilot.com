@@ -9,6 +9,7 @@ import {
 } from "../data/mockData.js";
 import {
   createCampaignExportJob,
+  downloadCampaignFile,
   generateCampaignDetailSuggestions,
   generateCampaignItemSuggestions,
   getCampaignDetail,
@@ -73,8 +74,13 @@ function formatDateTime(value) {
 }
 
 function mapFileForPanel(file) {
+  const name = file.storage_key
+    ? file.storage_key.split("/").pop()
+    : file.url || `${file.file_type || "dosya"}-${String(file.id || "").slice(0, 8)}`;
   return {
-    name: file.storage_key || file.url || `${file.file_type || "dosya"}-${String(file.id || "").slice(0, 8)}`,
+    id: file.id,
+    name,
+    downloadName: name,
     type: file.file_type || "Kampanya dosyası",
     format: file.format || "-",
     size: file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : "-",
@@ -196,6 +202,31 @@ export function CampaignDetail({ campaignId }) {
     );
   }
 
+  async function generateFiles(formats) {
+    await runRealAction(
+      "export-job",
+      () => createCampaignExportJob(campaignId, formats),
+      formats?.length === 1 ? `${formats[0].toUpperCase()} dosyası üretildi.` : "PDF ve PNG dosyaları üretildi.",
+    );
+  }
+
+  async function downloadFile(file) {
+    if (!isRealApiEnabled) {
+      setNotice("Mock modda indirme simüle edildi.");
+      return;
+    }
+    try {
+      setActionLoading(`download-${file.id}`);
+      setApiError("");
+      await downloadCampaignFile(campaignId, file);
+      setNotice("Dosya indirildi.");
+    } catch (error) {
+      setApiError(error.message || "Dosya indirilemedi.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
   const missingRows = rows.filter((row) => needsAttention(row.status));
   const files = isRealApiEnabled ? (campaign.files || []).map(mapFileForPanel) : generatedFiles;
   const exportJobs = campaign.exportJobs || [];
@@ -227,13 +258,13 @@ export function CampaignDetail({ campaignId }) {
                 isRealApiEnabled
                   ? runRealAction(
                       "export-job",
-                      () => createCampaignExportJob(campaignId),
-                      "Çıktı işi kuyruğa alındı.",
+                      () => createCampaignExportJob(campaignId, ["pdf", "png"]),
+                      "PDF ve PNG dosyaları üretildi.",
                     )
                   : setNotice("Final dosyaları üretim için hazırlandı.")
               }
             >
-              {actionLoading === "export-job" ? "Kuyruğa alınıyor..." : "Çıktı İşi Oluştur"}
+              {actionLoading === "export-job" ? "Dosya üretiliyor..." : "Dosya Üret"}
             </Button>
             <Button variant="primary" onClick={() => setNotice("Dosya gönderimi bu fazda placeholder olarak kalıyor.")}>
               Kullanıcıya Gönder
@@ -420,9 +451,11 @@ export function CampaignDetail({ campaignId }) {
         <Card title="Çıktılar" className="span-12">
           <ExportPanel
             files={files}
-            onAction={(message) =>
+            isGenerating={actionLoading === "export-job"}
+            onDownload={isRealApiEnabled ? downloadFile : undefined}
+            onAction={(message, formats) =>
               isRealApiEnabled
-                ? runRealAction("export-job", () => createCampaignExportJob(campaignId), "Çıktı işi kuyruğa alındı.")
+                ? generateFiles(formats)
                 : setNotice(message)
             }
           />

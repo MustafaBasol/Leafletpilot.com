@@ -3,7 +3,7 @@ import { Button } from "./Button.jsx";
 import { Icon } from "./Icon.jsx";
 import { StatusBadge } from "./StatusBadge.jsx";
 
-export function FileCard({ file }) {
+export function FileCard({ file, onDownload }) {
   return (
     <article className="file-card">
       <div className="file-icon">
@@ -19,7 +19,9 @@ export function FileCard({ file }) {
       {file.status ? <StatusBadge status={file.status} /> : <Badge tone="neutral">Taslak</Badge>}
       <div className="file-actions">
         <Button>Önizle</Button>
-        <Button>İndir</Button>
+        <Button disabled={!onDownload} onClick={() => onDownload?.(file)}>
+          İndir
+        </Button>
         <Button>Kullanıcıya Gönder</Button>
       </div>
     </article>

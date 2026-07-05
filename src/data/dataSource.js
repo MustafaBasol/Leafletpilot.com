@@ -427,14 +427,29 @@ export async function resolveCampaignItem(campaignId, item, resolutionStatus, su
   );
 }
 
-export async function createCampaignExportJob(campaignId) {
+export async function createCampaignExportJob(campaignId, requestedFormats = ["pdf", "png"]) {
   if (!isRealApiEnabled) return null;
   const marketId = requireDemoMarketId();
   return campaignApi.createExportJob(
     campaignId,
-    { job_type: "preview", requested_formats: ["placeholder"], status: "queued" },
+    { job_type: "final_export", requested_formats: requestedFormats, status: "queued" },
     marketId,
   );
+}
+
+export async function downloadCampaignFile(campaignId, file) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireDemoMarketId();
+  const blob = await campaignApi.downloadCampaignFile(campaignId, file.id, marketId);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = file.downloadName || file.name || `${file.id}.${file.format || "bin"}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  return null;
 }
 
 function cleanText(value) {
