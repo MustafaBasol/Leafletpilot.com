@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     debug: bool = Field(default=False, alias="DEBUG")
     api_prefix: str = Field(default="/api", alias="API_PREFIX")
-    backend_cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"], alias="BACKEND_CORS_ORIGINS")
+    backend_cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
+        alias="BACKEND_CORS_ORIGINS",
+    )
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")

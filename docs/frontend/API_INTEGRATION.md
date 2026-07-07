@@ -5,8 +5,12 @@ campaign creation/detail, core catalog management screens, and minimal template
 selection.
 
 Phase 16 adds real campaign HTML preview loading in opt-in real API mode. Phase
-17 adds real local PDF/PNG generation and protected downloads. Mock mode still
-uses local placeholder preview and file cards.
+17 adds real local PDF/PNG generation and protected downloads. Phase 18A makes
+the real preview/export renderer customer-facing for sales demos. Mock mode
+still uses local placeholder preview and file cards.
+Phase 18B keeps mock mode available but removes silent mock replacement in real
+API mode: supported screens show inline API errors when backend data cannot be
+loaded.
 
 ## Environment Variables
 
@@ -81,8 +85,8 @@ Currently wired operations:
   campaign metadata, item counts, campaign items, match status, suggestions,
   files, and export jobs when present.
 - Campaign Detail calls `GET /api/campaigns/{campaign_id}/preview-html` and
-  displays the returned deterministic HTML inside a sandboxed iframe. The
-  "Önizlemeyi Yenile" button refetches this endpoint.
+  displays the returned deterministic customer brochure HTML inside a sandboxed
+  iframe. The "Önizlemeyi Yenile" button refetches this endpoint.
 - Campaign Detail can call:
   - `POST /api/campaigns/{campaign_id}/generate-suggestions`
   - `POST /api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions`
@@ -92,6 +96,9 @@ Currently wired operations:
 - Campaign Detail can generate PDF, PNG, or both. After generation it reloads
   campaign detail and displays generated files with type, format, size, status,
   created time, and download action.
+- Real preview/export brochures hide internal match badges and technical
+  statuses, avoid raw ISO timestamps, and format EUR prices as `1,59€` with old
+  prices styled as strikethrough.
 - New Campaign pasted text Step 2 calls `POST /api/campaigns/parse-text` for a
   deterministic parser preview.
 - New Campaign final create calls `POST /api/campaigns/from-text` with
@@ -125,6 +132,15 @@ Currently wired operations:
 Backend validation errors are displayed inline with readable field messages when
 the API returns structured validation details.
 
+In real API mode, API failures on Campaigns, Campaign Detail, New Campaign
+template loading, Product Catalog, Brands/Categories, Templates, and Template
+Detail are visible inline. Mock data is not silently shown as backend data. Mock
+mode continues to use local demo data normally.
+
+Destructive or risky operator actions now ask for confirmation before changing
+state: product active/passive, campaign item removal, missing-product removal,
+and template active/passive.
+
 ## Manual Real API Smoke Checklist
 
 1. Run backend.
@@ -137,16 +153,19 @@ the API returns structured validation details.
 6. Check Campaigns.
 7. Open Campaign Detail.
 8. Verify the HTML preview loads and the template name matches the campaign.
-9. Click "Önizlemeyi Yenile" and verify the preview reloads.
-10. Click "Dosya Üret" and verify PDF and PNG files appear.
-11. Download the generated PDF and PNG.
-12. Generate suggestions from Campaign Detail.
-13. Create New Campaign from pasted text.
-14. Verify new campaign appears in list/detail.
-15. Check Product Catalog search/filter/write actions.
-16. Check Brands/Categories.
-17. Check Templates list/detail.
-18. Create a New Campaign with a selected template and verify the template name
+9. Confirm the preview uses customer-facing output: `1,59€` price format, no
+   `Eşleşti` badge, no raw ISO timestamp, and an intentional placeholder when
+   no product image exists.
+10. Click "Önizlemeyi Yenile" and verify the preview reloads.
+11. Click "Dosya Üret" and verify PDF and PNG files appear.
+12. Download the generated PDF and PNG.
+13. Generate suggestions from Campaign Detail.
+14. Create New Campaign from pasted text.
+15. Verify new campaign appears in list/detail.
+16. Check Product Catalog search/filter/write actions.
+17. Check Brands/Categories.
+18. Check Templates list/detail.
+19. Create a New Campaign with a selected template and verify the template name
     appears in Campaigns and Campaign Detail.
 
 ## Known Mock/Real Differences
@@ -162,19 +181,24 @@ the API returns structured validation details.
 ## Current Limitations
 
 - No real auth; `X-Market-Id` is the temporary tenancy placeholder.
+- No real tenancy or role authorization; production/live use still needs those
+  foundations before external customer access.
 - PDF/PNG file generation is local and synchronous only.
 - No S3 uploads or signed cloud downloads.
 - No Telegram or WhatsApp integration.
 - No AI parsing; pasted text uses deterministic backend parsing.
 - Minimal Template model/API exists for selection and visibility. The current
-  renderer supports deterministic HTML preview only.
-- Product image upload remains a placeholder.
+  renderer supports customer-facing deterministic HTML/PDF/PNG brochures, not a
+  visual template editor.
+- Product image upload remains a placeholder; the brochure uses a neutral
+  placeholder when no real image exists.
 - Campaign brochure preview uses sandboxed HTML in real API mode and placeholder
   UI in mock mode or when the preview endpoint fails.
 
 ## Recommended Phase 18
 
-- Add operational hardening before live use: auth/tenancy foundation,
-  destructive action confirmations, stricter CORS/security headers, and removal
-  of silent mock fallback.
-- Telegram MVP should come after file generation is stable.
+- Phase 18B operational hardening is in place for confirmations, visible
+  real-mode errors, and backend CORS/security-header baseline.
+- Next phase should start minimal auth/tenancy and role authorization. Telegram
+  MVP should come after file generation and operational safety are stable, or
+  behind a clearly internal-only deployment boundary.

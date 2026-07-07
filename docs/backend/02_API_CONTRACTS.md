@@ -9,6 +9,14 @@
 - Responses should use ISO 8601 timestamps.
 - Pagination: `?limit=50&cursor=...` for list endpoints.
 
+Current implemented FastAPI routes use `/api` and temporary `X-Market-Id`
+headers in several places until the older `/api/v1/markets/{marketId}` contract
+is fully reconciled. Phase 18B adds a basic operational baseline: credentialed
+CORS must use explicit origins, responses include simple security headers, and
+real API failures should be shown visibly by the frontend instead of silently
+falling back to mock data. `POST /api/campaigns/parse-text` and
+`POST /api/campaigns/from-text` cap `raw_text` at 20,000 characters.
+
 ## Auth
 
 ### `POST /auth/mock-login`
@@ -681,6 +689,7 @@ Behavior:
 
 - Requires `X-Market-Id`.
 - Supports only `pdf` and `png`.
+- Accepts at most two requested formats.
 - Creates `CampaignFile` rows with `file_type=brochure_pdf` or
   `file_type=brochure_png`.
 - Writes local files below `LOCAL_STORAGE_DIR`.

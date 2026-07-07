@@ -915,6 +915,16 @@ tbody tr:hover {
   padding: 20px;
 }
 
+.confirm-dialog-panel {
+  width: min(460px, 100%);
+}
+
+.confirm-dialog-copy {
+  margin: 0;
+  color: var(--neutral-600);
+  line-height: 1.6;
+}
+
 .icon-button {
   width: 38px;
   min-height: 38px;

@@ -8,6 +8,8 @@ from app.core.logging import configure_logging
 
 def create_app() -> FastAPI:
     configure_logging(settings.log_level)
+    if "*" in settings.backend_cors_origins:
+        raise ValueError("BACKEND_CORS_ORIGINS cannot include '*' while CORS credentials are enabled.")
 
     app = FastAPI(
         title=settings.app_name,
@@ -22,6 +24,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def add_security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        return response
 
     app.include_router(api_router, prefix=settings.api_prefix)
     return app

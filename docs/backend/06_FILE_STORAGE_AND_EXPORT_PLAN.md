@@ -1,6 +1,6 @@
 # File Storage And Export Plan
 
-## Phase 17 Status
+## Phase 18A Status
 
 Phase 16 added deterministic HTML preview rendering for campaigns through
 `GET /api/campaigns/{campaignId}/preview-html`. The endpoint renders campaign
@@ -13,6 +13,14 @@ creates `CampaignFile` rows, and exposes a guarded download endpoint. The
 FastAPI service calls Playwright's sync API from a background thread so Windows
 does not launch Chromium from Uvicorn's request event loop. There is still no
 S3/R2 provider and no background worker.
+
+Phase 18A makes the shared preview/export renderer customer-facing for sales
+demos. The HTML preview, generated PDF, and generated PNG now use the same
+brochure mode: internal match badges/status labels are hidden, raw ISO
+timestamps are not printed, prices render in European/Turkish style such as
+`1,59€`, and old prices render with strikethrough styling. Operator diagnostics
+should be added later as a separate mode instead of being mixed into customer
+brochures.
 
 Required browser setup after installing backend dependencies:
 
@@ -122,6 +130,8 @@ MVP:
 - Do not create `CampaignFile` records for HTML preview reads.
 - `POST /api/campaigns/{campaignId}/export-jobs` can create final PDF and PNG
   files from the same deterministic HTML renderer.
+- Preview HTML is intentionally customer-facing and should roughly match final
+  PDF/PNG output. It does not show product match badges or technical statuses.
 
 ## Final Exports
 
@@ -195,6 +205,15 @@ Template renderer inputs:
 - currency/language
 - output format
 
+Current renderer limitations:
+
+- Product images still use a polished placeholder when no real image exists.
+- There is no product image upload flow yet.
+- There is no visual template editor; template config remains simple metadata.
+- PDF/PNG storage is still local only; S3/R2 is deferred.
+- The brochure is single-page oriented for the current MVP and should be
+  revisited before supporting large multi-page campaigns.
+
 ## Playwright Export Later
 
 Use Playwright for:
@@ -217,11 +236,14 @@ adding credentials, bucket policy, signed URL, or cleanup complexity.
 4. Confirm the response includes `campaign_id`, `template_id`, `template_name`,
    `html`, and `generated_at`.
 5. Confirm product names and prices appear in the returned HTML.
-6. Create an export job with `requested_formats=["pdf","png"]`.
-7. Confirm local files appear under `backend/storage/...` or the configured
+6. Confirm prices use `1,59€` style formatting, old prices are struck through,
+   raw ISO timestamps are absent, and match statuses such as `Eşleşti` are not
+   shown in the customer brochure.
+7. Create an export job with `requested_formats=["pdf","png"]`.
+8. Confirm local files appear under `backend/storage/...` or the configured
    `LOCAL_STORAGE_DIR`.
-8. Confirm campaign detail includes `CampaignFile` rows.
-9. Download the PDF and PNG through
+9. Confirm campaign detail includes `CampaignFile` rows.
+10. Download the PDF and PNG through
    `GET /api/campaigns/{campaignId}/files/{fileId}/download`.
 
 ## Cleanup And Retention

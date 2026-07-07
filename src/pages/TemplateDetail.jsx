@@ -1,11 +1,26 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import { getTemplateDetail } from "../data/dataSource.js";
 import { findTemplateById, generatedFiles, outputFormats, products } from "../data/mockData.js";
 import { Badge, Button, Card, ExportPanel, PageHeader, PreviewFrame, StatusBadge } from "../components/ui/index.js";
 
+function emptyTemplate(templateId) {
+  return {
+    id: templateId,
+    name: "Åžablon yÃ¼kleniyor",
+    type: "-",
+    formats: [],
+    capacity: "-",
+    maxProductsPerPage: "-",
+    status: "Pasif",
+    isDefault: false,
+    recommendation: "Åžablon verisi henÃ¼z yÃ¼klenmedi.",
+    bestFor: "-",
+  };
+}
+
 export function TemplateDetail({ templateId }) {
-  const [template, setTemplate] = useState(() => findTemplateById(templateId));
+  const [template, setTemplate] = useState(() => (isRealApiEnabled ? emptyTemplate(templateId) : findTemplateById(templateId)));
   const [message, setMessage] = useState("");
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
@@ -24,8 +39,8 @@ export function TemplateDetail({ templateId }) {
         }
       } catch (error) {
         if (isMounted) {
-          setTemplate(findTemplateById(templateId));
-          setApiError(`${error.message || "Şablon detayı yüklenemedi."} Mock şablon detayı gösteriliyor.`);
+          setTemplate(emptyTemplate(templateId));
+          setApiError(error.message || "Şablon detayı yüklenemedi.");
         }
       } finally {
         if (isMounted) setIsLoading(false);
@@ -43,21 +58,21 @@ export function TemplateDetail({ templateId }) {
     <>
       <PageHeader
         title={template.name}
-        description={`${template.type} · ${template.capacity} · ${template.formats.join(", ")}`}
+        description={`${template.type} Â· ${template.capacity} Â· ${template.formats.join(", ")}`}
         actions={
           <>
-            <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
-            <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
-            <Button onClick={() => setMessage("Şablon kopyası oluşturuldu.")}>Kopyala</Button>
-            <Button variant="primary" onClick={() => setMessage("Düzenleme paneli bu fazda temsilidir.")}>
-              Düzenle
+            <Button onClick={() => setMessage("Bu ÅŸablon varsayÄ±lan olarak iÅŸaretlendi.")}>VarsayÄ±lan Yap</Button>
+            <Button onClick={() => setMessage("Ã–nizleme oluÅŸturma simÃ¼le edildi.")}>Ã–nizleme OluÅŸtur</Button>
+            <Button onClick={() => setMessage("Åžablon kopyasÄ± oluÅŸturuldu.")}>Kopyala</Button>
+            <Button variant="primary" onClick={() => setMessage("DÃ¼zenleme paneli bu fazda temsilidir.")}>
+              DÃ¼zenle
             </Button>
           </>
         }
       />
       {message ? <p className="inline-result">{message}</p> : null}
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
-      {isLoading ? <p className="inline-result">Şablon detayı yükleniyor...</p> : null}
+      {isLoading ? <p className="inline-result">Åžablon detayÄ± yÃ¼kleniyor...</p> : null}
 
       <section className="detail-hero card">
         <div>
@@ -65,7 +80,7 @@ export function TemplateDetail({ templateId }) {
           <h2>{template.name}</h2>
           <p>{template.recommendation}</p>
           <div className="file-badges">
-            {template.isDefault ? <Badge tone="primary">Varsayılan</Badge> : null}
+            {template.isDefault ? <Badge tone="primary">VarsayÄ±lan</Badge> : null}
             {template.formats.map((format) => (
               <span key={format}>{format}</span>
             ))}
@@ -73,11 +88,11 @@ export function TemplateDetail({ templateId }) {
         </div>
         <dl className="summary-grid">
           <div>
-            <dt>Şablon tipi</dt>
+            <dt>Åžablon tipi</dt>
             <dd>{template.type}</dd>
           </div>
           <div>
-            <dt>Maksimum ürün</dt>
+            <dt>Maksimum Ã¼rÃ¼n</dt>
             <dd>{template.maxProductsPerPage}</dd>
           </div>
           <div>
@@ -85,24 +100,24 @@ export function TemplateDetail({ templateId }) {
             <dd>{template.bestFor}</dd>
           </div>
           <div>
-            <dt>Varsayılan</dt>
-            <dd>{template.isDefault ? "Evet" : "Hayır"}</dd>
+            <dt>VarsayÄ±lan</dt>
+            <dd>{template.isDefault ? "Evet" : "HayÄ±r"}</dd>
           </div>
         </dl>
       </section>
 
       <section className="dashboard-grid">
-        <Card title="Şablon Önizleme" className="span-8">
-          <PreviewFrame title={template.name} status="Örnek veri" products={products.slice(0, 8)} formats={formats} />
+        <Card title="Åžablon Ã–nizleme" className="span-8">
+          <PreviewFrame title={template.name} status="Ã–rnek veri" products={products.slice(0, 8)} formats={formats} />
         </Card>
-        <Card title="Şablon Bilgileri" className="span-4">
+        <Card title="Åžablon Bilgileri" className="span-4">
           <dl className="detail-list">
             <div>
-              <dt>Kullanım önerisi</dt>
+              <dt>KullanÄ±m Ã¶nerisi</dt>
               <dd>{template.recommendation}</dd>
             </div>
             <div>
-              <dt>Ürün kapasitesi</dt>
+              <dt>ÃœrÃ¼n kapasitesi</dt>
               <dd>{template.capacity}</dd>
             </div>
             <div>
@@ -115,7 +130,7 @@ export function TemplateDetail({ templateId }) {
             </div>
           </dl>
         </Card>
-        <Card title="Örnek Çıktılar" className="span-12">
+        <Card title="Ã–rnek Ã‡Ä±ktÄ±lar" className="span-12">
           <ExportPanel files={generatedFiles} onAction={setMessage} />
         </Card>
       </section>

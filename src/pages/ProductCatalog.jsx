@@ -10,6 +10,7 @@ import {
 import {
   Button,
   Card,
+  ConfirmDialog,
   FilterBar,
   Input,
   Modal,
@@ -167,6 +168,7 @@ export function ProductCatalog() {
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const [isSaving, setIsSaving] = useState(false);
   const [isTogglingId, setIsTogglingId] = useState("");
+  const [confirmProduct, setConfirmProduct] = useState(null);
   const [apiError, setApiError] = useState("");
   const [modalError, setModalError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -308,6 +310,14 @@ export function ProductCatalog() {
     setProducts((current) => current.map((item) => (item.id === product.id ? { ...item, status: nextStatus } : item)));
   }
 
+  async function confirmToggleProductStatus() {
+    const product = confirmProduct;
+    setConfirmProduct(null);
+    if (product) {
+      await toggleProductStatus(product);
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -409,7 +419,7 @@ export function ProductCatalog() {
                     <button
                       className="table-action"
                       type="button"
-                      onClick={() => toggleProductStatus(product)}
+                      onClick={() => setConfirmProduct(product)}
                       disabled={isTogglingId === product.id}
                     >
                       {isTogglingId === product.id
@@ -437,6 +447,19 @@ export function ProductCatalog() {
           error={modalError}
         />
       ) : null}
+      <ConfirmDialog
+        isOpen={Boolean(confirmProduct)}
+        title="Ürün durumunu değiştir"
+        description={
+          confirmProduct
+            ? `${confirmProduct.name} ürünü ${confirmProduct.status === "Aktif" ? "pasifleştirilecek" : "aktifleştirilecek"}. Devam edilsin mi?`
+            : ""
+        }
+        confirmLabel={confirmProduct?.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}
+        onCancel={() => setConfirmProduct(null)}
+        onConfirm={confirmToggleProductStatus}
+        isLoading={Boolean(confirmProduct && isTogglingId === confirmProduct.id)}
+      />
     </>
   );
 }
