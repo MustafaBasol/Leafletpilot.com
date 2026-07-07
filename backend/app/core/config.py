@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     )
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=480, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
+    invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
 
     @property
     def local_storage_path(self) -> Path:

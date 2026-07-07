@@ -46,6 +46,18 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         return False
 
 
+def generate_invitation_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_invitation_token(token: str) -> str:
+    return hmac.new(
+        settings.jwt_secret_key.encode("utf-8"),
+        token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
     expires_at = datetime.now(UTC) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)

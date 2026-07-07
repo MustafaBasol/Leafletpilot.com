@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppLayout } from "./components/layout/AppLayout.jsx";
 import { BotConnections } from "./pages/BotConnections.jsx";
+import { AcceptInvitation } from "./pages/AcceptInvitation.jsx";
 import { CampaignDetail } from "./pages/CampaignDetail.jsx";
 import { Campaigns } from "./pages/Campaigns.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
@@ -12,6 +13,7 @@ import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
 import { Templates } from "./pages/Templates.jsx";
+import { Team } from "./pages/Team.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
 import { clearAuthSession, hasStoredAuthSession, saveAuthSession } from "./api/authSession.js";
@@ -36,7 +38,8 @@ function useHashPath() {
   return path;
 }
 
-function Page({ path }) {
+function Page({ path, sessionVersion }) {
+  void sessionVersion;
   if (path === "/") return <Dashboard />;
   if (path === "/campaigns") return <Campaigns />;
   if (path === "/campaigns/new") return <NewCampaign />;
@@ -46,6 +49,7 @@ function Page({ path }) {
   if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
   if (path === "/bot-connections") return <BotConnections />;
   if (path === "/settings") return <Settings />;
+  if (path === "/team") return <Team />;
   if (pageMeta[path]) return <PlaceholderPage path={path} />;
   return <PlaceholderPage path="/campaigns" />;
 }
@@ -57,6 +61,13 @@ export function App() {
   );
   const [isCheckingSession, setCheckingSession] = useState(() => isRealApiEnabled && hasStoredAuthSession());
   const [authError, setAuthError] = useState("");
+  const [sessionVersion, setSessionVersion] = useState(0);
+
+  useEffect(() => {
+    const handleMarketChanged = () => setSessionVersion((version) => version + 1);
+    window.addEventListener("leafletpilot:market-changed", handleMarketChanged);
+    return () => window.removeEventListener("leafletpilot:market-changed", handleMarketChanged);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -71,6 +82,7 @@ export function App() {
         const session = await getMe();
         if (isMounted) {
           saveAuthSession(session);
+          setSessionVersion((version) => version + 1);
           setAuthenticated(true);
           setAuthError("");
         }
@@ -105,6 +117,7 @@ export function App() {
 
     const session = await loginWithApi(email, password);
     saveAuthSession(session);
+    setSessionVersion((version) => version + 1);
     setAuthenticated(true);
     setAuthError("");
     window.location.hash = "#/";
@@ -128,6 +141,15 @@ export function App() {
     return <Login onLogin={login} initialError={authError} />;
   }
 
+  if (path.startsWith("/accept-invitation")) {
+    return (
+      <AcceptInvitation
+        isAuthenticated={isAuthenticated}
+        onSessionUpdated={() => setSessionVersion((version) => version + 1)}
+      />
+    );
+  }
+
   if (!isAuthenticated) {
     if (!isRealApiEnabled && path !== "/login") {
       return <Landing />;
@@ -137,8 +159,8 @@ export function App() {
   }
 
   return (
-    <AppLayout currentPath={path} pageTitle={getPageTitle(path)} onLogout={logout}>
-      <Page path={path} />
+    <AppLayout currentPath={path} pageTitle={getPageTitle(path)} onLogout={logout} sessionVersion={sessionVersion}>
+      <Page path={path} sessionVersion={sessionVersion} key={`${path}:${sessionVersion}`} />
     </AppLayout>
   );
 }

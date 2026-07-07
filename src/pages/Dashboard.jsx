@@ -1,12 +1,16 @@
+import { useEffect, useMemo, useState } from "react";
+import { canManageTemplates, canMutateCampaigns, canMutateCatalog, getSelectedMarket } from "../api/authSession.js";
+import { isRealApiEnabled } from "../api/config.js";
 import {
   activities,
-  campaigns,
+  campaigns as mockCampaigns,
   market,
   metrics,
   missingProducts,
   products,
   waitingApprovals,
 } from "../data/mockData.js";
+import { getCampaigns } from "../data/dataSource.js";
 import { Badge, Button, Card, Icon, StatusBadge, Table } from "../components/ui/index.js";
 
 function metricIconName(tone) {
@@ -15,16 +19,16 @@ function metricIconName(tone) {
   return "file";
 }
 
-function MetricCards() {
+function MetricCards({ items }) {
   return (
     <div className="metric-grid">
-      {metrics.map((metric) => (
+      {items.map((metric) => (
         <section className={`metric-card metric-${metric.tone}`} key={metric.label}>
           <div className="metric-top">
             <span>
               <Icon name={metricIconName(metric.tone)} />
             </span>
-            <Badge tone={metric.tone}>{metric.tone === "warning" ? "Aksiyon gerekli" : "Güncel"}</Badge>
+            <Badge tone={metric.tone}>{metric.badge || "Güncel"}</Badge>
           </div>
           <p>{metric.label}</p>
           <strong>{metric.value}</strong>
@@ -36,7 +40,7 @@ function MetricCards() {
   );
 }
 
-function RecentCampaigns() {
+function RecentCampaigns({ items, isLoading }) {
   return (
     <Card
       title="Son Kampanyalar"
@@ -47,32 +51,63 @@ function RecentCampaigns() {
       }
       className="span-8"
     >
-      <Table columns={["Kampanya", "Market", "Durum", "Ürün", "Tarih", "Aksiyon"]}>
-        {campaigns.map((campaign) => (
-          <tr key={`${campaign.name}-${campaign.date}`}>
-            <td>
-              <strong>{campaign.name}</strong>
-              <small>{campaign.channel} üzerinden alındı</small>
-            </td>
-            <td>{campaign.market}</td>
-            <td>
-              <StatusBadge status={campaign.status} />
-            </td>
-            <td>{campaign.productCount} ürün</td>
-            <td>{campaign.date}</td>
-            <td>
-              <a className="table-action" href={`#/campaigns/${campaign.id}`}>
-                Detay
-              </a>
-            </td>
-          </tr>
-        ))}
-      </Table>
+      {isLoading ? <p className="inline-result">Kampanyalar yükleniyor...</p> : null}
+      {!isLoading && items.length === 0 ? <p className="catalog-empty">Bu markette kampanya yok.</p> : null}
+      {!isLoading && items.length > 0 ? (
+        <Table columns={["Kampanya", "Market", "Durum", "Ürün", "Tarih", "Aksiyon"]}>
+          {items.slice(0, 5).map((campaign) => (
+            <tr key={campaign.id || `${campaign.name}-${campaign.date}`}>
+              <td>
+                <strong>{campaign.name}</strong>
+                <small>{campaign.channel} üzerinden alındı</small>
+              </td>
+              <td>{campaign.market}</td>
+              <td>
+                <StatusBadge status={campaign.status} />
+              </td>
+              <td>{campaign.productCount} ürün</td>
+              <td>{campaign.date || campaign.createdAt}</td>
+              <td>
+                <a className="table-action" href={`#/campaigns/${campaign.id}`}>
+                  Detay
+                </a>
+              </td>
+            </tr>
+          ))}
+        </Table>
+      ) : null}
     </Card>
   );
 }
 
-function BotStatus() {
+function BotStatus({ selectedMarket }) {
+  if (isRealApiEnabled) {
+    return (
+      <Card title="Bot Bağlantı Durumu" className="span-4">
+        <div className="bot-status bot-status-muted">
+          <div className="bot-orb">
+            <Icon name="bot" />
+          </div>
+          <div>
+            <Badge>Yapılandırılmadı</Badge>
+            <h3>Bot bağlantısı henüz yapılandırılmadı.</h3>
+            <p>Telegram ve WhatsApp entegrasyonları bu fazda aktif değildir.</p>
+          </div>
+        </div>
+        <dl className="detail-list">
+          <div>
+            <dt>Market</dt>
+            <dd>{selectedMarket?.name || "-"}</dd>
+          </div>
+          <div>
+            <dt>Durum</dt>
+            <dd>Beklemede</dd>
+          </div>
+        </dl>
+      </Card>
+    );
+  }
+
   return (
     <Card title="Bot Bağlantı Durumu" className="span-4">
       <div className="bot-status">
@@ -105,32 +140,23 @@ function BotStatus() {
           <dd>{market.name}</dd>
         </div>
       </dl>
-      <div className="card-actions">
-        <Button variant="primary" href="#/bot-connections">
-          Test mesajı gönder
-        </Button>
-        <Button variant="secondary" href="#/bot-connections">
-          Bağlantıyı görüntüle
-        </Button>
-      </div>
     </Card>
   );
 }
 
-function WaitingList() {
+function WaitingList({ items }) {
   return (
     <Card title="Onay Bekleyenler" className="span-6">
       <div className="stack-list">
-        {waitingApprovals.map((item, index) => (
-          <article className="approval-row" key={item.name}>
+        {items.length === 0 ? <p className="catalog-empty">Onay bekleyen kampanya yok.</p> : null}
+        {items.map((item, index) => (
+          <article className="approval-row" key={item.id || item.name}>
             <div className="preview-thumb">P{index + 1}</div>
             <div>
               <strong>{item.name}</strong>
-              <small>
-                {item.market} · {item.waiting}
-              </small>
+              <small>{item.market} · {item.waiting || item.status}</small>
             </div>
-            <a href="#/campaigns">Aç</a>
+            <a href={item.id ? `#/campaigns/${item.id}` : "#/campaigns"}>Aç</a>
           </article>
         ))}
       </div>
@@ -138,7 +164,7 @@ function WaitingList() {
   );
 }
 
-function MissingList() {
+function MissingList({ items }) {
   return (
     <Card
       title="Eksik Ürünler"
@@ -150,7 +176,8 @@ function MissingList() {
       className="span-6"
     >
       <div className="stack-list">
-        {missingProducts.map((product) => (
+        {items.length === 0 ? <p className="catalog-empty">Eksik ürün görünmüyor.</p> : null}
+        {items.map((product) => (
           <article className="missing-row" key={`${product.incoming}-${product.campaign}`}>
             <div>
               <strong>{product.incoming}</strong>
@@ -158,7 +185,7 @@ function MissingList() {
             </div>
             <div>
               <small>Öneri</small>
-              <span>{product.suggestion}</span>
+              <span>{product.suggestion || "-"}</span>
             </div>
             <a href="#/products">Eşleştir</a>
           </article>
@@ -170,13 +197,13 @@ function MissingList() {
 
 function QuickActions() {
   const actions = [
-    ["Yeni Kampanya Oluştur", "#/campaigns/new", "plus"],
+    canMutateCampaigns() ? ["Yeni Kampanya Oluştur", "#/campaigns/new", "plus"] : null,
     ["Ürün Kataloğuna Git", "#/products", "box"],
-    ["Excel İçe Aktar", "#/products", "file"],
-    ["Yeni Şablon Ekle", "#/templates", "file"],
+    canMutateCatalog() ? ["Excel İçe Aktar", "#/products", "file"] : null,
+    canManageTemplates() ? ["Yeni Şablon Ekle", "#/templates", "file"] : null,
     ["Bot Bağlantısını Kontrol Et", "#/bot-connections", "bot"],
     ["Market Ayarları", "#/markets", "store"],
-  ];
+  ].filter(Boolean);
 
   return (
     <Card title="Hızlı Aksiyonlar" className="span-6">
@@ -195,24 +222,112 @@ function QuickActions() {
 function ActivityHistory() {
   return (
     <Card title="Son İşlem Geçmişi" className="span-6">
-      <ol className="activity-list">
-        {activities.map((activity) => (
-          <li key={activity}>{activity}</li>
-        ))}
-      </ol>
-      <div className="product-strip">
-        {products.slice(0, 4).map((product) => (
-          <span key={product.name}>
-            <strong>{product.name}</strong>
-            {product.price}
-          </span>
-        ))}
-      </div>
+      {isRealApiEnabled ? (
+        <p className="catalog-empty">İşlem geçmişi için gerçek veri bu fazda hazır değil.</p>
+      ) : (
+        <>
+          <ol className="activity-list">
+            {activities.map((activity) => (
+              <li key={activity}>{activity}</li>
+            ))}
+          </ol>
+          <div className="product-strip">
+            {products.slice(0, 4).map((product) => (
+              <span key={product.name}>
+                <strong>{product.name}</strong>
+                {product.price}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
     </Card>
   );
 }
 
+function buildRealMetrics(campaignItems) {
+  const missingCount = campaignItems.reduce((total, campaign) => total + Number(campaign.missingCount || 0), 0);
+  const approvalCount = campaignItems.filter((campaign) => ["Onay bekliyor", "Revizyon istendi"].includes(campaign.status)).length;
+  return [
+    {
+      label: "Toplam Kampanya",
+      value: campaignItems.length,
+      helper: "Seçili marketteki kampanya sayısı",
+      trend: "Gerçek API verisi",
+      tone: "success",
+    },
+    {
+      label: "Onay Bekleyen",
+      value: approvalCount,
+      helper: "Onay veya revizyon durumundaki kampanyalar",
+      trend: "Seçili market",
+      tone: approvalCount ? "warning" : "success",
+      badge: approvalCount ? "Aksiyon gerekli" : "Güncel",
+    },
+    {
+      label: "Eksik Ürün",
+      value: missingCount,
+      helper: "Kampanyalardaki eksik ürün toplamı",
+      trend: "Seçili market",
+      tone: missingCount ? "danger" : "success",
+      badge: missingCount ? "Aksiyon gerekli" : "Güncel",
+    },
+    {
+      label: "Üretilen Dosya",
+      value: "-",
+      helper: "Bu metrik için gerçek veri henüz yok",
+      trend: "Sahte veri gösterilmiyor",
+      tone: "neutral",
+      badge: "Hazır değil",
+    },
+  ];
+}
+
 export function Dashboard() {
+  const [campaignItems, setCampaignItems] = useState(() => (isRealApiEnabled ? [] : mockCampaigns));
+  const [apiError, setApiError] = useState("");
+  const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const selectedMarket = getSelectedMarket();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboard() {
+      if (!isRealApiEnabled) return;
+      setIsLoading(true);
+      setCampaignItems([]);
+      setApiError("");
+      try {
+        const items = await getCampaigns();
+        if (isMounted) setCampaignItems(items);
+      } catch (error) {
+        if (isMounted) setApiError(error.message || "Dashboard verisi yüklenemedi.");
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedMarket?.id]);
+
+  const dashboardMetrics = useMemo(
+    () => (isRealApiEnabled ? buildRealMetrics(campaignItems) : metrics),
+    [campaignItems],
+  );
+  const waitingItems = isRealApiEnabled
+    ? campaignItems.filter((campaign) => ["Onay bekliyor", "Revizyon istendi"].includes(campaign.status)).slice(0, 4)
+    : waitingApprovals;
+  const missingItems = isRealApiEnabled
+    ? campaignItems
+        .filter((campaign) => Number(campaign.missingCount || 0) > 0)
+        .slice(0, 4)
+        .map((campaign) => ({ incoming: `${campaign.missingCount} eksik ürün`, campaign: campaign.name, suggestion: "Katalog kontrolü" }))
+    : missingProducts;
+
   return (
     <>
       <section className="page-heading">
@@ -221,20 +336,25 @@ export function Dashboard() {
           <p>Kampanyalarınızı, ürün eşleşmelerini ve çıktı durumlarını tek ekrandan takip edin.</p>
         </div>
         <div className="page-actions">
-          <Button variant="secondary" href="#/bot-connections">
-            Bot Testi
-          </Button>
-          <Button variant="primary" href="#/campaigns/new">
-            Yeni Kampanya
-          </Button>
+          {!isRealApiEnabled ? (
+            <Button variant="secondary" href="#/bot-connections">
+              Bot Testi
+            </Button>
+          ) : null}
+          {canMutateCampaigns() ? (
+            <Button variant="primary" href="#/campaigns/new">
+              Yeni Kampanya
+            </Button>
+          ) : null}
         </div>
       </section>
-      <MetricCards />
+      {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
+      <MetricCards items={dashboardMetrics} />
       <section className="dashboard-grid">
-        <RecentCampaigns />
-        <BotStatus />
-        <WaitingList />
-        <MissingList />
+        <RecentCampaigns items={campaignItems} isLoading={isLoading} />
+        <BotStatus selectedMarket={selectedMarket} />
+        <WaitingList items={waitingItems} />
+        <MissingList items={missingItems} />
         <QuickActions />
         <ActivityHistory />
       </section>

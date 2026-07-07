@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import Base
 from app.core.security import hash_password
 from app.main import app
-from app.models import Market, MarketUser, User
+from app.models import Market, MarketInvitation, MarketUser, User
 
 
 class FakeMembershipSession:
@@ -132,6 +132,114 @@ async def test_auth_flow_and_market_membership_when_test_database_url_is_configu
                 headers={**auth_headers, "X-Market-Id": str(other_market_id)},
             )
             assert forbidden.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_public_invitation_accept_creates_user_and_password_can_login() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed auth tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    admin_email = f"invite-admin-{market_id}@example.com"
+    invited_email = f"invite-user-{market_id}@example.com"
+    other_invited_email = f"invite-other-{market_id}@example.com"
+    admin_password = "demo1234"
+    invited_password = "InvitePass123!"
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with session_factory() as session:
+            admin = User(
+                email=admin_email,
+                full_name="Invite Admin",
+                password_hash=hash_password(admin_password),
+                is_active=True,
+            )
+            market = Market(id=market_id, name=f"Invite Market {market_id}", slug=f"invite-{market_id}")
+            session.add_all([admin, market])
+            await session.flush()
+            session.add(MarketUser(market_id=market_id, user_id=admin.id, role="market_admin", is_active=True))
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            login = await async_client.post("/api/auth/login", json={"email": admin_email, "password": admin_password})
+            assert login.status_code == 200
+            admin_headers = {
+                "Authorization": f"Bearer {login.json()['access_token']}",
+                "X-Market-Id": str(market_id),
+            }
+
+            invite_response = await async_client.post(
+                "/api/market-invitations",
+                headers=admin_headers,
+                json={"email": invited_email, "role": "viewer"},
+            )
+            assert invite_response.status_code == 201
+            invite = invite_response.json()
+
+            accept_response = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": invite["invite_token"], "full_name": "Invited User", "password": invited_password},
+            )
+            assert accept_response.status_code == 200
+            assert any(market["id"] == str(market_id) and market["role"] == "viewer" for market in accept_response.json()["markets"])
+
+            invited_login = await async_client.post(
+                "/api/auth/login",
+                json={"email": invited_email, "password": invited_password},
+            )
+            assert invited_login.status_code == 200
+            assert invited_login.json()["user"]["email"] == invited_email
+
+            reuse_response = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": invite["invite_token"], "full_name": "Invited User", "password": invited_password},
+            )
+            assert reuse_response.status_code == 409
+
+            other_invite_response = await async_client.post(
+                "/api/market-invitations",
+                headers=admin_headers,
+                json={"email": other_invited_email, "role": "market_staff"},
+            )
+            assert other_invite_response.status_code == 201
+            mismatch = await async_client.post(
+                "/api/auth/accept-invitation-authenticated",
+                headers={"Authorization": admin_headers["Authorization"]},
+                json={"token": other_invite_response.json()["invite_token"]},
+            )
+            assert mismatch.status_code == 403
+            assert mismatch.json()["detail"]["code"] == "invitation_email_mismatch"
+
+        async with session_factory() as session:
+            created_user = await session.scalar(select(User).where(User.email == invited_email))
+            assert created_user is not None
+            assert created_user.is_active is True
+            membership = await session.scalar(
+                select(MarketUser).where(MarketUser.market_id == market_id, MarketUser.user_id == created_user.id)
+            )
+            assert membership is not None
+            assert membership.role == "viewer"
+            accepted_invitation = await session.scalar(
+                select(MarketInvitation).where(MarketInvitation.email == invited_email)
+            )
+            assert accepted_invitation is not None
+            assert accepted_invitation.status == "accepted"
+            assert accepted_invitation.accepted_by_user_id == created_user.id
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()

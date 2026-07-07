@@ -1,31 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { products as initialProducts } from "../data/mockData.js";
+import { canMutateCatalog, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
+import { products as initialProducts } from "../data/mockData.js";
 import {
   createCatalogProduct,
   getProductCatalogData,
   updateCatalogProduct,
   updateCatalogProductStatus,
 } from "../data/dataSource.js";
-import {
-  Button,
-  Card,
-  ConfirmDialog,
-  FilterBar,
-  Input,
-  Modal,
-  PageHeader,
-  ProductThumbnail,
-  SelectPlaceholder,
-  StatusBadge,
-  Table,
-} from "../components/ui/index.js";
+import { Button, Card, ConfirmDialog, FilterBar, Modal, PageHeader, ProductThumbnail, StatusBadge, Table } from "../components/ui/index.js";
 
 const emptyProduct = {
   name: "",
   shortName: "",
-  brand: "",
-  category: "",
   brandId: "",
   categoryId: "",
   barcode: "",
@@ -61,96 +48,88 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function FieldSelect({ label, value, onChange, options }) {
+function Field({ label, children }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select value={value || ""} onChange={(event) => onChange(event.target.value)} aria-label={label}>
-        <option value="">Seçilmedi</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.name}
-          </option>
-        ))}
-      </select>
+      {children}
     </label>
   );
 }
 
 function ProductFormModal({ product, brands, categories, onClose, onSave, isSaving, error }) {
-  const [form, setForm] = useState(
-    product
-      ? { ...product, alternativeNamesText: (product.alternativeNames || []).join(", ") }
-      : { ...emptyProduct },
-  );
+  const [form, setForm] = useState(() => ({
+    ...emptyProduct,
+    ...product,
+    alternativeNamesText: (product?.alternativeNames || []).join(", "),
+  }));
 
-  function updateField(field, value) {
+  function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    onSave(form);
   }
 
   return (
     <Modal
       title={product ? "Ürünü Düzenle" : "Ürün Ekle"}
-      description="Katalogda kullanılacak ürün bilgilerini ve alternatif isimleri yönetin."
+      description="Market kataloğundaki ürün bilgilerini güncelleyin."
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose} disabled={isSaving}>İptal</Button>
-          <Button variant="primary" onClick={() => onSave(form)} disabled={isSaving}>
+          <Button onClick={onClose}>Vazgeç</Button>
+          <Button variant="primary" type="submit" form="product-form" disabled={isSaving}>
             {isSaving ? "Kaydediliyor..." : "Kaydet"}
           </Button>
         </>
       }
     >
-      {error ? <p className="inline-result inline-result-warning">{error}</p> : null}
-      <div className="product-form-layout">
-        <div className="form-grid modal-form-grid">
-          <Input label="Ürün Adı" value={form.name} onChange={(event) => updateField("name", event.target.value)} />
-          <Input
-            label="Kısa Ürün Adı"
-            value={form.shortName}
-            onChange={(event) => updateField("shortName", event.target.value)}
-          />
-          {isRealApiEnabled ? (
-            <FieldSelect label="Marka" value={form.brandId} onChange={(value) => updateField("brandId", value)} options={brands} />
-          ) : (
-            <Input label="Marka" value={form.brand} onChange={(event) => updateField("brand", event.target.value)} />
-          )}
-          {isRealApiEnabled ? (
-            <FieldSelect
-              label="Kategori"
-              value={form.categoryId}
-              onChange={(value) => updateField("categoryId", value)}
-              options={categories}
-            />
-          ) : (
-            <Input label="Kategori" value={form.category} onChange={(event) => updateField("category", event.target.value)} />
-          )}
-          <Input label="Barkod" value={form.barcode} onChange={(event) => updateField("barcode", event.target.value)} />
-          <Input
-            label="Paket Boyutu"
-            value={form.packageSize}
-            onChange={(event) => updateField("packageSize", event.target.value)}
-          />
-          <Input
-            label="Paket Tipi"
-            value={form.packageType}
-            onChange={(event) => updateField("packageType", event.target.value)}
-          />
-          <SelectPlaceholder label="Durum" value={form.status} />
-          <label className="field field-full">
-            <span>Alternatif İsimler</span>
-            <textarea
-              value={form.alternativeNamesText}
-              onChange={(event) => updateField("alternativeNamesText", event.target.value)}
-            />
-          </label>
-        </div>
-        <div className="upload-zone image-upload">
-          <strong>Ürün Görseli</strong>
-          <p>PNG ürün görseli için yükleme alanı. Bu fazda gerçek dosya yüklenmez.</p>
-        </div>
-      </div>
+      <form id="product-form" className="form-grid" onSubmit={submit}>
+        <Field label="Ürün adı">
+          <input value={form.name} onChange={(event) => update("name", event.target.value)} required />
+        </Field>
+        <Field label="Kısa ad">
+          <input value={form.shortName || ""} onChange={(event) => update("shortName", event.target.value)} />
+        </Field>
+        <Field label="Barkod">
+          <input value={form.barcode || ""} onChange={(event) => update("barcode", event.target.value)} />
+        </Field>
+        <Field label="Marka">
+          <select value={form.brandId || ""} onChange={(event) => update("brandId", event.target.value)}>
+            <option value="">Seçilmedi</option>
+            {brands.map((brand) => (
+              <option value={brand.id} key={brand.id}>{brand.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kategori">
+          <select value={form.categoryId || ""} onChange={(event) => update("categoryId", event.target.value)}>
+            <option value="">Seçilmedi</option>
+            {categories.map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Durum">
+          <select value={form.status || "Aktif"} onChange={(event) => update("status", event.target.value)}>
+            <option value="Aktif">Aktif</option>
+            <option value="Pasif">Pasif</option>
+          </select>
+        </Field>
+        <Field label="Paket boyutu">
+          <input value={form.packageSize || ""} onChange={(event) => update("packageSize", event.target.value)} />
+        </Field>
+        <Field label="Paket tipi">
+          <input value={form.packageType || ""} onChange={(event) => update("packageType", event.target.value)} />
+        </Field>
+        <Field label="Alternatif isimler">
+          <input value={form.alternativeNamesText || ""} onChange={(event) => update("alternativeNamesText", event.target.value)} />
+        </Field>
+        {error ? <p className="form-error field-full">{error}</p> : null}
+      </form>
     </Modal>
   );
 }
@@ -172,12 +151,17 @@ export function ProductCatalog() {
   const [apiError, setApiError] = useState("");
   const [modalError, setModalError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const selectedMarketId = getSelectedMarketId();
+  const canEditCatalog = canMutateCatalog();
 
   async function loadCatalog() {
     if (!isRealApiEnabled) return;
 
     try {
       setIsLoading(true);
+      setProducts([]);
+      setBrands([]);
+      setCategories([]);
       const catalogData = await getProductCatalogData();
       setProducts(catalogData.products);
       setBrands(catalogData.brands);
@@ -195,7 +179,7 @@ export function ProductCatalog() {
 
   useEffect(() => {
     loadCatalog();
-  }, []);
+  }, [selectedMarketId]);
 
   const fallbackBrands = useMemo(() => {
     const names = Array.from(new Set(products.map((product) => product.brand).filter(Boolean)));
@@ -324,10 +308,12 @@ export function ProductCatalog() {
         title="Ürün Kataloğu"
         description="Onaylı ürün veritabanını, görsel durumlarını ve alternatif isimleri yönetin."
         actions={
-          <>
-            <Button onClick={() => setIsAdding(true)}>Ürün Ekle</Button>
-            <Button variant="primary">Excel İçe Aktar</Button>
-          </>
+          canEditCatalog ? (
+            <>
+              <Button onClick={() => setIsAdding(true)}>Ürün Ekle</Button>
+              <Button variant="primary">Excel İçe Aktar</Button>
+            </>
+          ) : null
         }
       />
 
@@ -389,8 +375,8 @@ export function ProductCatalog() {
               "Alternatif İsimler",
               "Kullanım",
               "Durum",
-              "Aksiyonlar",
-            ]}
+              canEditCatalog ? "Aksiyonlar" : null,
+            ].filter(Boolean)}
           >
             {filteredProducts.map((product) => (
               <tr key={product.id}>
@@ -399,9 +385,7 @@ export function ProductCatalog() {
                 </td>
                 <td>
                   <strong>{product.name}</strong>
-                  <small>
-                    {[product.packageSize, product.packageType].filter(Boolean).join(" · ") || "-"}
-                  </small>
+                  <small>{[product.packageSize, product.packageType].filter(Boolean).join(" · ") || "-"}</small>
                 </td>
                 <td>{product.brand || "Marka yok"}</td>
                 <td>{product.barcode}</td>
@@ -411,32 +395,34 @@ export function ProductCatalog() {
                 <td>
                   <StatusBadge status={product.status} />
                 </td>
-                <td>
-                  <div className="table-actions">
-                    <button className="table-action" type="button" onClick={() => setEditingProduct(product)}>
-                      Düzenle
-                    </button>
-                    <button
-                      className="table-action"
-                      type="button"
-                      onClick={() => setConfirmProduct(product)}
-                      disabled={isTogglingId === product.id}
-                    >
-                      {isTogglingId === product.id
-                        ? "Güncelleniyor..."
-                        : product.status === "Aktif"
-                          ? "Pasifleştir"
-                          : "Aktifleştir"}
-                    </button>
-                  </div>
-                </td>
+                {canEditCatalog ? (
+                  <td>
+                    <div className="table-actions">
+                      <button className="table-action" type="button" onClick={() => setEditingProduct(product)}>
+                        Düzenle
+                      </button>
+                      <button
+                        className="table-action"
+                        type="button"
+                        onClick={() => setConfirmProduct(product)}
+                        disabled={isTogglingId === product.id}
+                      >
+                        {isTogglingId === product.id
+                          ? "Güncelleniyor..."
+                          : product.status === "Aktif"
+                            ? "Pasifleştir"
+                            : "Aktifleştir"}
+                      </button>
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             ))}
           </Table>
         ) : null}
       </Card>
 
-      {editingProduct || isAdding ? (
+      {canEditCatalog && (editingProduct || isAdding) ? (
         <ProductFormModal
           product={editingProduct}
           brands={brandOptions}

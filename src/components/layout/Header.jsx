@@ -1,6 +1,11 @@
+import { canMutateCampaigns, canMutateCatalog } from "../../api/authSession.js";
 import { Button, Icon } from "../ui/index.js";
 
-export function Header({ pageTitle, onLogout }) {
+export function Header({ pageTitle, onLogout, sessionVersion }) {
+  void sessionVersion;
+  const showCatalogAction = canMutateCatalog();
+  const showCampaignAction = canMutateCampaigns();
+
   return (
     <header className="top-header">
       <div>
@@ -12,12 +17,16 @@ export function Header({ pageTitle, onLogout }) {
           <Icon name="search" />
           <input aria-label="Ara" placeholder="Kampanya, ürün veya market ara" />
         </div>
-        <Button variant="secondary" href="#/products">
-          Ürün Ekle
-        </Button>
-        <Button variant="primary" href="#/campaigns/new">
-          Yeni Kampanya
-        </Button>
+        {showCatalogAction && (
+          <Button variant="secondary" href="#/products">
+            Ürün Ekle
+          </Button>
+        )}
+        {showCampaignAction && (
+          <Button variant="primary" href="#/campaigns/new">
+            Yeni Kampanya
+          </Button>
+        )}
         <Button className="icon-button" aria-label="Çıkış yap" onClick={onLogout}>
           <Icon name="logout" />
         </Button>

@@ -1,22 +1,16 @@
 import { useEffect, useState } from "react";
-import { campaigns as mockCampaigns } from "../data/mockData.js";
+import { canMutateCampaigns, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
+import { campaigns as mockCampaigns } from "../data/mockData.js";
 import { getCampaigns } from "../data/dataSource.js";
-import {
-  Button,
-  Card,
-  FilterBar,
-  FilterChip,
-  Icon,
-  PageHeader,
-  StatusBadge,
-  Table,
-} from "../components/ui/index.js";
+import { Button, Card, FilterBar, FilterChip, Icon, PageHeader, StatusBadge, Table } from "../components/ui/index.js";
 
 export function Campaigns() {
   const [campaigns, setCampaigns] = useState(() => (isRealApiEnabled ? [] : mockCampaigns));
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const selectedMarketId = getSelectedMarketId();
+  const canEditCampaigns = canMutateCampaigns();
 
   useEffect(() => {
     let isMounted = true;
@@ -26,6 +20,7 @@ export function Campaigns() {
 
       try {
         setIsLoading(true);
+        setCampaigns([]);
         const apiCampaigns = await getCampaigns();
         if (isMounted) {
           setCampaigns(apiCampaigns);
@@ -46,7 +41,7 @@ export function Campaigns() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [selectedMarketId]);
 
   return (
     <>
@@ -54,12 +49,14 @@ export function Campaigns() {
         title="Kampanyalar"
         description="Kampanya durumlarını, ürün eşleşmelerini ve çıktı aksiyonlarını tek listeden yönetin."
         actions={
-          <>
-            <Button href="#/campaigns/new">Yeni Kampanya</Button>
-            <Button variant="primary" href="#/campaigns/new">
-              Önizleme Oluştur
-            </Button>
-          </>
+          canEditCampaigns ? (
+            <>
+              <Button href="#/campaigns/new">Yeni Kampanya</Button>
+              <Button variant="primary" href="#/campaigns/new">
+                Önizleme Oluştur
+              </Button>
+            </>
+          ) : null
         }
       />
 
@@ -120,12 +117,11 @@ export function Campaigns() {
                     <button className="table-action" type="button">
                       <Icon name="eye" /> Önizleme
                     </button>
-                    <button className="table-action" type="button">
-                      <Icon name="download" /> PDF
-                    </button>
-                    <button className="table-action" type="button">
-                      <Icon name="refresh" /> Yeniden Oluştur
-                    </button>
+                    {canEditCampaigns ? (
+                      <button className="table-action" type="button">
+                        <Icon name="refresh" /> Yeniden Oluştur
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>

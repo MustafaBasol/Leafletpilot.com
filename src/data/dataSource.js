@@ -134,6 +134,8 @@ function mapCampaign(campaign) {
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
     templateId: campaign.template_id || "",
     template: campaign.template_name || (campaign.template_id ? "Şablon adı yok" : "Şablon yok"),
+    campaignStartDate: campaign.campaign_start_date || "",
+    campaignEndDate: campaign.campaign_end_date || "",
     createdAt: formatDate(campaign.created_at),
     updatedAt: formatUpdatedAt(campaign.updated_at),
     date: formatDate(campaign.campaign_start_date || campaign.created_at),
@@ -276,6 +278,23 @@ export async function getCampaignDetail(id) {
   const marketId = requireSelectedMarketId();
 
   return mapCampaignDetail(await campaignApi.getCampaign(id, marketId));
+}
+
+export async function updateCampaignDetail(id, form) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return mapCampaignDetail(
+    await campaignApi.updateCampaign(
+      id,
+      {
+        title: cleanText(form.title),
+        template_id: cleanOptionalId(form.templateId),
+        campaign_start_date: form.campaignStartDate || null,
+        campaign_end_date: form.campaignEndDate || null,
+      },
+      marketId,
+    ),
+  );
 }
 
 export async function getCampaignPreviewHtml(campaignId) {
