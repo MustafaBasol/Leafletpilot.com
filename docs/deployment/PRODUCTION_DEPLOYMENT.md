@@ -6,6 +6,8 @@ to a real server and does not include production credentials.
 ## Current Limits
 
 - Access tokens are still stored in frontend `localStorage`.
+- Telegram bot integration is optional, disabled by default, and registered
+  manually. See [Internal Telegram Bot MVP](TELEGRAM_BOT_MVP.md).
 - There are no refresh tokens, password reset, MFA, OAuth, or automated
   invitation emails.
 - Export storage is local mounted storage only, with no S3/R2 replication.

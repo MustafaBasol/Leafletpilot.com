@@ -19,6 +19,9 @@ from app.models import (
     MatchingSuggestion,
     Product,
     ProductAlias,
+    TelegramAccount,
+    TelegramConversationState,
+    TelegramUpdate,
     User,
 )
 
@@ -40,6 +43,9 @@ EXPECTED_TABLES = {
     "export_jobs",
     "conversations",
     "incoming_messages",
+    "telegram_accounts",
+    "telegram_updates",
+    "telegram_conversation_states",
 }
 
 
@@ -90,6 +96,15 @@ def test_representative_model_constructors_work() -> None:
         message_type="text",
         text="Milk 1L - 1.29",
     )
+    telegram_account = TelegramAccount(user=user, telegram_user_id=123456789)
+    telegram_update = TelegramUpdate(update_id=1001, status="received", telegram_user_id=123456789)
+    telegram_state = TelegramConversationState(
+        telegram_account=telegram_account,
+        user=user,
+        telegram_user_id=123456789,
+        chat_id=123456789,
+        selected_market=market,
+    )
 
     assert user.email == "owner@example.com"
     assert market.currency is None
@@ -101,6 +116,9 @@ def test_representative_model_constructors_work() -> None:
     assert campaign.export_jobs == [export_job]
     assert campaign.conversation is conversation
     assert conversation.incoming_messages == [incoming_message]
+    assert telegram_account.telegram_user_id == 123456789
+    assert telegram_update.update_id == 1001
+    assert telegram_state.state is None
     assert campaign_item.price == Decimal("1.29")
     assert suggestion.score == Decimal("94.50")
 
@@ -112,6 +130,9 @@ def test_expected_constraints_and_indexes_exist() -> None:
     campaign_items = Base.metadata.tables["campaign_items"]
     campaign_files = Base.metadata.tables["campaign_files"]
     conversations = Base.metadata.tables["conversations"]
+    telegram_accounts = Base.metadata.tables["telegram_accounts"]
+    telegram_updates = Base.metadata.tables["telegram_updates"]
+    telegram_states = Base.metadata.tables["telegram_conversation_states"]
 
     assert users.c.email.unique is True
     assert "ix_users_email" in {index.name for index in users.indexes}
@@ -130,6 +151,10 @@ def test_expected_constraints_and_indexes_exist() -> None:
     assert "ix_campaign_files_status" in {index.name for index in campaign_files.indexes}
     assert "ix_conversations_provider" in {index.name for index in conversations.indexes}
     assert "ix_conversations_external_chat_id" in {index.name for index in conversations.indexes}
+    assert "ix_telegram_accounts_telegram_user_id" in {index.name for index in telegram_accounts.indexes}
+    assert "uq_telegram_accounts_active_user_id" in {index.name for index in telegram_accounts.indexes}
+    assert "ix_telegram_updates_update_id" in {index.name for index in telegram_updates.indexes}
+    assert "ix_telegram_conversation_states_telegram_user_id" in {index.name for index in telegram_states.indexes}
 
 
 def test_campaign_decimal_columns_use_numeric_types() -> None:

@@ -96,6 +96,7 @@ async def render_campaign_export(
     campaign_id: UUID,
     requested_formats: list[str] | None,
     export_job_id: UUID,
+    commit: bool = True,
 ) -> list[CampaignFile]:
     formats = normalize_requested_formats(requested_formats)
     export_job = await session.get(ExportJob, export_job_id)
@@ -149,7 +150,10 @@ async def render_campaign_export(
         export_job.completed_at = datetime.now(UTC)
         export_job.failed_at = None
         export_job.result_file_ids = [str(file.id) for file in created_files]
-        await session.commit()
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
 
         for campaign_file in created_files:
             await session.refresh(campaign_file)
@@ -163,16 +167,22 @@ async def render_campaign_export(
             campaign_id,
             export_job_id,
         )
-        await session.rollback()
-        failed_job = await session.get(ExportJob, export_job_id)
-        if failed_job is None:
-            raise
+        if commit:
+            await session.rollback()
+            failed_job = await session.get(ExportJob, export_job_id)
+            if failed_job is None:
+                raise
+        else:
+            failed_job = export_job
         failed_job.status = "failed"
         failed_job.error_message = error_message
         failed_job.failed_at = datetime.now(UTC)
         failed_job.completed_at = None
         failed_job.result_file_ids = []
-        await session.commit()
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
         await session.refresh(failed_job)
         return []
 
