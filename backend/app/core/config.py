@@ -1,9 +1,17 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+EXAMPLE_JWT_SECRETS = {
+    "change-this-development-secret",
+    "secret",
+    "changeme",
+}
 
 
 class Settings(BaseSettings):
@@ -26,6 +34,12 @@ class Settings(BaseSettings):
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    frontend_base_url: str | None = Field(default=None, alias="FRONTEND_BASE_URL")
+    trusted_hosts: list[str] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1", "::1", "testserver"],
+        alias="TRUSTED_HOSTS",
+    )
+    secure_proxy_headers: bool = Field(default=False, alias="SECURE_PROXY_HEADERS")
     jwt_secret_key: str = Field(
         default="change-this-development-secret",
         alias="JWT_SECRET_KEY",
@@ -36,15 +50,19 @@ class Settings(BaseSettings):
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
 
     @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
+
+    @property
     def local_storage_path(self) -> Path:
         path = Path(self.local_storage_dir)
         if not path.is_absolute():
             path = Path(__file__).resolve().parents[2] / path
         return path.resolve()
 
-    @field_validator("backend_cors_origins", mode="before")
+    @field_validator("backend_cors_origins", "trusted_hosts", mode="before")
     @classmethod
-    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
+    def parse_string_list(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
             stripped = value.strip()
             if not stripped:
@@ -53,6 +71,51 @@ class Settings(BaseSettings):
                 return json.loads(stripped)
             return [origin.strip() for origin in stripped.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_security_settings(self) -> "Settings":
+        normalized_log_level = self.log_level.upper()
+        valid_log_levels = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+        if normalized_log_level not in valid_log_levels:
+            raise ValueError("LOG_LEVEL must be a valid Python logging level.")
+        self.log_level = normalized_log_level
+
+        if self.access_token_expire_minutes < 1:
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be at least 1.")
+
+        if "*" in self.backend_cors_origins:
+            raise ValueError("BACKEND_CORS_ORIGINS cannot include '*' while CORS credentials are enabled.")
+
+        if self.jwt_algorithm != "HS256":
+            raise ValueError("JWT_ALGORITHM must be HS256.")
+
+        if not self.is_production:
+            return self
+
+        configured_fields = self.model_fields_set
+        if self.debug:
+            raise ValueError("DEBUG must be false when ENVIRONMENT=production.")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL is required when ENVIRONMENT=production.")
+        if "backend_cors_origins" not in configured_fields or not self.backend_cors_origins:
+            raise ValueError("BACKEND_CORS_ORIGINS must be explicitly configured in production.")
+        if "local_storage_dir" not in configured_fields or not self.local_storage_dir.strip():
+            raise ValueError("LOCAL_STORAGE_DIR must be explicitly configured in production.")
+        if "log_level" not in configured_fields or not self.log_level:
+            raise ValueError("LOG_LEVEL must be explicitly configured in production.")
+        if not self.frontend_base_url:
+            raise ValueError("FRONTEND_BASE_URL is required when ENVIRONMENT=production.")
+        if urlparse(self.frontend_base_url).scheme != "https":
+            raise ValueError("FRONTEND_BASE_URL must use HTTPS in production.")
+        if len(self.jwt_secret_key) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters in production.")
+        if self.jwt_secret_key.strip().lower() in EXAMPLE_JWT_SECRETS:
+            raise ValueError("JWT_SECRET_KEY must not use a development or example placeholder.")
+        if not self.trusted_hosts:
+            raise ValueError("TRUSTED_HOSTS must include at least one host in production.")
+        if "*" in self.trusted_hosts:
+            raise ValueError("TRUSTED_HOSTS cannot include '*' in production.")
+        return self
 
 
 @lru_cache

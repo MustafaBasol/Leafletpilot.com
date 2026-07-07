@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from scripts import seed_dev_data
 
 
@@ -68,6 +70,19 @@ def test_seed_script_constants_and_helpers() -> None:
     assert seed_dev_data.update_fields(instance, name="Old Name", is_active=True) is False
     assert seed_dev_data.update_fields(instance, name="New Name", is_active=True) is True
     assert instance.name == "New Name"
+
+
+def test_seed_refuses_production(monkeypatch) -> None:
+    monkeypatch.setattr(seed_dev_data.settings, "environment", "production")
+
+    with pytest.raises(RuntimeError, match=seed_dev_data.PRODUCTION_SEED_MESSAGE):
+        seed_dev_data.require_seed_allowed()
+
+
+def test_seed_allows_development(monkeypatch) -> None:
+    monkeypatch.setattr(seed_dev_data.settings, "environment", "development")
+
+    seed_dev_data.require_seed_allowed()
 
 
 def test_seed_product_helpers_do_not_read_lazy_relationships() -> None:

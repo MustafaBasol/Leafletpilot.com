@@ -1,0 +1,25 @@
+services:
+  backend:
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.leafletpilot-api.rule: Host(`${API_DOMAIN:?API_DOMAIN is required}`)
+      traefik.http.routers.leafletpilot-api.entrypoints: websecure
+      traefik.http.routers.leafletpilot-api.tls.certresolver: ${CERT_RESOLVER:?CERT_RESOLVER is required}
+      traefik.http.services.leafletpilot-api.loadbalancer.server.port: "8000"
+
+  frontend:
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.leafletpilot-app.rule: Host(`${APP_DOMAIN:?APP_DOMAIN is required}`)
+      traefik.http.routers.leafletpilot-app.entrypoints: websecure
+      traefik.http.routers.leafletpilot-app.tls.certresolver: ${CERT_RESOLVER:?CERT_RESOLVER is required}
+      traefik.http.services.leafletpilot-app.loadbalancer.server.port: "8080"
+
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:?TRAEFIK_NETWORK is required}

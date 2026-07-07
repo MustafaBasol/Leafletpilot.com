@@ -14,6 +14,12 @@ user.
 Phase 18D adds explicit market roles, authenticated market switching, team
 member administration, and invitation onboarding with manually shared links.
 
+Phase 19A adds the production deployment baseline: production settings fail
+fast on unsafe configuration, Docker images are available for the API and Vite
+frontend, production Compose keeps PostgreSQL private and export files
+persistent, and production seeding is disabled. See
+[docs/deployment/PRODUCTION_DEPLOYMENT.md](../docs/deployment/PRODUCTION_DEPLOYMENT.md).
+
 ## Phase 18D Auth Quick Start
 
 Seeded local demo credentials:
@@ -41,13 +47,13 @@ Invoke-RestMethod -Headers $headers http://127.0.0.1:8000/api/auth/me
 Invoke-RestMethod -Headers $headers http://127.0.0.1:8000/api/catalog/products
 ```
 
-Public routes are `/api/health`, `/api/health/db`, and
-`POST /api/auth/login` plus new invitation acceptance. `/api/catalog/*`,
-`/api/campaigns/*`, `/api/templates/*`, member, invitation, preview, export,
-and download routes require a Bearer token plus `X-Market-Id`; the backend
-returns 403 if the token user is not a member of that market or lacks the
-required role. The frontend stores the MVP token in `localStorage` for
-development only.
+Public routes are `/api/health`, `/api/health/db`, `POST /api/auth/login`,
+and the public new-user invitation acceptance endpoint. Catalog, campaign,
+template, member, invitation-management, preview, export, and download routes
+require a Bearer token plus `X-Market-Id`. The backend returns `403` when the
+authenticated user is not an active member of the selected market or lacks
+the required role. The frontend stores the MVP access token in `localStorage`;
+this is not the final production token strategy.
 
 Role matrix:
 
@@ -108,6 +114,10 @@ Apply migrations and seed repeatable development data:
 .\.venv\Scripts\python scripts\seed_dev_data.py
 ```
 
+`scripts\seed_dev_data.py` refuses to run when `ENVIRONMENT=production`.
+Production administrators must be created with `scripts\create_admin.py` after
+migrations are applied.
+
 The seed command prints the demo market id, demo user email, created/updated
 counts, and a reminder to use the market id as `X-Market-Id` for market-scoped
 API calls.
@@ -138,15 +148,27 @@ PowerShell API examples:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 
-Invoke-RestMethod -Headers @{ "X-Market-Id" = "<market-id>" } http://127.0.0.1:8000/api/catalog/products
+$login = Invoke-RestMethod -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email":"demo@leafletpilot.com","password":"demo1234"}' `
+  http://127.0.0.1:8000/api/auth/login
+
+$headers = @{
+  "Authorization" = "Bearer $($login.access_token)"
+  "X-Market-Id" = $login.markets[0].id
+}
+
+Invoke-RestMethod -Headers $headers `
+  http://127.0.0.1:8000/api/catalog/products
 
 Invoke-RestMethod -Method Post `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"raw_text":"Coca Cola 2L - 1.59€","default_currency":"EUR"}' `
   http://127.0.0.1:8000/api/campaigns/parse-text
 
 Invoke-RestMethod -Method Post `
-  -Headers @{ "X-Market-Id" = "<market-id>" } `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"title":"Hafta 28 Kampanyası","raw_text":"Coca Cola 2L - 1.59€","generate_suggestions":true}' `
   http://127.0.0.1:8000/api/campaigns/from-text
@@ -225,16 +247,18 @@ integration, or template preview worker yet.
 
 ## Campaign APIs
 
-Campaign routes are mounted under `/api/campaigns` and require the temporary
-market header:
+Campaign routes are mounted under `/api/campaigns` and require:
 
 ```text
-X-Market-Id: <market uuid>
+Authorization: Bearer <access token>
+X-Market-Id: <selected market uuid>
 ```
 
-If the header is missing, campaign routes return `400` before opening a
-database session. This is a tenancy placeholder until real auth resolves the
-active market.
+The selected market header is never trusted by itself. The backend resolves the
+current user from the access token, loads that user's active `MarketUser`
+membership for the selected market, and applies the required role. Missing or
+invalid authentication returns `401`, a missing selected market returns a clear
+client error, and inaccessible markets or insufficient roles return `403`.
 
 Implemented campaign routes:
 
@@ -255,7 +279,7 @@ Implemented campaign routes:
 List campaigns:
 
 ```powershell
-curl.exe -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns?status=draft&limit=50&offset=0"
+curl.exe -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns?status=draft&limit=50&offset=0"
 ```
 
 List filters are `search`, `status`, `channel`, `source_type`, `date_from`,
@@ -294,11 +318,12 @@ Create a campaign with manual items:
 Parse pasted campaign text without opening a database session:
 
 ```powershell
-curl.exe -X POST -H "Content-Type: application/json" -d "{\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"default_currency\":\"EUR\"}" "http://127.0.0.1:8000/api/campaigns/parse-text"
+curl.exe -X POST -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"default_currency\":\"EUR\"}" "http://127.0.0.1:8000/api/campaigns/parse-text"
 ```
 
-The parse-only endpoint does not require `X-Market-Id` because it only applies
-deterministic text rules and does not read or write tenant data.
+The parse-only endpoint applies deterministic text rules and does not write
+campaign data, but it is still protected by the authenticated selected-market
+boundary so panel and future bot flows use one consistent authorization model.
 
 Example parse response:
 
@@ -333,11 +358,12 @@ Example parse response:
 Create a campaign from pasted text:
 
 ```powershell
-curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"title\":\"Hafta 28 Kampanyası\",\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"channel\":\"panel\",\"source_type\":\"text\",\"currency\":\"EUR\",\"language\":\"tr\",\"generate_suggestions\":true,\"suggestion_limit\":5}" "http://127.0.0.1:8000/api/campaigns/from-text"
+curl.exe -X POST -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"title\":\"Hafta 28 Kampanyası\",\"raw_text\":\"Coca Cola 2L - 1.59€`nEti Burcak - 0.99€\",\"channel\":\"panel\",\"source_type\":\"text\",\"currency\":\"EUR\",\"language\":\"tr\",\"generate_suggestions\":true,\"suggestion_limit\":5}" "http://127.0.0.1:8000/api/campaigns/from-text"
 ```
 
-`POST /api/campaigns/from-text` requires `X-Market-Id`, creates a draft
-campaign, parses one non-empty line into one campaign item, stores parser
+`POST /api/campaigns/from-text` requires authentication plus a membership-
+verified `X-Market-Id`, creates a draft campaign, parses one non-empty line
+into one campaign item, and stores parser
 metadata in `parsed_payload`, recalculates campaign counts, and optionally runs
 the existing deterministic product matcher. It does not create products, call
 AI, generate files, or send messages.
@@ -345,7 +371,7 @@ AI, generate files, or send messages.
 Get campaign detail:
 
 ```powershell
-curl.exe -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>"
+curl.exe -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>"
 ```
 
 Detail responses include campaign metadata, items, files, export jobs, and
@@ -356,13 +382,13 @@ responses serialize them as strings.
 Generate deterministic suggestions for one item:
 
 ```powershell
-curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/items/<item uuid>/generate-suggestions"
+curl.exe -X POST -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/items/<item uuid>/generate-suggestions"
 ```
 
 Generate deterministic suggestions for every campaign item:
 
 ```powershell
-curl.exe -X POST -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit_per_item\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/generate-suggestions"
+curl.exe -X POST -H "Authorization: Bearer <access token>" -H "X-Market-Id: <market uuid>" -H "Content-Type: application/json" -d "{\"limit_per_item\":5}" "http://127.0.0.1:8000/api/campaigns/<campaign uuid>/generate-suggestions"
 ```
 
 The campaign-level endpoint returns a summary:
@@ -539,24 +565,30 @@ Campaign CRUD/list/detail APIs, item update APIs, matching resolution APIs,
 matching suggestion placeholder APIs, campaign file metadata APIs, and export
 job placeholder APIs are implemented in Phase 9.
 
-## Market Scoping Placeholder
+## Authentication, Market Scoping, And Roles
 
-There is no real authentication or tenancy resolution yet. Catalog routes use a
-temporary header:
+LeafletPilot uses email/password login with signed Bearer access tokens.
+`X-Market-Id` remains the selected-market context header, but it is accepted
+only after the backend verifies that the authenticated user has an active
+`MarketUser` membership for that market.
 
-```text
-X-Market-Id: <market uuid>
-```
+Supported roles:
 
-For catalog market-specific create operations, `X-Market-Id` is required.
-Global catalog create operations use `is_global=true` and do not store a market
-id. Catalog read/list/update and soft-delete operations are scoped to global
-records plus the provided market when the header is present. Without the
-header, catalog reads return only global records. Campaign routes always require
-`X-Market-Id`.
+- `market_admin`
+- `market_staff`
+- `viewer`
 
-This placeholder should be replaced by the real auth/tenancy dependency in a
-future phase.
+Read access is available to all active members. Campaign and catalog mutations
+are limited to administrators and staff. Template administration, team-member
+management, and invitation management are administrator-only. Viewers can read
+campaigns, catalogs, and templates, preview brochures, and download existing
+files, but cannot create exports or mutate records.
+
+Catalog reads combine records scoped to the selected market with active global
+records when the endpoint permits global inclusion. Global rows are not owned
+by a market and normal market users cannot use another market id to access or
+mutate tenant-specific records.
+
 
 ## Run Tests
 
@@ -607,7 +639,7 @@ with UUID primary keys and timezone-aware timestamps.
 
 Current model groups:
 
-- Accounts and tenancy: `User`, `Market`, `MarketUser`
+- Accounts and tenancy: `User`, `Market`, `MarketUser`, `MarketInvitation`
 - Catalog: `Brand`, `Category`, `Product`, `ProductAlias`, `ProductImage`
 - Campaign workflow: `Campaign`, `CampaignItem`, `MatchingSuggestion`, `CampaignFile`, `ExportJob`
 - Messaging intake: `Conversation`, `IncomingMessage`
@@ -653,14 +685,20 @@ configured `DATABASE_URL`.
 | `API_PREFIX` | `/api` | Prefix for API routes. |
 | `BACKEND_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated frontend origins. Wildcard `*` is rejected while CORS credentials are enabled. |
 | `DATABASE_URL` | unset | PostgreSQL async SQLAlchemy URL. |
+| `JWT_SECRET_KEY` | development placeholder | Signing secret for access tokens; production requires a strong non-placeholder value. |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm. |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Access-token lifetime in minutes. |
 | `TEST_DATABASE_URL` | unset | Optional database URL for future integration tests. |
 | `LOCAL_STORAGE_DIR` | `storage` | Local root for generated campaign export files. Relative paths resolve under `backend/`. |
 | `LOG_LEVEL` | `INFO` | Python logging level. |
+| `FRONTEND_BASE_URL` | unset | Required HTTPS frontend URL in production; used for operator-facing links. |
+| `TRUSTED_HOSTS` | `localhost,127.0.0.1` | Allowed HTTP host headers. Set exact API hosts in production. |
+| `SECURE_PROXY_HEADERS` | `false` | Documentation flag for deployments using Uvicorn proxy headers behind HTTPS termination. |
 
 ## Current Limitations
 
 - Catalog and campaign APIs require `DATABASE_URL` for actual CRUD calls.
-- Auth, real tenancy, and role authorization are not implemented; the temporary `X-Market-Id` header is only an internal-demo placeholder.
+- Authentication, membership-verified market tenancy, and role authorization are implemented, but the MVP access token is still stored in `localStorage`; refresh tokens, password reset, and MFA are not implemented.
 - Product images accept metadata only; there is no upload or storage integration.
 - Customer brochures use a neutral placeholder when no real product image exists.
 - Product alias normalization is intentionally simple and is not the matching engine.
@@ -670,7 +708,7 @@ configured `DATABASE_URL`.
 - PDF/PNG exports are generated locally and synchronously; no background worker or cloud storage runs.
 - No activity CRUD APIs yet.
 - Minimal Template model/API exists, but it stores metadata only and does not include a visual template editor.
-- No Telegram or WhatsApp integration, S3 storage, payment, or deployment features.
+- No Telegram or WhatsApp integration, S3/R2 object storage, payment/subscription system, or live production deployment exists. Phase 19A provides deployment files and documentation only.
 - No seed data in the initial migration.
 - Frontend real API mode is supported for campaign, catalog, and template flows;
   mock mode remains available. In real API mode, backend failures are shown
@@ -686,12 +724,15 @@ configured `DATABASE_URL`.
 - `POST /api/campaigns/parse-text` and `POST /api/campaigns/from-text` cap
   `raw_text` at 20,000 characters.
 - Export jobs accept only `pdf` and `png`, with at most two requested formats.
-- Telegram MVP should still wait until file output, visible error handling, and
-  internal deployment boundaries are stable.
+- Phase 19A adds production-safe configuration validation, non-root Docker
+  images, persistent PostgreSQL/export volumes, controlled migrations,
+  backup scripts, and deployment documentation. A real VPS deployment has
+  not yet been performed.
 
 ## Next Phase
 
-Phase 18 should add operational hardening before live use: auth/tenancy
-foundation, destructive action confirmations, stricter CORS/security headers,
-and removal of silent mock fallback. Telegram MVP should follow once local file
-generation is stable.
+Phase 19B should add the internal Telegram bot MVP after the Phase 19A migration
+chain and Docker production-like stack are fully validated. The bot must bind
+Telegram users/chats to authenticated LeafletPilot users and accessible markets,
+must not accept arbitrary market ids, and must reuse the existing role-aware
+parse, match, preview, export, and file-delivery boundaries.

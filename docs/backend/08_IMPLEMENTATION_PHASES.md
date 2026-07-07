@@ -477,3 +477,46 @@ npm.cmd run smoke
 Next step: Phase 18D should add role permissions, a market switcher, and user
 invitation/onboarding. Phase 19 can start Telegram MVP after this foundation is
 stable and deployment boundaries are clear.
+
+## Phase 19A: Production Deployment Baseline
+
+Implemented scope:
+
+- Production settings validation rejects unsafe `ENVIRONMENT=production`
+  configuration, including `DEBUG=true`, wildcard CORS, missing database URL,
+  short or placeholder JWT secrets, and non-HTTPS `FRONTEND_BASE_URL`.
+- Optional trusted-host middleware is configured through `TRUSTED_HOSTS`.
+- Backend production Dockerfile runs Uvicorn without reload as a non-root user
+  and includes Playwright Chromium for PDF/PNG export rendering.
+- Frontend multi-stage Dockerfile builds Vite with public
+  `VITE_API_BASE_URL` and serves `dist/` through unprivileged Nginx.
+- Nginx SPA config includes fallback routing, immutable asset caching,
+  no-cache `index.html`, gzip, and baseline security headers.
+- `docker-compose.production.yml` defines private PostgreSQL, backend,
+  frontend, named database/export volumes, health checks, and a one-off
+  migration profile.
+- Optional Traefik labels live in
+  `deploy/traefik/docker-compose.traefik.example.yml`.
+- Development seed refuses production execution.
+- `scripts/create_admin.py` creates the first production `market_admin` without
+  demo data.
+- Linux backup scripts cover PostgreSQL and local export storage.
+- `docs/deployment/PRODUCTION_DEPLOYMENT.md` documents deployment, migration,
+  bootstrap, backup, restore, update, and rollback procedures.
+- Validation-only GitHub Actions runs backend, frontend, Alembic head, Compose,
+  and Docker build checks without deployment.
+
+Excluded work:
+
+- No real VPS deployment.
+- No Telegram or WhatsApp.
+- No S3/R2/object storage.
+- No refresh tokens, password reset, MFA, OAuth, payments, or subscriptions.
+- No Kubernetes, Terraform, production registry publishing, or live database
+  access.
+- No centralized monitoring platform or automatic zero-downtime migration
+  guarantee.
+
+Next step: Phase 19B should implement the internal Telegram Bot MVP only after
+this production baseline has been validated in a disposable production-like
+stack.
