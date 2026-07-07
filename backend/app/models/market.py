@@ -7,15 +7,13 @@ from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String, Uniq
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.roles import MARKET_USER_ROLES
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.activity import ActivityLog
     from app.models.catalog import Brand, Category, Product
     from app.models.user import User
-
-
-MARKET_USER_ROLES = ("platform_admin", "market_admin", "market_staff", "operator")
 
 
 class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -47,7 +45,7 @@ class MarketUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("market_id", "user_id", name="uq_market_users_market_id_user_id"),
         CheckConstraint(
-            "role in ('platform_admin', 'market_admin', 'market_staff', 'operator')",
+            f"role in {MARKET_USER_ROLES}",
             name="ck_market_users_role",
         ),
         Index("ix_market_users_market_id", "market_id"),

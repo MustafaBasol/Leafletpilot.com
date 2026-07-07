@@ -3,7 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_catalog_session, get_current_market_id
+from app.api.deps import get_catalog_session, get_current_market_id, require_market_role
+from app.core.roles import MarketRole
 from app.schemas.common import ListResponse
 from app.schemas.template import TemplateCreate, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
@@ -38,7 +39,7 @@ async def list_templates(
 @router.post("", response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
 async def create_template(
     payload: TemplateCreate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(MarketRole.MARKET_ADMIN)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> TemplateRead:
     return await template_service.create_template(session, payload, market_id)
@@ -57,7 +58,7 @@ async def get_template(
 async def update_template(
     template_id: UUID,
     payload: TemplateUpdate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(MarketRole.MARKET_ADMIN)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> TemplateRead:
     return await template_service.update_template(session, template_id, payload, market_id)

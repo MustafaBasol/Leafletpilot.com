@@ -22,17 +22,65 @@ export function getStoredMarkets() {
   }
 }
 
+export function getStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+export function getSelectedMarket() {
+  const selectedMarketId = getSelectedMarketId();
+  return getStoredMarkets().find((market) => market.id === selectedMarketId) || null;
+}
+
+export function getSelectedMarketRole() {
+  return getSelectedMarket()?.role || "";
+}
+
+export function canManageTeam() {
+  return getSelectedMarketRole() === "market_admin";
+}
+
+export function canMutateCampaigns() {
+  return ["market_admin", "market_staff"].includes(getSelectedMarketRole());
+}
+
+export function canMutateCatalog() {
+  return ["market_admin", "market_staff"].includes(getSelectedMarketRole());
+}
+
+export function canCreateExports() {
+  return ["market_admin", "market_staff"].includes(getSelectedMarketRole());
+}
+
+export function canManageTemplates() {
+  return getSelectedMarketRole() === "market_admin";
+}
+
 export function saveAuthSession({ access_token: accessToken, user, markets }) {
   if (accessToken) localStorage.setItem(TOKEN_KEY, accessToken);
   if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
   const marketList = Array.isArray(markets) ? markets : [];
   localStorage.setItem(MARKETS_KEY, JSON.stringify(marketList));
-  const selectedMarketId = marketList[0]?.id || "";
+  const persistedMarketId = localStorage.getItem(MARKET_KEY) || "";
+  const selectedMarketId = marketList.some((market) => market.id === persistedMarketId)
+    ? persistedMarketId
+    : marketList[0]?.id || "";
   if (selectedMarketId) {
     localStorage.setItem(MARKET_KEY, selectedMarketId);
   } else {
     localStorage.removeItem(MARKET_KEY);
   }
+}
+
+export function setSelectedMarketId(marketId) {
+  const marketList = getStoredMarkets();
+  if (!marketList.some((market) => market.id === marketId)) return false;
+  localStorage.setItem(MARKET_KEY, marketId);
+  window.dispatchEvent(new CustomEvent("leafletpilot:market-changed", { detail: { marketId } }));
+  return true;
 }
 
 export function clearAuthSession() {

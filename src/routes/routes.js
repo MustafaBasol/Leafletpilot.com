@@ -4,7 +4,7 @@ export const navGroups = [
     items: [
       { label: "Dashboard", path: "/", icon: "chart" },
       { label: "Kampanyalar", path: "/campaigns", icon: "file" },
-      { label: "Yeni Kampanya", path: "/campaigns/new", icon: "plus" },
+      { label: "Yeni Kampanya", path: "/campaigns/new", icon: "plus", mutationOnly: true },
     ],
   },
   {
@@ -26,6 +26,7 @@ export const navGroups = [
     label: "Yönetim",
     items: [
       { label: "Marketler", path: "/markets", icon: "store" },
+      { label: "Ekip", path: "/team", icon: "settings", adminOnly: true },
       { label: "Bot Bağlantıları", path: "/bot-connections", icon: "bot" },
       { label: "Raporlar", path: "/reports", icon: "chart" },
       { label: "Ayarlar", path: "/settings", icon: "settings" },
@@ -75,6 +76,12 @@ export const pageMeta = {
     description: "Market profilleri, şube bilgileri, varsayılan şablon ve marka ayarları.",
     action: "Market Ekle",
     actionHref: "#/markets",
+  },
+  "/team": {
+    title: "Ekip",
+    description: "Market üyeleri, roller ve davet bağlantıları.",
+    action: "Davet Oluştur",
+    actionHref: "#/team",
   },
   "/bot-connections": {
     title: "Bot Bağlantıları",

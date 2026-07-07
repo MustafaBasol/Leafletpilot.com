@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { canManageTemplates, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { getTemplateDetail } from "../data/dataSource.js";
 import { findTemplateById, generatedFiles, outputFormats, products } from "../data/mockData.js";
@@ -24,6 +25,8 @@ export function TemplateDetail({ templateId }) {
   const [message, setMessage] = useState("");
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const selectedMarketId = getSelectedMarketId();
+  const canManage = canManageTemplates();
   const formats = outputFormats.filter((format) => template.formats.includes(format.label));
 
   useEffect(() => {
@@ -32,6 +35,7 @@ export function TemplateDetail({ templateId }) {
     async function loadTemplate() {
       try {
         setIsLoading(isRealApiEnabled);
+        if (isRealApiEnabled) setTemplate(emptyTemplate(templateId));
         const detail = await getTemplateDetail(templateId);
         if (isMounted) {
           setTemplate(detail);
@@ -52,7 +56,7 @@ export function TemplateDetail({ templateId }) {
     return () => {
       isMounted = false;
     };
-  }, [templateId]);
+  }, [templateId, selectedMarketId]);
 
   return (
     <>
@@ -60,14 +64,16 @@ export function TemplateDetail({ templateId }) {
         title={template.name}
         description={`${template.type} · ${template.capacity} · ${template.formats.join(", ")}`}
         actions={
-          <>
-            <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
-            <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
-            <Button onClick={() => setMessage("Şablon kopyası oluşturuldu.")}>Kopyala</Button>
-            <Button variant="primary" onClick={() => setMessage("Düzenleme paneli bu fazda temsilidir.")}>
-              Düzenle
-            </Button>
-          </>
+          canManage ? (
+            <>
+              <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
+              <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
+              <Button onClick={() => setMessage("Şablon kopyası oluşturuldu.")}>Kopyala</Button>
+              <Button variant="primary" onClick={() => setMessage("Düzenleme paneli bu fazda temsilidir.")}>
+                Düzenle
+              </Button>
+            </>
+          ) : null
         }
       />
       {message ? <p className="inline-result">{message}</p> : null}
@@ -130,9 +136,11 @@ export function TemplateDetail({ templateId }) {
             </div>
           </dl>
         </Card>
-        <Card title="Örnek Çıktılar" className="span-12">
-          <ExportPanel files={generatedFiles} onAction={setMessage} />
-        </Card>
+        {!isRealApiEnabled ? (
+          <Card title="Örnek Çıktılar" className="span-12">
+            <ExportPanel files={generatedFiles} onAction={canManage ? setMessage : undefined} />
+          </Card>
+        ) : null}
       </section>
     </>
   );

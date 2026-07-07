@@ -151,10 +151,21 @@ td small {
 }
 
 .market-switcher {
+  display: grid;
+  align-items: stretch;
+  gap: 10px;
   margin-top: auto;
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-lg);
+  background: var(--neutral-50);
   padding: 12px;
+}
+
+.market-switcher-top {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
 }
 
 .market-avatar {
@@ -167,6 +178,35 @@ td small {
   background: var(--primary-100);
   color: var(--primary-700);
   font-weight: 800;
+}
+
+.market-select-label {
+  display: grid;
+  gap: 6px;
+}
+
+.market-select-label > span {
+  color: var(--neutral-500);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.market-select-label select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  background: var(--white);
+  color: var(--neutral-800);
+  font-weight: 700;
+  outline: 0;
+  padding: 9px 10px;
+}
+
+.market-select-label select:focus {
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px var(--primary-100);
 }
 
 .main-shell {

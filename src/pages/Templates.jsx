@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { canManageTemplates, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { outputFormats, templates as mockTemplates } from "../data/mockData.js";
 import { getTemplates, updateTemplateStatus } from "../data/dataSource.js";
@@ -9,10 +10,13 @@ export function Templates() {
   const [apiError, setApiError] = useState("");
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const [confirmTemplate, setConfirmTemplate] = useState(null);
+  const selectedMarketId = getSelectedMarketId();
+  const canManage = canManageTemplates();
 
   async function loadTemplates() {
     try {
       setIsLoading(isRealApiEnabled);
+      if (isRealApiEnabled) setItems([]);
       const templates = await getTemplates();
       setItems(templates);
       setApiError("");
@@ -26,13 +30,15 @@ export function Templates() {
 
   useEffect(() => {
     loadTemplates();
-  }, []);
+  }, [selectedMarketId]);
 
   function makeDefault(id) {
+    if (!canManage) return;
     setItems((current) => current.map((template) => ({ ...template, isDefault: template.id === id })));
   }
 
   function duplicateTemplate(id) {
+    if (!canManage) return;
     const source = items.find((template) => template.id === id);
     if (!source) return;
     setItems((current) => [
@@ -48,7 +54,7 @@ export function Templates() {
   }
 
   async function toggleStatus(template) {
-    if (!template) return;
+    if (!template || !canManage) return;
     const nextStatus = template.status === "Aktif" ? "Pasif" : "Aktif";
 
     if (isRealApiEnabled) {
@@ -95,6 +101,7 @@ export function Templates() {
             onMakeDefault={makeDefault}
             onDuplicate={duplicateTemplate}
             onToggle={() => setConfirmTemplate(template)}
+            canManage={canManage}
           />
         ))}
       </section>

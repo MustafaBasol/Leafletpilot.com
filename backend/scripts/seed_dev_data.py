@@ -34,7 +34,10 @@ from app.services.catalog import normalize_alias, slugify  # noqa: E402
 
 DEMO_USER_EMAIL = "demo@leafletpilot.com"
 DEMO_USER_PASSWORD = "demo1234"
+DEMO_STAFF_EMAIL = "staff@leafletpilot.local"
+DEMO_VIEWER_EMAIL = "viewer@leafletpilot.local"
 DEMO_MARKET_SLUG = "anadolu-market"
+DEMO_SECOND_MARKET_SLUG = "avrupa-market"
 DEMO_CAMPAIGN_SLUG = "hafta-28-kampanyasi"
 DEMO_CAMPAIGN_TITLE = "Hafta 28 Kampanyası"
 DEMO_CAMPAIGN_RAW_TEXT = """Coca Cola 2L - 1.59€
@@ -131,6 +134,31 @@ DEMO_PRODUCTS = (
     ),
 )
 
+DEMO_MARKET_PRODUCTS = (
+    (
+        DEMO_MARKET_SLUG,
+        ProductSeed(
+            name="Anadolu Market Özel Zeytin 900g",
+            barcode="LP-ANADOLU-0001",
+            aliases=("Anadolu özel zeytin",),
+            category="Kahvaltılık",
+            brand="Bizim",
+            package_size="900g",
+        ),
+    ),
+    (
+        DEMO_SECOND_MARKET_SLUG,
+        ProductSeed(
+            name="Avrupa Market Özel Kahve 500g",
+            barcode="LP-AVRUPA-0001",
+            aliases=("Avrupa özel kahve",),
+            category="Temel Gıda",
+            brand="Bizim",
+            package_size="500g",
+        ),
+    ),
+)
+
 DEMO_TEMPLATES = (
     {
         "name": "Premium Market",
@@ -177,12 +205,18 @@ def require_database_url() -> None:
 async def seed_dev_data(session: AsyncSession) -> dict[str, Any]:
     counts = {"created": 0, "updated": 0, "unchanged": 0}
 
-    user = await upsert_user(session, counts)
+    user = await upsert_user(session, counts, DEMO_USER_EMAIL, "Demo Admin")
+    staff_user = await upsert_user(session, counts, DEMO_STAFF_EMAIL, "Demo Staff")
+    viewer_user = await upsert_user(session, counts, DEMO_VIEWER_EMAIL, "Demo Viewer")
     market = await upsert_market(session, counts)
-    await upsert_market_user(session, market, user, counts)
+    second_market = await upsert_second_market(session, counts)
+    await upsert_market_user(session, market, user, "market_admin", counts)
+    await upsert_market_user(session, second_market, user, "market_admin", counts)
+    await upsert_market_user(session, market, staff_user, "market_staff", counts)
+    await upsert_market_user(session, market, viewer_user, "viewer", counts)
     brands = await upsert_brands(session, counts)
     categories = await upsert_categories(session, counts)
-    await upsert_products(session, brands, categories, counts)
+    await upsert_products(session, brands, categories, {market.slug: market, second_market.slug: second_market}, counts)
     templates = await upsert_templates(session, counts)
     campaign = await upsert_demo_campaign(session, market, templates["premium-market"], counts)
 
@@ -195,12 +229,12 @@ async def seed_dev_data(session: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def upsert_user(session: AsyncSession, counts: dict[str, int]) -> User:
-    user = await session.scalar(select(User).where(User.email == DEMO_USER_EMAIL))
+async def upsert_user(session: AsyncSession, counts: dict[str, int], email: str, full_name: str) -> User:
+    user = await session.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(
-            email=DEMO_USER_EMAIL,
-            full_name="Demo Admin",
+            email=email,
+            full_name=full_name,
             password_hash=hash_password(DEMO_USER_PASSWORD),
             is_active=True,
         )
@@ -212,7 +246,7 @@ async def upsert_user(session: AsyncSession, counts: dict[str, int]) -> User:
     password_hash = user.password_hash
     if not verify_password(DEMO_USER_PASSWORD, password_hash):
         password_hash = hash_password(DEMO_USER_PASSWORD)
-    changed = update_fields(user, full_name="Demo Admin", password_hash=password_hash, is_active=True)
+    changed = update_fields(user, full_name=full_name, password_hash=password_hash, is_active=True)
     counts["updated" if changed else "unchanged"] += 1
     return user
 
@@ -238,10 +272,32 @@ async def upsert_market(session: AsyncSession, counts: dict[str, int]) -> Market
     return market
 
 
+async def upsert_second_market(session: AsyncSession, counts: dict[str, int]) -> Market:
+    market = await session.scalar(select(Market).where(Market.slug == DEMO_SECOND_MARKET_SLUG))
+    values = {
+        "name": "Avrupa Market",
+        "currency": "EUR",
+        "language": "tr",
+        "timezone": "Europe/Paris",
+        "is_active": True,
+    }
+    if market is None:
+        market = Market(slug=DEMO_SECOND_MARKET_SLUG, **values)
+        session.add(market)
+        counts["created"] += 1
+        await session.flush()
+        return market
+
+    changed = update_fields(market, **values)
+    counts["updated" if changed else "unchanged"] += 1
+    return market
+
+
 async def upsert_market_user(
     session: AsyncSession,
     market: Market,
     user: User,
+    role: str,
     counts: dict[str, int],
 ) -> MarketUser:
     membership = await session.scalar(
@@ -250,7 +306,7 @@ async def upsert_market_user(
             MarketUser.user_id == user.id,
         )
     )
-    values = {"role": "market_admin", "is_active": True}
+    values = {"role": role, "is_active": True}
     if membership is None:
         membership = MarketUser(market_id=market.id, user_id=user.id, **values)
         session.add(membership)
@@ -312,6 +368,7 @@ async def upsert_products(
     session: AsyncSession,
     brands: dict[str, Brand],
     categories: dict[str, Category],
+    markets_by_slug: dict[str, Market],
     counts: dict[str, int],
 ) -> None:
     for seed in DEMO_PRODUCTS:
@@ -331,6 +388,33 @@ async def upsert_products(
         }
         if product is None:
             product = Product(barcode=seed.barcode, market_id=None, **values)
+            session.add(product)
+            counts["created"] += 1
+            await session.flush()
+        else:
+            changed = update_fields(product, **values)
+            counts["updated" if changed else "unchanged"] += 1
+
+        await upsert_aliases(session, product, seed.aliases, counts)
+        await upsert_product_image(session, product, seed, counts)
+
+    for market_slug, seed in DEMO_MARKET_PRODUCTS:
+        market = markets_by_slug[market_slug]
+        product = await session.scalar(
+            select(Product).where(Product.barcode == seed.barcode, Product.market_id == market.id)
+        )
+        values = {
+            "name": seed.name,
+            "short_name": seed.name,
+            "brand_id": brands[seed.brand].id,
+            "category_id": categories[seed.category].id,
+            "package_size": seed.package_size,
+            "is_global": False,
+            "is_active": True,
+            "quality_score": 80,
+        }
+        if product is None:
+            product = Product(barcode=seed.barcode, market_id=market.id, **values)
             session.add(product)
             counts["created"] += 1
             await session.flush()
@@ -493,6 +577,8 @@ async def main() -> None:
         print("Seeded LeafletPilot development data.")
         print(f"Demo market id: {result['market_id']}")
         print(f"Demo user email: {result['user_email']}")
+        print(f"Demo staff email: {DEMO_STAFF_EMAIL}")
+        print(f"Demo viewer email: {DEMO_VIEWER_EMAIL}")
         print(f"Demo campaign id: {result['campaign_id']}")
         print(
             "Rows created/updated/unchanged: "

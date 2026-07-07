@@ -3,7 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_catalog_session, get_current_market_id
+from app.api.deps import get_catalog_session, get_current_market_id, require_market_role
+from app.core.roles import MARKET_MUTATION_ROLES
 from app.schemas.brand import BrandCreate, BrandRead, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
 from app.schemas.common import ListResponse
@@ -40,7 +41,7 @@ async def list_brands(
 @router.post("/brands", response_model=BrandRead, status_code=status.HTTP_201_CREATED)
 async def create_brand(
     payload: BrandCreate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> BrandRead:
     return await catalog_service.create_brand(session, payload, market_id)
@@ -59,7 +60,7 @@ async def get_brand(
 async def update_brand(
     brand_id: UUID,
     payload: BrandUpdate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> BrandRead:
     return await catalog_service.update_brand(session, brand_id, payload, market_id)
@@ -68,7 +69,7 @@ async def update_brand(
 @router.delete("/brands/{brand_id}", response_model=BrandRead)
 async def delete_brand(
     brand_id: UUID,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> BrandRead:
     return await catalog_service.delete_brand(session, brand_id, market_id)
@@ -103,7 +104,7 @@ async def list_categories(
 @router.post("/categories", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)
 async def create_category(
     payload: CategoryCreate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> CategoryRead:
     return await catalog_service.create_category(session, payload, market_id)
@@ -122,7 +123,7 @@ async def get_category(
 async def update_category(
     category_id: UUID,
     payload: CategoryUpdate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> CategoryRead:
     return await catalog_service.update_category(session, category_id, payload, market_id)
@@ -131,7 +132,7 @@ async def update_category(
 @router.delete("/categories/{category_id}", response_model=CategoryRead)
 async def delete_category(
     category_id: UUID,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> CategoryRead:
     return await catalog_service.delete_category(session, category_id, market_id)
@@ -172,7 +173,7 @@ async def list_products(
 @router.post("/products", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
 async def create_product(
     payload: ProductCreate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ProductRead:
     return await catalog_service.create_product(session, payload, market_id)
@@ -191,7 +192,7 @@ async def get_product(
 async def update_product(
     product_id: UUID,
     payload: ProductUpdate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ProductRead:
     return await catalog_service.update_product(session, product_id, payload, market_id)
@@ -200,7 +201,7 @@ async def update_product(
 @router.delete("/products/{product_id}", response_model=ProductRead)
 async def delete_product(
     product_id: UUID,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ProductRead:
     return await catalog_service.delete_product(session, product_id, market_id)
@@ -214,7 +215,7 @@ async def delete_product(
 async def create_product_alias(
     product_id: UUID,
     payload: ProductAliasCreate,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ProductAliasRead:
     return await catalog_service.create_product_alias(session, product_id, payload, market_id)
@@ -224,7 +225,7 @@ async def create_product_alias(
 async def delete_product_alias(
     product_id: UUID,
     alias_id: UUID,
-    market_id: UUID | None = Depends(get_current_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> Response:
     await catalog_service.delete_product_alias(session, product_id, alias_id, market_id)

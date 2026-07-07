@@ -16,6 +16,10 @@ Phase 18C adds real API login. In real API mode, the Login page calls
 `localStorage`, validates `/api/auth/me` on app load, and sends
 `Authorization` plus `X-Market-Id` on business API calls. `localStorage` token
 storage is for the development MVP only.
+Phase 18D stores accessible markets with roles, adds a selected-market switcher,
+adds an admin-only Ekip page, and adds `#/accept-invitation?token=...` for
+invitation onboarding. The frontend hides viewer/staff controls where possible,
+but backend 403 responses remain authoritative.
 
 ## Environment Variables
 
@@ -50,8 +54,9 @@ From `backend/`, set up PostgreSQL and dependencies using
 The seed command creates local demo credentials:
 
 ```text
-demo@leafletpilot.com
-demo1234
+demo@leafletpilot.com / demo1234 -> market_admin, two demo markets
+staff@leafletpilot.local / demo1234 -> market_staff
+viewer@leafletpilot.local / demo1234 -> viewer
 ```
 
 ## Mock Mode
@@ -185,6 +190,19 @@ and template active/passive.
   the backend.
 - Mock mode can create local product, brand, category, and template-like UI
   state without validation. Real API mode returns backend validation messages.
+
+## Phase 18D Stabilization Notes
+
+- Dashboard real API mode derives simple counts and recent rows from the
+  selected market campaign list instead of showing mock Telegram or campaign
+  data.
+- Product catalog real API mode clears stale rows during market switching.
+  Global products are intentionally visible in both demo markets; each demo
+  market also has one market-specific product for visible tenancy checks.
+- Viewer sessions hide campaign, catalog, export, template mutation, and team
+  controls. Backend 403 enforcement remains the source of truth.
+- Invitation acceptance shows a specific account-mismatch message when a
+  logged-in user opens a link for another email.
 
 ## Current Limitations
 

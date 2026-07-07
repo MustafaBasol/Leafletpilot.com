@@ -21,6 +21,8 @@ Phase 18C adds minimal real auth. For implemented `/api` routes,
 preview, export, and download routes require `Authorization: Bearer <token>`
 and verify the authenticated user has an active `MarketUser` membership for
 that market.
+Phase 18D adds role authorization, market member endpoints, and invitation
+onboarding. Login and `/auth/me` return each accessible market with `role`.
 
 ## Auth
 
@@ -47,8 +49,8 @@ Response:
 
 Permissions: Public.
 
-MVP/later: Add refresh tokens, password reset, invitation flow, safer token
-storage, and session revocation.
+MVP/later: Add refresh tokens, password reset, automated invitation email,
+safer token storage, and session revocation.
 
 ### `GET /api/auth/me`
 
@@ -70,6 +72,53 @@ Response:
 ```
 
 Permissions: Authenticated.
+
+### `POST /api/auth/accept-invitation`
+
+Public invitation acceptance for a new user. Request:
+
+```json
+{ "token": "raw-token", "full_name": "Employee Name", "password": "strong-password" }
+```
+
+The token is hashed before lookup. Existing users are rejected with a conflict
+and must log in first.
+
+### `POST /api/auth/accept-invitation-authenticated`
+
+Authenticated acceptance for an existing user. The logged-in user email must
+match the invitation email. Request:
+
+```json
+{ "token": "raw-token" }
+```
+
+## Roles
+
+- `market_admin`: full market access, team management, invitations, template
+  mutation, operational catalog/campaign mutation, exports and downloads.
+- `market_staff`: operational catalog/campaign mutation, exports, downloads and
+  reads; no team, invitation, or template administration.
+- `viewer`: reads, previews, and already generated downloads only.
+
+Insufficient role returns 403 with a permission message. Missing or invalid auth
+returns 401.
+
+## Market Members And Invitations
+
+All endpoints below are selected-market scoped through `X-Market-Id` and require
+`market_admin`.
+
+- `GET /api/market-members`: returns membership id, user id, email, full name,
+  role, active flag, and creation time for the selected market.
+- `PATCH /api/market-members/{membership_id}`: changes role and rejects
+  unsupported roles or demoting the last active admin.
+- `POST /api/market-invitations`: creates a pending invitation and returns the
+  raw `invite_token` and `accept_url` once.
+- `GET /api/market-invitations`: lists invitations without raw tokens or token
+  hashes.
+- `POST /api/market-invitations/{invitation_id}/revoke`: revokes only pending
+  invitations from the selected market.
 
 ## Markets
 

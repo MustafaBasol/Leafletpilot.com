@@ -1,5 +1,23 @@
 # Backend Implementation Phases
 
+## Phase 18D: Roles, Market Switching, Team Members, Invitations
+
+Implemented:
+
+- Central market role constants and role dependencies.
+- `market_admin`, `market_staff`, and `viewer` permission matrix.
+- Role enforcement on campaign, catalog, template, export, member, and
+  invitation routes.
+- Market member list and role update endpoints.
+- Invitation model, migration, creation, listing, revocation, public new-user
+  acceptance, and authenticated existing-user acceptance.
+- Seeded admin, staff, viewer, and a second demo market for admin switching.
+
+Deferred:
+
+- Member removal, automated invitation email, refresh tokens, password reset,
+  MFA, production audit trail, and production deployment hardening.
+
 ## Phase 5: Backend Scaffold
 
 Goal: Create the FastAPI backend foundation.

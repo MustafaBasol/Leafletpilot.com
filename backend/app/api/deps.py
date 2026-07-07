@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_session
+from app.core.roles import MarketRole
 from app.core.security import decode_access_token
 from app.models import MarketUser, User
 
@@ -66,11 +67,11 @@ async def get_current_user(
     return user
 
 
-async def require_market_member(
+async def get_current_market_membership(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_catalog_session),
-) -> UUID:
+) -> MarketUser:
     if x_market_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -85,12 +86,21 @@ async def require_market_member(
             MarketUser.is_active.is_(True),
         )
     )
-    if membership is None or not membership.market.is_active:
+    if membership is None or membership.market is None or not membership.market.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bu market için yetkiniz yok.",
         )
-    return x_market_id
+    return membership
+
+
+async def require_market_member(
+    x_market_id: UUID | None = Header(default=None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> UUID:
+    membership = await get_current_market_membership(x_market_id, current_user, session)
+    return membership.market_id
 
 
 async def get_current_market_id(market_id: UUID = Depends(require_market_member)) -> UUID:
@@ -101,32 +111,30 @@ async def get_required_market_id(market_id: UUID = Depends(require_market_member
     return market_id
 
 
-def require_market_role(*allowed_roles: str):
+def require_market_roles(*allowed_roles: str | MarketRole):
+    role_values = tuple(role.value if isinstance(role, MarketRole) else role for role in allowed_roles)
+
     async def dependency(
-        x_market_id: UUID | None = Header(default=None),
-        current_user: User = Depends(get_current_user),
-    ) -> UUID:
-        if x_market_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-Market-Id seçili market için gereklidir.",
-            )
-        membership = next(
-            (
-                item
-                for item in current_user.market_memberships
-                if item.market_id == x_market_id and item.is_active
-            ),
-            None,
-        )
-        if membership is None or membership.role not in allowed_roles:
+        membership: MarketUser = Depends(get_current_market_membership),
+    ) -> MarketUser:
+        if membership.role not in role_values:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Bu işlem için market rolünüz yeterli değil.",
+                detail="Bu işlem için yetkiniz bulunmuyor.",
             )
-        return x_market_id
+        return membership
 
     return dependency
+
+
+def require_market_role(*allowed_roles: str | MarketRole):
+    async def dependency(membership: MarketUser = Depends(require_market_roles(*allowed_roles))) -> UUID:
+        return membership.market_id
+
+    return dependency
+
+
+require_market_admin = require_market_roles(MarketRole.MARKET_ADMIN)
 
 
 async def get_campaign_session(

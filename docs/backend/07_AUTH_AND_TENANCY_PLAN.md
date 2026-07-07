@@ -21,23 +21,27 @@ Remaining hardening: httpOnly cookie or safer token strategy, refresh tokens,
 full role matrix, password reset, invitation/onboarding flow, audit coverage,
 and deployment-grade secret management.
 
+## Phase 18D Implemented Baseline
+
+- Central roles are `market_admin`, `market_staff`, and `viewer`.
+- Backend dependencies load the current `MarketUser` membership from the
+  database and enforce role checks centrally.
+- Read routes allow all roles; campaign/catalog mutations and export creation
+  allow admin/staff; template mutations and team/invitation administration are
+  admin-only.
+- Login and `/auth/me` include market role data. The frontend market switcher
+  only allows markets returned by the backend session.
+- Admins can list members, change roles, and create/revoke manually shared
+  invitation links.
+- Invitation tokens are generated with a secure random token, stored hashed, and
+  returned only on creation. Accepted, revoked, and expired invitations cannot
+  be reused.
+
+Remaining production limits: access token in `localStorage`, no refresh token,
+no password reset, no automated invitation email, no MFA, no production audit
+trail for team changes, and production secret rotation is still required.
+
 ## Role Model
-
-### Platform Admin
-
-Scope: Entire platform.
-
-Can:
-
-- View and manage all markets.
-- Manage global products, brands, categories, and templates.
-- Access all campaigns for support.
-- Manage platform users and operators.
-- See bot connection health across markets.
-
-MVP:
-
-- Seed one platform admin for internal use.
 
 ### Market Admin
 
@@ -70,14 +74,16 @@ MVP:
 
 - Useful for employees who send product lists or review previews.
 
-### Operator
+### Viewer
 
-Scope: Internal concierge/support role.
+Scope: Assigned market.
 
 Can:
 
-- Resolve missing products.
-- Manually match campaign items.
+- Read campaigns, catalog, and templates.
+- View previews and download already generated files.
+
+Cannot mutate records, generate new exports, or manage team access.
 - Create product aliases.
 - Regenerate previews and files.
 - Mark customer approval based on bot/customer communication.

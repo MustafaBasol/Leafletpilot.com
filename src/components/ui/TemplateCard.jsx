@@ -2,7 +2,7 @@ import { Badge } from "./Badge.jsx";
 import { Button } from "./Button.jsx";
 import { StatusBadge } from "./StatusBadge.jsx";
 
-export function TemplateCard({ template, onMakeDefault, onDuplicate, onToggle }) {
+export function TemplateCard({ template, onMakeDefault, onDuplicate, onToggle, canManage = true }) {
   return (
     <article className="template-management-card">
       <a className={`template-thumb template-${template.previewTone}`} href={`#/templates/${template.id}`}>
@@ -36,12 +36,16 @@ export function TemplateCard({ template, onMakeDefault, onDuplicate, onToggle })
           {template.isDefault ? <Badge tone="primary">Varsayılan</Badge> : <span />}
           <div className="table-actions">
             <Button href={`#/templates/${template.id}`}>Önizle</Button>
-            <Button onClick={() => onMakeDefault(template.id)} disabled={template.isDefault}>
-              Varsayılan Yap
-            </Button>
-            <Button onClick={() => onDuplicate(template.id)}>Kopyala</Button>
-            <Button> Düzenle</Button>
-            <Button onClick={() => onToggle(template.id)}>{template.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}</Button>
+            {canManage ? (
+              <>
+                <Button onClick={() => onMakeDefault(template.id)} disabled={template.isDefault}>
+                  Varsayılan Yap
+                </Button>
+                <Button onClick={() => onDuplicate(template.id)}>Kopyala</Button>
+                <Button>Düzenle</Button>
+                <Button onClick={() => onToggle(template.id)}>{template.status === "Aktif" ? "Pasifleştir" : "Aktifleştir"}</Button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_campaign_session, get_required_market_id
+from app.api.deps import get_campaign_session, get_required_market_id, require_market_role
+from app.core.roles import MARKET_MUTATION_ROLES
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignCreateFromTextRequest,
@@ -68,7 +69,7 @@ async def list_campaigns(
 @router.post("", response_model=CampaignDetail, status_code=status.HTTP_201_CREATED)
 async def create_campaign(
     payload: CampaignCreate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.create_campaign(session, payload, market_id)
@@ -77,7 +78,7 @@ async def create_campaign(
 @router.post("/parse-text", response_model=CampaignParseResponse)
 async def parse_campaign_text_endpoint(
     payload: CampaignParseRequest,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
 ) -> CampaignParseResponse:
     _ = market_id
     parsed_items = parse_campaign_text(payload.raw_text, default_currency=payload.default_currency)
@@ -103,7 +104,7 @@ async def parse_campaign_text_endpoint(
 )
 async def create_campaign_from_text(
     payload: CampaignCreateFromTextRequest,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignCreateFromTextResponse:
     return await campaign_service.create_campaign_from_text(session, payload, market_id)
@@ -131,7 +132,7 @@ async def get_campaign_preview_html(
 async def update_campaign(
     campaign_id: UUID,
     payload: CampaignUpdate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.update_campaign(session, campaign_id, payload, market_id)
@@ -140,7 +141,7 @@ async def update_campaign(
 @router.delete("/{campaign_id}", response_model=CampaignDetail)
 async def cancel_campaign(
     campaign_id: UUID,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.cancel_campaign(session, campaign_id, market_id)
@@ -150,7 +151,7 @@ async def cancel_campaign(
 async def add_campaign_item(
     campaign_id: UUID,
     payload: CampaignItemCreate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
     return await campaign_service.add_campaign_item(session, campaign_id, payload, market_id)
@@ -161,7 +162,7 @@ async def update_campaign_item(
     campaign_id: UUID,
     item_id: UUID,
     payload: CampaignItemUpdate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
     return await campaign_service.update_campaign_item(session, campaign_id, item_id, payload, market_id)
@@ -172,7 +173,7 @@ async def resolve_campaign_item_match(
     campaign_id: UUID,
     item_id: UUID,
     payload: CampaignItemResolveMatch,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
     return await campaign_service.resolve_campaign_item_match(
@@ -203,7 +204,7 @@ async def create_matching_suggestion(
     campaign_id: UUID,
     item_id: UUID,
     payload: MatchingSuggestionCreate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> MatchingSuggestionRead:
     return await campaign_service.create_matching_suggestion(
@@ -223,7 +224,7 @@ async def generate_item_suggestions(
     campaign_id: UUID,
     item_id: UUID,
     payload: GenerateItemSuggestionsRequest | None = None,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemSuggestionResult:
     request = payload or GenerateItemSuggestionsRequest()
@@ -244,7 +245,7 @@ async def generate_item_suggestions(
 async def generate_campaign_suggestions(
     campaign_id: UUID,
     payload: GenerateCampaignSuggestionsRequest | None = None,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignSuggestionSummary:
     request = payload or GenerateCampaignSuggestionsRequest()
@@ -269,7 +270,7 @@ async def list_campaign_files(
 async def create_campaign_file(
     campaign_id: UUID,
     payload: CampaignFileCreate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignFileRead:
     return await campaign_service.create_campaign_file(session, campaign_id, payload, market_id)
@@ -283,7 +284,7 @@ async def create_campaign_file(
 async def create_export_job(
     campaign_id: UUID,
     payload: ExportJobCreate,
-    market_id: UUID = Depends(get_required_market_id),
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> ExportJobRead:
     return await campaign_service.create_export_job(session, campaign_id, payload, market_id)

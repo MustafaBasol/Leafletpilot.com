@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -7,9 +7,10 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_catalog_session, get_current_user
 from app.core.config import settings
-from app.core.security import create_access_token, verify_password
-from app.models import MarketUser, User
+from app.core.security import create_access_token, hash_invitation_token, hash_password, verify_password
+from app.models import MarketInvitation, MarketUser, User
 from app.schemas.auth import AuthMarketRead, AuthSessionRead, AuthUserRead, LoginRequest, LoginResponse
+from app.schemas.team import AcceptInvitationAuthenticatedRequest, AcceptInvitationRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,6 +46,52 @@ async def me(current_user: User = Depends(get_current_user)) -> AuthSessionRead:
     return _build_session_payload(current_user)
 
 
+@router.post("/accept-invitation", response_model=AuthSessionRead)
+async def accept_invitation(
+    payload: AcceptInvitationRequest,
+    session: AsyncSession = Depends(get_catalog_session),
+) -> AuthSessionRead:
+    invitation = await _get_valid_invitation(session, payload.token)
+    existing_user = await _get_user_by_email(session, invitation.email)
+    if existing_user is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu e-posta zaten kayıtlı. Mevcut kullanıcı giriş yapmalı.",
+        )
+
+    user = User(
+        email=invitation.email,
+        full_name=payload.full_name.strip(),
+        password_hash=hash_password(payload.password),
+        is_active=True,
+    )
+    session.add(user)
+    await session.flush()
+    await _accept_invitation_for_user(session, invitation, user)
+    await session.commit()
+    return await _reload_session_payload(session, user.id)
+
+
+@router.post("/accept-invitation-authenticated", response_model=AuthSessionRead)
+async def accept_invitation_authenticated(
+    payload: AcceptInvitationAuthenticatedRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> AuthSessionRead:
+    invitation = await _get_valid_invitation(session, payload.token)
+    if current_user.email.lower() != invitation.email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "invitation_email_mismatch",
+                "message": "Davet e-postası oturumla eşleşmiyor.",
+            },
+        )
+    await _accept_invitation_for_user(session, invitation, current_user)
+    await session.commit()
+    return await _reload_session_payload(session, current_user.id)
+
+
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
     return await session.scalar(
         select(User)
@@ -70,3 +117,60 @@ def _build_session_payload(user: User) -> AuthSessionRead:
         for membership in memberships
     ]
     return AuthSessionRead(user=AuthUserRead.model_validate(user), markets=markets)
+
+
+async def _get_valid_invitation(session: AsyncSession, token: str) -> MarketInvitation:
+    invitation = await session.scalar(
+        select(MarketInvitation).where(MarketInvitation.token_hash == hash_invitation_token(token))
+    )
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Geçersiz davet.")
+    if invitation.status == "revoked":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="İptal edilmiş davet.")
+    if invitation.status == "accepted":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Daha önce kullanılmış davet.")
+    if invitation.status == "expired" or invitation.expires_at <= datetime.now(UTC):
+        invitation.status = "expired"
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Süresi dolmuş davet.")
+    if invitation.status != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Davet kullanılamaz.")
+    return invitation
+
+
+async def _accept_invitation_for_user(
+    session: AsyncSession,
+    invitation: MarketInvitation,
+    user: User,
+) -> None:
+    membership = await session.scalar(
+        select(MarketUser).where(
+            MarketUser.market_id == invitation.market_id,
+            MarketUser.user_id == user.id,
+        )
+    )
+    if membership is None:
+        session.add(
+            MarketUser(
+                market_id=invitation.market_id,
+                user_id=user.id,
+                role=invitation.role,
+                is_active=True,
+            )
+        )
+    else:
+        membership.is_active = True
+    invitation.status = "accepted"
+    invitation.accepted_by_user_id = user.id
+    invitation.accepted_at = datetime.now(UTC)
+
+
+async def _reload_session_payload(session: AsyncSession, user_id) -> AuthSessionRead:
+    user = await session.scalar(
+        select(User)
+        .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
+        .where(User.id == user_id)
+    )
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı.")
+    return _build_session_payload(user)

@@ -1,12 +1,7 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { canCreateExports, canMutateCampaigns, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
-import {
-  campaignActivities,
-  campaignProducts,
-  findCampaignById,
-  generatedFiles,
-  messages,
-} from "../data/mockData.js";
+import { campaignProducts, findCampaignById, generatedFiles } from "../data/mockData.js";
 import {
   createCampaignExportJob,
   downloadCampaignFile,
@@ -15,6 +10,7 @@ import {
   getCampaignDetail,
   getCampaignPreviewHtml,
   resolveCampaignItem,
+  updateCampaignDetail,
 } from "../data/dataSource.js";
 import {
   Badge,
@@ -23,6 +19,7 @@ import {
   ConfirmDialog,
   ExportPanel,
   MissingProductModal,
+  Modal,
   PageHeader,
   PreviewFrame,
   ProductThumbnail,
@@ -94,8 +91,10 @@ function emptyCampaign(campaignId) {
   return {
     id: campaignId,
     name: "Kampanya yükleniyor",
+    title: "Kampanya yükleniyor",
     market: "Demo Market",
     template: "Şablon yok",
+    templateId: "",
     channel: "Panel",
     sourceType: "-",
     status: "Taslak",
@@ -106,9 +105,65 @@ function emptyCampaign(campaignId) {
     createdAt: "-",
     updatedAt: "-",
     updatedAtFull: "-",
+    campaignStartDate: "",
+    campaignEndDate: "",
     files: [],
     exportJobs: [],
   };
+}
+
+function CampaignEditModal({ campaign, isSaving, error, onClose, onSave }) {
+  const [form, setForm] = useState(() => ({
+    title: campaign.title || campaign.name || "",
+    templateId: campaign.templateId || "",
+    campaignStartDate: campaign.campaignStartDate || "",
+    campaignEndDate: campaign.campaignEndDate || "",
+  }));
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    onSave(form);
+  }
+
+  return (
+    <Modal
+      title="Kampanyayı Düzenle"
+      description="Kampanya başlığı, tarihleri ve şablon bilgisini güncelleyin."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Vazgeç</Button>
+          <Button variant="primary" type="submit" form="campaign-edit-form" disabled={isSaving}>
+            {isSaving ? "Kaydediliyor..." : "Kaydet"}
+          </Button>
+        </>
+      }
+    >
+      <form id="campaign-edit-form" className="form-grid" onSubmit={submit}>
+        <label className="field field-full">
+          <span>Başlık</span>
+          <input value={form.title} onChange={(event) => update("title", event.target.value)} required />
+        </label>
+        <label className="field">
+          <span>Başlangıç tarihi</span>
+          <input type="date" value={form.campaignStartDate || ""} onChange={(event) => update("campaignStartDate", event.target.value)} />
+        </label>
+        <label className="field">
+          <span>Bitiş tarihi</span>
+          <input type="date" value={form.campaignEndDate || ""} onChange={(event) => update("campaignEndDate", event.target.value)} />
+        </label>
+        <label className="field">
+          <span>Şablon ID</span>
+          <input value={form.templateId || ""} onChange={(event) => update("templateId", event.target.value)} placeholder="Boş bırakılabilir" />
+        </label>
+        {error ? <p className="form-error field-full">{error}</p> : null}
+      </form>
+    </Modal>
+  );
 }
 
 export function CampaignDetail({ campaignId }) {
@@ -124,17 +179,27 @@ export function CampaignDetail({ campaignId }) {
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState("");
   const [isPreviewLoading, setIsPreviewLoading] = useState(isRealApiEnabled);
+  const [isEditing, setEditing] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [isSavingEdit, setSavingEdit] = useState(false);
+  const selectedMarketId = getSelectedMarketId();
+  const canEditCampaigns = canMutateCampaigns();
+  const canGenerateExports = canCreateExports();
 
   async function loadCampaign() {
     if (!isRealApiEnabled) return;
 
     try {
       setIsLoading(true);
+      setCampaign(emptyCampaign(campaignId));
+      setRows([]);
       const detail = await getCampaignDetail(campaignId);
       setCampaign(detail);
       setRows(detail.items || []);
       setApiError("");
     } catch (error) {
+      setCampaign(emptyCampaign(campaignId));
+      setRows([]);
       setApiError(error.message || "Kampanya detayı yüklenemedi.");
     } finally {
       setIsLoading(false);
@@ -146,6 +211,7 @@ export function CampaignDetail({ campaignId }) {
 
     try {
       setIsPreviewLoading(true);
+      setPreview(null);
       const previewResponse = await getCampaignPreviewHtml(campaignId);
       setPreview(previewResponse);
       setPreviewError("");
@@ -160,7 +226,7 @@ export function CampaignDetail({ campaignId }) {
   useEffect(() => {
     loadCampaign();
     loadPreview();
-  }, [campaignId]);
+  }, [campaignId, selectedMarketId]);
 
   async function runRealAction(key, action, successMessage) {
     try {
@@ -176,39 +242,24 @@ export function CampaignDetail({ campaignId }) {
     }
   }
 
-  function resolveMockProduct(status) {
-    setRows((currentRows) =>
-      currentRows.map((row) => (row.id === selectedMissing?.id ? { ...row, status, score: Math.max(row.score, 82) } : row)),
-    );
-    setSelectedMissing(null);
-    setNotice("Eksik ürün eşleştirmesi yerel olarak güncellendi.");
-  }
-
   async function resolveProduct(status, suggestion) {
     if (!isRealApiEnabled) {
-      resolveMockProduct(status);
+      setRows((currentRows) =>
+        currentRows.map((row) => (row.id === selectedMissing?.id ? { ...row, status, score: Math.max(row.score, 82) } : row)),
+      );
+      setSelectedMissing(null);
+      setNotice("Eksik ürün eşleştirmesi yerel olarak güncellendi.");
       return;
     }
 
     const item = selectedMissing;
     if (!item) return;
-    if (status === "Eşleşti" && !suggestion?.product_id && !item.productId) {
-      setApiError("Real API modunda eşleştirme için backend önerisinden ürün seçin.");
-      return;
-    }
     setSelectedMissing(null);
     await runRealAction(
       `resolve-${item.id}`,
       () => resolveCampaignItem(campaignId, item, status, suggestion),
       "Ürün eşleştirmesi güncellendi.",
     );
-  }
-
-  function removeMockCampaignItem(product) {
-    if (!product) return;
-    setRows((currentRows) => currentRows.filter((row) => row.id !== product.id));
-    setConfirmRemoveProduct(null);
-    setNotice("Ürün kampanyadan çıkarıldı.");
   }
 
   async function generateFiles(formats) {
@@ -236,6 +287,29 @@ export function CampaignDetail({ campaignId }) {
     }
   }
 
+  async function saveCampaignEdit(form) {
+    try {
+      setSavingEdit(true);
+      setEditError("");
+      const updated = await updateCampaignDetail(campaignId, form);
+      setCampaign(updated);
+      setRows(updated.items || []);
+      setEditing(false);
+      setNotice("Kampanya güncellendi.");
+    } catch (error) {
+      setEditError(error.message || "Kampanya güncellenemedi.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  function removeMockCampaignItem(product) {
+    if (!product) return;
+    setRows((currentRows) => currentRows.filter((row) => row.id !== product.id));
+    setConfirmRemoveProduct(null);
+    setNotice("Ürün kampanyadan çıkarıldı.");
+  }
+
   const missingRows = rows.filter((row) => needsAttention(row.status));
   const files = isRealApiEnabled ? (campaign.files || []).map(mapFileForPanel) : generatedFiles;
   const exportJobs = campaign.exportJobs || [];
@@ -247,37 +321,43 @@ export function CampaignDetail({ campaignId }) {
         description={`${campaign.market} · ${campaign.template} · ${campaign.channel} · ${campaign.createdAt}`}
         actions={
           <>
-            <Button
-              disabled={isLoading || actionLoading === "all-suggestions"}
-              onClick={() =>
-                isRealApiEnabled
-                  ? runRealAction(
-                      "all-suggestions",
-                      () => generateCampaignDetailSuggestions(campaignId),
-                      "Tüm ürünler için öneriler güncellendi.",
-                    )
-                  : setNotice("Öneri üretimi mock modda simüle edildi.")
-              }
-            >
-              {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
-            </Button>
-            <Button
-              disabled={isLoading || actionLoading === "export-job"}
-              onClick={() =>
-                isRealApiEnabled
-                  ? runRealAction(
-                      "export-job",
-                      () => createCampaignExportJob(campaignId, ["pdf", "png"]),
-                      "PDF ve PNG dosyaları üretildi.",
-                    )
-                  : setNotice("Final dosyaları üretim için hazırlandı.")
-              }
-            >
-              {actionLoading === "export-job" ? "Dosya üretiliyor..." : "Dosya Üret"}
-            </Button>
-            <Button variant="primary" onClick={() => setNotice("Dosya gönderimi bu fazda placeholder olarak kalıyor.")}>
-              Kullanıcıya Gönder
-            </Button>
+            {canEditCampaigns ? (
+              <>
+                <Button onClick={() => setEditing(true)} disabled={isLoading}>
+                  Kampanyayı Düzenle
+                </Button>
+                <Button
+                  disabled={isLoading || actionLoading === "all-suggestions"}
+                  onClick={() =>
+                    isRealApiEnabled
+                      ? runRealAction(
+                          "all-suggestions",
+                          () => generateCampaignDetailSuggestions(campaignId),
+                          "Tüm ürünler için öneriler güncellendi.",
+                        )
+                      : setNotice("Öneri üretimi mock modda simüle edildi.")
+                  }
+                >
+                  {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
+                </Button>
+              </>
+            ) : null}
+            {canGenerateExports ? (
+              <Button
+                disabled={isLoading || actionLoading === "export-job"}
+                onClick={() =>
+                  isRealApiEnabled
+                    ? runRealAction(
+                        "export-job",
+                        () => createCampaignExportJob(campaignId, ["pdf", "png"]),
+                        "PDF ve PNG dosyaları üretildi.",
+                      )
+                    : setNotice("Final dosyaları üretim için hazırlandı.")
+                }
+              >
+                {actionLoading === "export-job" ? "Dosya üretiliyor..." : "Dosya Üret"}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -292,38 +372,14 @@ export function CampaignDetail({ campaignId }) {
           <p>Market, kaynak, kanal ve ürün eşleşme durumu bu kampanya üzerinden takip ediliyor.</p>
         </div>
         <dl className="summary-grid">
-          <div>
-            <dt>Market</dt>
-            <dd>{campaign.market}</dd>
-          </div>
-          <div>
-            <dt>Kaynak</dt>
-            <dd>{campaign.sourceType || campaign.template}</dd>
-          </div>
-          <div>
-            <dt>Kanal</dt>
-            <dd>{campaign.channel}</dd>
-          </div>
-          <div>
-            <dt>Ürün</dt>
-            <dd>{campaign.productCount}</dd>
-          </div>
-          <div>
-            <dt>Eşleşen</dt>
-            <dd>{campaign.matchedCount ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Eksik</dt>
-            <dd>{campaign.missingCount ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Düşük Güven</dt>
-            <dd>{campaign.lowConfidenceCount ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Güncelleme</dt>
-            <dd>{campaign.updatedAtFull || campaign.updatedAt}</dd>
-          </div>
+          <div><dt>Market</dt><dd>{campaign.market}</dd></div>
+          <div><dt>Kaynak</dt><dd>{campaign.sourceType || campaign.template}</dd></div>
+          <div><dt>Kanal</dt><dd>{campaign.channel}</dd></div>
+          <div><dt>Ürün</dt><dd>{campaign.productCount}</dd></div>
+          <div><dt>Eşleşen</dt><dd>{campaign.matchedCount ?? "-"}</dd></div>
+          <div><dt>Eksik</dt><dd>{campaign.missingCount ?? "-"}</dd></div>
+          <div><dt>Düşük Güven</dt><dd>{campaign.lowConfidenceCount ?? "-"}</dd></div>
+          <div><dt>Güncelleme</dt><dd>{campaign.updatedAtFull || campaign.updatedAt}</dd></div>
         </dl>
       </section>
 
@@ -342,12 +398,7 @@ export function CampaignDetail({ campaignId }) {
               </div>
               {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
               {preview?.html ? (
-                <iframe
-                  className="campaign-preview-iframe"
-                  sandbox=""
-                  srcDoc={preview.html}
-                  title={`${campaign.name} önizleme`}
-                />
+                <iframe className="campaign-preview-iframe" sandbox="" srcDoc={preview.html} title={`${campaign.name} önizleme`} />
               ) : (
                 <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
               )}
@@ -367,25 +418,27 @@ export function CampaignDetail({ campaignId }) {
                   <small>{product.matchedProduct}</small>
                 </div>
                 <StatusBadge status={product.status} />
-                <div className="row-actions">
-                  <Button onClick={() => setSelectedMissing(product)}>Eşleştir</Button>
-                  {isRealApiEnabled ? (
-                    <Button
-                      disabled={actionLoading === `item-suggestions-${product.id}`}
-                      onClick={() =>
-                        runRealAction(
-                          `item-suggestions-${product.id}`,
-                          () => generateCampaignItemSuggestions(campaignId, product.id),
-                          "Ürün önerileri güncellendi.",
-                        )
-                      }
-                    >
-                      Öneri Üret
-                    </Button>
-                  ) : (
-                    <Button onClick={() => setConfirmRemoveProduct(product)}>Kampanyadan çıkar</Button>
-                  )}
-                </div>
+                {canEditCampaigns ? (
+                  <div className="row-actions">
+                    <Button onClick={() => setSelectedMissing(product)}>Eşleştir</Button>
+                    {isRealApiEnabled ? (
+                      <Button
+                        disabled={actionLoading === `item-suggestions-${product.id}`}
+                        onClick={() =>
+                          runRealAction(
+                            `item-suggestions-${product.id}`,
+                            () => generateCampaignItemSuggestions(campaignId, product.id),
+                            "Ürün önerileri güncellendi.",
+                          )
+                        }
+                      >
+                        Öneri Üret
+                      </Button>
+                    ) : (
+                      <Button onClick={() => setConfirmRemoveProduct(product)}>Kampanyadan çıkar</Button>
+                    )}
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
@@ -402,56 +455,49 @@ export function CampaignDetail({ campaignId }) {
               "Kategori",
               "Eşleşme Skoru",
               "Durum",
-              "Öneriler",
-              "Aksiyon",
-            ]}
+              canEditCampaigns ? "Öneriler" : null,
+              canEditCampaigns ? "Aksiyon" : null,
+            ].filter(Boolean)}
           >
             {rows.map((product) => (
               <tr key={product.id}>
-                <td>
-                  <ProductThumbnail label={product.matchedProduct || product.incomingName} hasImage={product.image} />
-                </td>
-                <td>
-                  {product.incomingName}
-                  {product.rawLine ? <small>{product.rawLine}</small> : null}
-                </td>
-                <td>
-                  <strong>{product.matchedProduct}</strong>
-                </td>
+                <td><ProductThumbnail label={product.matchedProduct || product.incomingName} hasImage={product.image} /></td>
+                <td>{product.incomingName}{product.rawLine ? <small>{product.rawLine}</small> : null}</td>
+                <td><strong>{product.matchedProduct}</strong></td>
                 <td>{product.price}</td>
                 <td>{product.oldPrice}</td>
                 <td>{product.category}</td>
-                <td>
-                  <Badge tone={scoreTone(product.score)}>{product.score ? `%${product.score}` : "-"}</Badge>
-                </td>
-                <td>
-                  <StatusBadge status={product.status} />
-                </td>
-                <td>
-                  {(product.suggestions || []).slice(0, 2).map((suggestion) => (
-                    <button
-                      className="table-action"
-                      type="button"
-                      key={suggestion.id}
-                      disabled={actionLoading === `resolve-${product.id}`}
-                      onClick={() =>
-                        runRealAction(
-                          `resolve-${product.id}`,
-                          () => resolveCampaignItem(campaignId, product, "Eşleşti", suggestion),
-                          "Ürün eşleştirmesi güncellendi.",
-                        )
-                      }
-                    >
-                      {suggestion.suggested_name || "Öneri"} (%{Math.round(Number(suggestion.score || 0))})
-                    </button>
-                  ))}
-                  {isRealApiEnabled && !(product.suggestions || []).length ? <small>Öneri yok</small> : null}
-                </td>
-                <td>
-                  <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>
-                    Eşleştir
-                  </button>
-                </td>
+                <td><Badge tone={scoreTone(product.score)}>{product.score ? `%${product.score}` : "-"}</Badge></td>
+                <td><StatusBadge status={product.status} /></td>
+                {canEditCampaigns ? (
+                  <>
+                    <td>
+                      {(product.suggestions || []).slice(0, 2).map((suggestion) => (
+                        <button
+                          className="table-action"
+                          type="button"
+                          key={suggestion.id}
+                          disabled={actionLoading === `resolve-${product.id}`}
+                          onClick={() =>
+                            runRealAction(
+                              `resolve-${product.id}`,
+                              () => resolveCampaignItem(campaignId, product, "Eşleşti", suggestion),
+                              "Ürün eşleştirmesi güncellendi.",
+                            )
+                          }
+                        >
+                          {suggestion.suggested_name || "Öneri"} (%{Math.round(Number(suggestion.score || 0))})
+                        </button>
+                      ))}
+                      {isRealApiEnabled && !(product.suggestions || []).length ? <small>Öneri yok</small> : null}
+                    </td>
+                    <td>
+                      <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>
+                        Eşleştir
+                      </button>
+                    </td>
+                  </>
+                ) : null}
               </tr>
             ))}
           </Table>
@@ -462,11 +508,7 @@ export function CampaignDetail({ campaignId }) {
             files={files}
             isGenerating={actionLoading === "export-job"}
             onDownload={isRealApiEnabled ? downloadFile : undefined}
-            onAction={(message, formats) =>
-              isRealApiEnabled
-                ? generateFiles(formats)
-                : setNotice(message)
-            }
+            onAction={canGenerateExports ? (message, formats) => (isRealApiEnabled ? generateFiles(formats) : setNotice(message)) : undefined}
           />
         </Card>
 
@@ -478,9 +520,7 @@ export function CampaignDetail({ campaignId }) {
                 {exportJobs.map((job) => (
                   <tr key={job.id}>
                     <td>{exportJobTypeLabels[job.job_type] || job.job_type}</td>
-                    <td>
-                      <StatusBadge status={exportJobStatusLabels[job.status] || job.status || "Bekliyor"} />
-                    </td>
+                    <td><StatusBadge status={exportJobStatusLabels[job.status] || job.status || "Bekliyor"} /></td>
                     <td>{(job.requested_formats || []).join(", ") || "-"}</td>
                     <td>{job.attempts ?? 0}</td>
                     <td>{formatDateTime(job.created_at)}</td>
@@ -490,32 +530,18 @@ export function CampaignDetail({ campaignId }) {
             ) : null}
           </Card>
         ) : null}
-
-        <Card title="Mesaj Geçmişi" className="span-6">
-          <div className="message-list">
-            {messages.map((message) => (
-              <article key={`${message.sender}-${message.time}`}>
-                <strong>{message.sender}</strong>
-                <p>{message.text}</p>
-                <small>{message.time}</small>
-              </article>
-            ))}
-          </div>
-        </Card>
-
-        <Card title="İşlem Geçmişi" className="span-6">
-          <ol className="activity-timeline">
-            {campaignActivities.map((activity) => (
-              <li key={activity.label}>
-                <Badge tone={activity.tone}>{activity.time}</Badge>
-                <span>{activity.label}</span>
-              </li>
-            ))}
-          </ol>
-        </Card>
       </section>
 
-      <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} />
+      {canEditCampaigns ? <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} /> : null}
+      {isEditing ? (
+        <CampaignEditModal
+          campaign={campaign}
+          isSaving={isSavingEdit}
+          error={editError}
+          onClose={() => setEditing(false)}
+          onSave={saveCampaignEdit}
+        />
+      ) : null}
       <ConfirmDialog
         isOpen={Boolean(confirmRemoveProduct)}
         title="Ürünü kampanyadan çıkar"
