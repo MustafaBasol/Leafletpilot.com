@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "./config.js";
 import { apiClient, ApiError } from "./client.js";
+import { getAccessToken } from "./authSession.js";
 
 export function listCampaigns(params, marketId) {
   return apiClient.get("/campaigns", { params, marketId });
@@ -25,8 +26,8 @@ export function cancelCampaign(campaignId, marketId) {
   return apiClient.delete(`/campaigns/${campaignId}`, { marketId });
 }
 
-export function parseCampaignText(payload) {
-  return apiClient.post("/campaigns/parse-text", payload);
+export function parseCampaignText(payload, marketId) {
+  return apiClient.post("/campaigns/parse-text", payload, { marketId });
 }
 
 export function createCampaignFromText(payload, marketId) {
@@ -54,8 +55,10 @@ export function createExportJob(campaignId, payload, marketId) {
 }
 
 export async function downloadCampaignFile(campaignId, fileId, marketId) {
+  const token = getAccessToken();
   const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/files/${fileId}/download`, {
     headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       "X-Market-Id": marketId,
     },
   });

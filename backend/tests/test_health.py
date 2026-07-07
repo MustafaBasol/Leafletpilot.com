@@ -31,6 +31,9 @@ def test_config_loads_default_values(monkeypatch) -> None:
         "DATABASE_URL",
         "TEST_DATABASE_URL",
         "LOG_LEVEL",
+        "JWT_SECRET_KEY",
+        "JWT_ALGORITHM",
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -41,3 +44,5 @@ def test_config_loads_default_values(monkeypatch) -> None:
     assert settings.debug is False
     assert settings.api_prefix == "/api"
     assert settings.backend_cors_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]
+    assert settings.jwt_algorithm == "HS256"
+    assert settings.access_token_expire_minutes == 480

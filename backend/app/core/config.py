@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    jwt_secret_key: str = Field(
+        default="change-this-development-secret",
+        alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(default=480, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
 
     @property
     def local_storage_path(self) -> Path:

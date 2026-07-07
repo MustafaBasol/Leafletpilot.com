@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 
 const requiredFiles = [
   "index.html",
@@ -46,6 +46,56 @@ const requiredFiles = [
 
 for (const file of requiredFiles) {
   await access(file);
+}
+
+const mojibakeMarkers = [
+  "\u00c3\u0192",
+  "\u00c3",
+  "\u00c5",
+  "\u00c4",
+  "\u00c2",
+  "\u00e2\u20ac\u2122",
+  "\u00e2\u20ac\u0153",
+  "\u00e2\u20ac\u201c",
+  "\u00e2\u20ac",
+  "\ufffd",
+];
+
+const sourceExtensions = new Set([".css", ".js", ".jsx", ".json", ".mjs", ".ts", ".tsx"]);
+
+async function listSourceFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) {
+      files.push(...(await listSourceFiles(path)));
+      continue;
+    }
+
+    const extension = entry.name.slice(entry.name.lastIndexOf("."));
+    if (entry.isFile() && sourceExtensions.has(extension)) {
+      files.push(path);
+    }
+  }
+
+  return files;
+}
+
+const mojibakeFindings = [];
+for (const file of await listSourceFiles("src")) {
+  const contents = await readFile(file, "utf8");
+  contents.split(/\r?\n/).forEach((line, index) => {
+    const marker = mojibakeMarkers.find((candidate) => line.includes(candidate));
+    if (marker) {
+      mojibakeFindings.push(`${file}:${index + 1}: marker ${JSON.stringify(marker)} in ${line.trim()}`);
+    }
+  });
+}
+
+if (mojibakeFindings.length > 0) {
+  throw new Error(`Frontend source contains mojibake markers:\n${mojibakeFindings.join("\n")}`);
 }
 
 const html = await readFile("index.html", "utf8");

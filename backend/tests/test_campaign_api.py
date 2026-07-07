@@ -8,16 +8,31 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
-from app.api.deps import get_catalog_session
+from app.api.deps import get_catalog_session, get_current_user
 from app.core.config import settings
 from app.core.database import Base
 from app.main import app
-from app.models import Campaign, CampaignItem, Market, Template
+from app.models import Campaign, CampaignItem, Market, MarketUser, Template, User
 from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign import recalculate_campaign_counts
 
 client = TestClient(app)
+
+
+def _override_user(user_id):
+    async def override_user():
+        return User(id=user_id, email=f"campaign-{user_id}@example.com", is_active=True)
+
+    return override_user
+
+
+async def _create_market_user(session, market_id, user_id) -> None:
+    market = Market(id=market_id, name=f"Campaign Test Market {market_id}", slug=f"m-{market_id}")
+    user = User(id=user_id, email=f"campaign-{user_id}@example.com", is_active=True)
+    membership = MarketUser(market_id=market_id, user_id=user_id, role="market_admin", is_active=True)
+    session.add_all([market, user, membership])
+    await session.commit()
 
 
 def test_campaign_schemas_validate_sample_payloads() -> None:
@@ -79,58 +94,43 @@ def test_openapi_schema_contains_campaign_routes() -> None:
     assert "/api/campaigns/{campaign_id}/export-jobs" in schema["paths"]
 
 
-def test_missing_market_id_returns_400_before_database_session_is_used() -> None:
+def test_campaign_routes_reject_missing_token_before_database_session_is_used() -> None:
     response = client.get("/api/campaigns")
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert response.status_code == 401
 
     item_response = client.post(f"/api/campaigns/{uuid4()}/items/{uuid4()}/generate-suggestions", json={})
-    assert item_response.status_code == 400
-    assert item_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert item_response.status_code == 401
 
     campaign_response = client.post(f"/api/campaigns/{uuid4()}/generate-suggestions", json={})
-    assert campaign_response.status_code == 400
-    assert campaign_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert campaign_response.status_code == 401
 
     preview_response = client.get(f"/api/campaigns/{uuid4()}/preview-html")
-    assert preview_response.status_code == 400
-    assert preview_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert preview_response.status_code == 401
 
     export_response = client.post(
         f"/api/campaigns/{uuid4()}/export-jobs",
         json={"job_type": "final_export", "requested_formats": ["pdf", "png"]},
     )
-    assert export_response.status_code == 400
-    assert export_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert export_response.status_code == 401
 
     download_response = client.get(f"/api/campaigns/{uuid4()}/files/{uuid4()}/download")
-    assert download_response.status_code == 400
-    assert download_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert download_response.status_code == 401
 
     from_text_response = client.post(
         "/api/campaigns/from-text",
         json={"title": "Hafta 28", "raw_text": "Coca Cola 2L - 1.59"},
     )
-    assert from_text_response.status_code == 400
-    assert from_text_response.json()["detail"] == "X-Market-Id is required for campaign routes."
+    assert from_text_response.status_code == 401
 
 
-def test_parse_text_endpoint_works_without_database() -> None:
+def test_parse_text_endpoint_requires_auth() -> None:
     response = client.post(
         "/api/campaigns/parse-text",
         json={"raw_text": "Coca Cola 2L - 1.59€\nNo Price", "default_currency": "EUR"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total_lines"] == 2
-    assert body["parsed_count"] == 2
-    assert body["warning_count"] == 1
-    assert body["items"][0]["incoming_name"] == "Coca Cola 2L"
-    assert body["items"][0]["price"] == "1.59"
-    assert body["items"][1]["price"] is None
-    assert body["items"][1]["warnings"] == ["no_price_found"]
+    assert response.status_code == 401
 
 
 def test_campaign_count_recalculation_uses_non_excluded_items() -> None:
@@ -189,11 +189,12 @@ async def test_campaign_api_crud_runs_when_test_database_url_is_configured() -> 
             yield session
 
     market_id = uuid4()
+    user_id = uuid4()
     app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = _override_user(user_id)
     try:
         async with session_factory() as session:
-            session.add(Market(id=market_id, name=f"Campaign Test Market {market_id}", slug=f"m-{market_id}"))
-            await session.commit()
+            await _create_market_user(session, market_id, user_id)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -229,6 +230,7 @@ async def test_campaign_api_crud_runs_when_test_database_url_is_configured() -> 
             assert detail_response.json()["items"][0]["incoming_name"] == "Coca Cola 2L"
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
         await engine.dispose()
 
 
@@ -248,11 +250,12 @@ async def test_campaign_from_text_runs_when_test_database_url_is_configured() ->
             yield session
 
     market_id = uuid4()
+    user_id = uuid4()
     app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = _override_user(user_id)
     try:
         async with session_factory() as session:
-            session.add(Market(id=market_id, name=f"Campaign Text Market {market_id}", slug=f"t-{market_id}"))
-            await session.commit()
+            await _create_market_user(session, market_id, user_id)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -277,6 +280,7 @@ async def test_campaign_from_text_runs_when_test_database_url_is_configured() ->
             assert body["campaign"]["items"][0]["parsed_payload"]["parser"] == "deterministic_text_v1"
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
         await engine.dispose()
 
 
@@ -296,10 +300,14 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
             yield session
 
     market_id = uuid4()
+    user_id = uuid4()
     app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = _override_user(user_id)
     try:
         async with session_factory() as session:
             market = Market(id=market_id, name=f"Campaign Preview Market {market_id}", slug=f"p-{market_id}")
+            user = User(id=user_id, email=f"campaign-{user_id}@example.com", is_active=True)
+            membership = MarketUser(market_id=market_id, user_id=user_id, role="market_admin", is_active=True)
             template = Template(
                 name=f"Premium Market {market_id}",
                 slug=f"premium-market-{market_id}",
@@ -321,7 +329,7 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
                     match_status="not_found",
                 )
             ]
-            session.add_all([market, template, campaign])
+            session.add_all([market, user, membership, template, campaign])
             await session.commit()
             campaign_id = campaign.id
             template_id = template.id
@@ -344,4 +352,5 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
             assert "Coca Cola 2L" in body["html"]
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
         await engine.dispose()

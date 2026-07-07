@@ -13,6 +13,9 @@ import { Settings } from "./pages/Settings.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
 import { Templates } from "./pages/Templates.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
+import { getMe, login as loginWithApi } from "./api/authApi.js";
+import { clearAuthSession, hasStoredAuthSession, saveAuthSession } from "./api/authSession.js";
+import { isRealApiEnabled } from "./api/config.js";
 
 const AUTH_KEY = "leafletpilot_mock_auth";
 
@@ -49,28 +52,88 @@ function Page({ path }) {
 
 export function App() {
   const path = useHashPath();
-  const [isAuthenticated, setAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === "true");
+  const [isAuthenticated, setAuthenticated] = useState(() =>
+    isRealApiEnabled ? hasStoredAuthSession() : localStorage.getItem(AUTH_KEY) === "true",
+  );
+  const [isCheckingSession, setCheckingSession] = useState(() => isRealApiEnabled && hasStoredAuthSession());
+  const [authError, setAuthError] = useState("");
 
-  function login({ remember }) {
-    if (remember) {
-      localStorage.setItem(AUTH_KEY, "true");
+  useEffect(() => {
+    let isMounted = true;
+
+    async function validateSession() {
+      if (!isRealApiEnabled || !hasStoredAuthSession()) {
+        setCheckingSession(false);
+        return;
+      }
+
+      try {
+        const session = await getMe();
+        if (isMounted) {
+          saveAuthSession(session);
+          setAuthenticated(true);
+          setAuthError("");
+        }
+      } catch {
+        clearAuthSession();
+        if (isMounted) {
+          setAuthenticated(false);
+          setAuthError("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+          window.location.hash = "#/login";
+        }
+      } finally {
+        if (isMounted) setCheckingSession(false);
+      }
     }
+
+    validateSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  async function login({ email, password, remember }) {
+    if (!isRealApiEnabled) {
+      if (remember) {
+        localStorage.setItem(AUTH_KEY, "true");
+      }
+      setAuthenticated(true);
+      window.location.hash = "#/";
+      return;
+    }
+
+    const session = await loginWithApi(email, password);
+    saveAuthSession(session);
     setAuthenticated(true);
+    setAuthError("");
     window.location.hash = "#/";
   }
 
   function logout() {
-    localStorage.removeItem(AUTH_KEY);
+    if (!isRealApiEnabled) {
+      localStorage.removeItem(AUTH_KEY);
+    } else {
+      clearAuthSession();
+    }
     setAuthenticated(false);
-    window.location.hash = "#/";
+    window.location.hash = "#/login";
+  }
+
+  if (isCheckingSession) {
+    return <Landing />;
   }
 
   if (path === "/login") {
-    return <Login onLogin={login} />;
+    return <Login onLogin={login} initialError={authError} />;
   }
 
   if (!isAuthenticated) {
-    return <Landing />;
+    if (!isRealApiEnabled && path !== "/login") {
+      return <Landing />;
+    }
+    window.location.hash = "#/login";
+    return <Login onLogin={login} initialError={authError} />;
   }
 
   return (

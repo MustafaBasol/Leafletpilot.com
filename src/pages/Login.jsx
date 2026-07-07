@@ -1,14 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Checkbox, Input } from "../components/ui/index.js";
 
-export function Login({ onLogin }) {
-  const [email, setEmail] = useState("operator@leafletpilot.com");
-  const [password, setPassword] = useState("demo");
+export function Login({ onLogin, initialError = "" }) {
+  const [email, setEmail] = useState("demo@leafletpilot.com");
+  const [password, setPassword] = useState("demo1234");
   const [remember, setRemember] = useState(true);
+  const [isSubmitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(initialError);
 
-  function submitLogin(event) {
+  useEffect(() => {
+    setError(initialError);
+  }, [initialError]);
+
+  async function submitLogin(event) {
     event.preventDefault();
-    onLogin({ email, remember });
+    setSubmitting(true);
+    setError("");
+    try {
+      await onLogin({ email, password, remember });
+    } catch (submitError) {
+      setError(submitError.message || "Giriş yapılamadı. Bilgileri kontrol edin.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -31,13 +45,14 @@ export function Login({ onLogin }) {
       <form className="login-card" onSubmit={submitLogin}>
         <div>
           <h2>Giriş yap</h2>
-          <p>Demo paneline devam etmek için bilgileri kullanabilirsiniz.</p>
+          <p>Yerel demo için demo@leafletpilot.com / demo1234 kullanın.</p>
         </div>
+        {error ? <p className="inline-result inline-result-warning">{error}</p> : null}
         <Input label="E-posta" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
         <Input label="Şifre" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         <Checkbox label="Beni hatırla" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-        <Button variant="primary" type="submit">
-          Giriş Yap
+        <Button variant="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Giriş yapılıyor..." : "Giriş Yap"}
         </Button>
       </form>
     </main>

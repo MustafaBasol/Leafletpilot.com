@@ -6,6 +6,43 @@ customer brochure preview rendering, and local PDF/PNG export generation.
 Phase 18B adds operator hardening: visible real-mode API errors, destructive
 action confirmations in the panel, basic security headers, guarded credentialed
 CORS, and request limits for text parsing/export creation.
+Phase 18C adds minimal email/password login, signed access tokens, and
+membership-checked market access. Older notes below that describe
+`X-Market-Id` as a trusted placeholder are superseded: it is now only the
+selected-market header and must match an active membership for the authenticated
+user.
+
+## Phase 18C Auth Quick Start
+
+Seeded local demo credentials:
+
+```text
+Email: demo@leafletpilot.com
+Password: demo1234
+```
+
+Login:
+
+```powershell
+$login = Invoke-RestMethod -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email":"demo@leafletpilot.com","password":"demo1234"}' `
+  http://127.0.0.1:8000/api/auth/login
+
+$headers = @{
+  "Authorization" = "Bearer $($login.access_token)"
+  "X-Market-Id" = $login.markets[0].id
+}
+
+Invoke-RestMethod -Headers $headers http://127.0.0.1:8000/api/auth/me
+Invoke-RestMethod -Headers $headers http://127.0.0.1:8000/api/catalog/products
+```
+
+Public routes are `/api/health`, `/api/health/db`, and
+`POST /api/auth/login`. `/api/catalog/*`, `/api/campaigns/*`, and
+`/api/templates/*` require a Bearer token plus `X-Market-Id`; the backend
+returns 403 if the token user is not a member of that market. The frontend
+stores the MVP token in `localStorage` for development only.
 
 ## Setup
 

@@ -1,3 +1,4 @@
+import { getAccessToken, getSelectedMarketId } from "./authSession.js";
 import { apiBaseUrl } from "./config.js";
 
 export class ApiError extends Error {
@@ -55,20 +56,29 @@ function getErrorMessage(response, body) {
   return `API isteği başarısız oldu (${response.status} ${response.statusText})${suffix}`;
 }
 
-export async function apiRequest(path, { method = "GET", params, body, marketId, headers } = {}) {
+export async function apiRequest(
+  path,
+  { method = "GET", params, body, marketId, headers, skipAuth = false, skipMarket = false } = {},
+) {
   const requestHeaders = {
     Accept: "application/json",
     ...headers,
   };
 
+  const token = skipAuth ? "" : getAccessToken();
+  if (token) {
+    requestHeaders.Authorization = `Bearer ${token}`;
+  }
+
+  const selectedMarketId = marketId || (!skipMarket ? getSelectedMarketId() : "");
+  if (selectedMarketId) {
+    requestHeaders["X-Market-Id"] = selectedMarketId;
+  }
+
   const options = {
     method,
     headers: requestHeaders,
   };
-
-  if (marketId) {
-    requestHeaders["X-Market-Id"] = marketId;
-  }
 
   if (body !== undefined && body !== null) {
     requestHeaders["Content-Type"] = "application/json";

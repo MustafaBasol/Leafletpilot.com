@@ -16,44 +16,56 @@ CORS must use explicit origins, responses include simple security headers, and
 real API failures should be shown visibly by the frontend instead of silently
 falling back to mock data. `POST /api/campaigns/parse-text` and
 `POST /api/campaigns/from-text` cap `raw_text` at 20,000 characters.
+Phase 18C adds minimal real auth. For implemented `/api` routes,
+`X-Market-Id` is now only the selected market id; catalog, campaign, template,
+preview, export, and download routes require `Authorization: Bearer <token>`
+and verify the authenticated user has an active `MarketUser` membership for
+that market.
 
 ## Auth
 
-### `POST /auth/mock-login`
+### `POST /api/auth/login`
 
-Purpose: Support the current frontend mock shell until real auth replaces it.
+Purpose: Local MVP email/password login.
 
 Request:
 
 ```json
-{ "email": "demo@leafletpilot.app", "remember": true }
+{ "email": "demo@leafletpilot.com", "password": "demo1234" }
 ```
 
 Response:
 
 ```json
 {
-  "user": { "id": "usr_1", "email": "demo@leafletpilot.app", "displayName": "Demo User" },
-  "markets": [{ "id": "mkt_1", "name": "Anadolu Market", "role": "market_admin" }],
-  "accessToken": "mock-token"
+  "access_token": "jwt",
+  "token_type": "bearer",
+  "user": { "id": "uuid", "email": "demo@leafletpilot.com", "full_name": "Demo Admin" },
+  "markets": [{ "id": "uuid", "name": "Anadolu Market", "slug": "anadolu-market", "role": "market_admin" }]
 }
 ```
 
-Permissions: Public during MVP demo only.
+Permissions: Public.
 
-MVP/later: Replace with real login, refresh tokens, password reset, and session revocation.
+MVP/later: Add refresh tokens, password reset, invitation flow, safer token
+storage, and session revocation.
 
-### `GET /auth/me`
+### `GET /api/auth/me`
 
 Purpose: Load current user, roles, and market access.
+
+Headers:
+
+```text
+Authorization: Bearer <token>
+```
 
 Response:
 
 ```json
 {
-  "user": { "id": "usr_1", "email": "demo@leafletpilot.app", "displayName": "Demo User" },
-  "currentMarketId": "mkt_1",
-  "roles": [{ "marketId": "mkt_1", "role": "market_admin" }]
+  "user": { "id": "uuid", "email": "demo@leafletpilot.com", "full_name": "Demo Admin" },
+  "markets": [{ "id": "uuid", "name": "Anadolu Market", "slug": "anadolu-market", "role": "market_admin" }]
 }
 ```
 
