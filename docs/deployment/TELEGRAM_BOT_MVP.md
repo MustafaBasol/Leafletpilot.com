@@ -86,6 +86,16 @@ Telegram outbound send/edit/file calls are not automatically retried because
 they are non-idempotent POST operations.
 Export generation is synchronous.
 
+The database stores delivery markers for generated PDF and PNG sends, and
+conversation-state rows are locked while the bot decides whether to create or
+reuse campaigns and export jobs. These markers prevent normal webhook replay
+duplicates. They do not make outbound Telegram delivery exactly once: if
+Telegram accepts a file but the HTTP connection times out before the backend
+receives the response, the database cannot know whether Telegram delivered it.
+An explicit user retry after that ambiguous timeout may repeat a delivery.
+Exactly-once outbound Telegram delivery would require a stronger durable
+outbox and provider reconciliation design.
+
 ## Webhook Registration
 
 Register the webhook manually after deployment. Use placeholders only in docs
@@ -120,7 +130,7 @@ during startup.
 
 ## Production Checklist
 
-- Apply Alembic revision `20260707_0005`.
+- Apply Alembic revision `20260707_0006`.
 - Set strong private Telegram environment values.
 - Link only known internal users.
 - Confirm each user has the correct active `MarketUser` membership.

@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -97,6 +98,8 @@ async def create_campaign(
     session: AsyncSession,
     payload: CampaignCreate,
     market_id: UUID | None,
+    *,
+    commit: bool = True,
 ) -> Campaign:
     scoped_market_id = require_market_id(market_id)
     data = payload.model_dump(exclude={"items"})
@@ -108,7 +111,7 @@ async def create_campaign(
         for item in payload.items
     ]
     recalculate_campaign_counts(campaign)
-    await _persist(session, campaign)
+    await _persist(session, campaign, commit=commit)
     return await get_campaign(session, campaign.id, scoped_market_id)
 
 
@@ -116,6 +119,8 @@ async def create_campaign_from_text(
     session: AsyncSession,
     payload: CampaignCreateFromTextRequest,
     market_id: UUID | None,
+    *,
+    commit: bool = True,
 ) -> CampaignCreateFromTextResponse:
     scoped_market_id = require_market_id(market_id)
     parsed_items = parse_campaign_text(payload.raw_text, default_currency=payload.currency)
@@ -131,9 +136,14 @@ async def create_campaign_from_text(
         language=payload.language,
         items=[_campaign_item_create_from_parsed(item) for item in parsed_items],
     )
-    campaign = await create_campaign(session, campaign_payload, scoped_market_id)
+    campaign = await create_campaign(session, campaign_payload, scoped_market_id, commit=commit)
     suggestions_created = 0
     if payload.generate_suggestions and parsed_items:
+        if not commit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Campaign suggestions require committed campaign creation.",
+            )
         from app.services import product_matching
 
         summary = await product_matching.generate_suggestions_for_campaign(
@@ -225,10 +235,16 @@ async def update_campaign(
     return await _persist(session, campaign)
 
 
-async def cancel_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID | None) -> Campaign:
+async def cancel_campaign(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+    *,
+    commit: bool = True,
+) -> Campaign:
     campaign = await get_campaign(session, campaign_id, market_id)
     campaign.status = "cancelled"
-    return await _persist(session, campaign)
+    return await _persist(session, campaign, commit=commit)
 
 
 async def add_campaign_item(
@@ -372,6 +388,9 @@ async def create_export_job(
     campaign_id: UUID,
     payload: ExportJobCreate,
     market_id: UUID | None,
+    *,
+    commit: bool = True,
+    after_flush: Callable[[ExportJob], Awaitable[None]] | None = None,
 ) -> ExportJob:
     campaign = await get_campaign(session, campaign_id, market_id)
     formats = normalize_requested_formats(payload.requested_formats)
@@ -383,7 +402,13 @@ async def create_export_job(
         status="queued",
     )
     session.add(export_job)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
+    if after_flush is not None:
+        await after_flush(export_job)
+        await session.flush()
     await session.refresh(export_job)
     await render_campaign_export(
         session,
@@ -391,6 +416,7 @@ async def create_export_job(
         campaign_id=campaign.id,
         requested_formats=formats,
         export_job_id=export_job.id,
+        commit=commit,
     )
     await session.refresh(export_job)
     return export_job
@@ -510,10 +536,13 @@ async def _list(
     return list(result.unique().all()), total or 0
 
 
-async def _persist(session: AsyncSession, instance: Any) -> Any:
+async def _persist(session: AsyncSession, instance: Any, *, commit: bool = True) -> Any:
     session.add(instance)
     try:
-        await session.commit()
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(

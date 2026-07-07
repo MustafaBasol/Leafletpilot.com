@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -525,11 +526,14 @@ async def test_telegram_export_replay_reuses_job_and_does_not_resend_completed_f
         await _prepare_campaign_ready_for_export(session_factory, telegram_user_id, market_id)
         export_calls: list[str] = []
 
-        async def fake_create_export_job(session, campaign_id, payload, market_id_arg):
+        async def fake_create_export_job(session, campaign_id, payload, market_id_arg, *, commit=True, after_flush=None):
             export_calls.append(str(campaign_id))
             job = ExportJob(campaign_id=campaign_id, market_id=market_id_arg, job_type="final_export", status="completed", requested_formats=["pdf", "png"])
             session.add(job)
             await session.flush()
+            if after_flush is not None:
+                await after_flush(job)
+                await session.flush()
             pdf = _write_export_file(tmp_path, market_id_arg, campaign_id, job.id, "pdf")
             png = _write_export_file(tmp_path, market_id_arg, campaign_id, job.id, "png")
             pdf_file = CampaignFile(campaign_id=campaign_id, market_id=market_id_arg, file_type="brochure_pdf", format="pdf", status="ready", storage_key=pdf, size_bytes=1)
@@ -537,8 +541,7 @@ async def test_telegram_export_replay_reuses_job_and_does_not_resend_completed_f
             session.add_all([pdf_file, png_file])
             await session.flush()
             job.result_file_ids = [str(pdf_file.id), str(png_file.id)]
-            await session.commit()
-            await session.refresh(job)
+            await session.flush()
             return job
 
         monkeypatch.setattr("app.integrations.telegram.service.campaign_service.create_export_job", fake_create_export_job)
@@ -579,11 +582,14 @@ async def test_telegram_export_send_failure_retries_existing_files_when_test_dat
         await _prepare_campaign_ready_for_export(session_factory, telegram_user_id, market_id)
         export_calls: list[str] = []
 
-        async def fake_create_export_job(session, campaign_id, payload, market_id_arg):
+        async def fake_create_export_job(session, campaign_id, payload, market_id_arg, *, commit=True, after_flush=None):
             export_calls.append(str(campaign_id))
             job = ExportJob(campaign_id=campaign_id, market_id=market_id_arg, job_type="final_export", status="completed", requested_formats=["pdf", "png"])
             session.add(job)
             await session.flush()
+            if after_flush is not None:
+                await after_flush(job)
+                await session.flush()
             pdf = _write_export_file(tmp_path, market_id_arg, campaign_id, job.id, "pdf")
             png = _write_export_file(tmp_path, market_id_arg, campaign_id, job.id, "png")
             pdf_file = CampaignFile(campaign_id=campaign_id, market_id=market_id_arg, file_type="brochure_pdf", format="pdf", status="ready", storage_key=pdf, size_bytes=1)
@@ -591,8 +597,7 @@ async def test_telegram_export_send_failure_retries_existing_files_when_test_dat
             session.add_all([pdf_file, png_file])
             await session.flush()
             job.result_file_ids = [str(pdf_file.id), str(png_file.id)]
-            await session.commit()
-            await session.refresh(job)
+            await session.flush()
             return job
 
         monkeypatch.setattr("app.integrations.telegram.service.campaign_service.create_export_job", fake_create_export_job)
@@ -615,6 +620,146 @@ async def test_telegram_export_send_failure_retries_existing_files_when_test_dat
         assert len(export_calls) == 1
         assert len(fake.documents) == 1
         assert len(fake.photos) == 1
+    finally:
+        await _cleanup_telegram_test_app(engine)
+
+
+@pytest.mark.asyncio
+async def test_telegram_concurrent_title_updates_create_one_campaign_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed Telegram tests skipped.")
+
+    engine, session_factory, fake = await _install_telegram_test_app(monkeypatch)
+    try:
+        telegram_user_id, market_id, _ = await _seed_linked_user(session_factory, role="market_staff")
+        async with session_factory() as session:
+            account = await session.scalar(
+                select(TelegramAccount).where(TelegramAccount.telegram_user_id == telegram_user_id)
+            )
+            session.add(
+                TelegramConversationState(
+                    telegram_account_id=account.id,
+                    user_id=account.user_id,
+                    telegram_user_id=telegram_user_id,
+                    chat_id=telegram_user_id,
+                    selected_market_id=market_id,
+                    state="awaiting_title",
+                    pending_raw_text="Milk 1L - 1.29",
+                )
+            )
+            await session.commit()
+
+        headers = {"X-Telegram-Bot-Api-Secret-Token": settings.telegram_webhook_secret}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_one:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_two:
+                first, second = await asyncio.gather(
+                    client_one.post(
+                        "/api/integrations/telegram/webhook",
+                        headers=headers,
+                        json=_message_update(1000, telegram_user_id, telegram_user_id, "Weekly Deals"),
+                    ),
+                    client_two.post(
+                        "/api/integrations/telegram/webhook",
+                        headers=headers,
+                        json=_message_update(1001, telegram_user_id, telegram_user_id, "Weekly Deals"),
+                    ),
+                )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        async with session_factory() as session:
+            campaign_count = await session.scalar(
+                select(func.count()).select_from(Campaign).where(Campaign.market_id == market_id)
+            )
+            state = await session.scalar(
+                select(TelegramConversationState).where(
+                    TelegramConversationState.telegram_user_id == telegram_user_id
+                )
+            )
+            updates = (
+                await session.scalars(
+                    select(TelegramUpdate).where(TelegramUpdate.update_id.in_([1000, 1001]))
+                )
+            ).all()
+
+        assert campaign_count == 1
+        assert state.state == "awaiting_confirmation"
+        assert state.campaign_id is not None
+        assert sorted(update.status for update in updates) == ["completed", "completed"]
+        assert sum(1 for _, message, _ in fake.messages if "Kampanya olusturuldu" in message) == 1
+        assert any("zaten islendi" in message for _, message, _ in fake.messages)
+    finally:
+        await _cleanup_telegram_test_app(engine)
+
+
+@pytest.mark.asyncio
+async def test_telegram_concurrent_export_confirms_create_one_job_and_one_delivery_when_test_database_url_is_configured(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed Telegram tests skipped.")
+
+    monkeypatch.setattr(settings, "local_storage_dir", str(tmp_path))
+
+    async def fake_pdf(html, output_path):
+        output_path.write_bytes(b"%PDF-1.4\n")
+
+    async def fake_png(html, output_path):
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    monkeypatch.setattr("app.services.rendering.render_html_to_pdf", fake_pdf)
+    monkeypatch.setattr("app.services.rendering.render_html_to_png", fake_png)
+
+    engine, session_factory, fake = await _install_telegram_test_app(monkeypatch)
+    try:
+        telegram_user_id, market_id, _ = await _seed_linked_user(session_factory, role="market_admin")
+        campaign_id = await _prepare_campaign_ready_for_export(session_factory, telegram_user_id, market_id)
+
+        headers = {"X-Telegram-Bot-Api-Secret-Token": settings.telegram_webhook_secret}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_one:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_two:
+                first, second = await asyncio.gather(
+                    client_one.post(
+                        "/api/integrations/telegram/webhook",
+                        headers=headers,
+                        json=_callback_update(1010, telegram_user_id, telegram_user_id, "export:confirm"),
+                    ),
+                    client_two.post(
+                        "/api/integrations/telegram/webhook",
+                        headers=headers,
+                        json=_callback_update(1011, telegram_user_id, telegram_user_id, "export:confirm"),
+                    ),
+                )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        async with session_factory() as session:
+            job_count = await session.scalar(
+                select(func.count()).select_from(ExportJob).where(ExportJob.campaign_id == campaign_id)
+            )
+            state = await session.scalar(
+                select(TelegramConversationState).where(
+                    TelegramConversationState.telegram_user_id == telegram_user_id
+                )
+            )
+            updates = (
+                await session.scalars(
+                    select(TelegramUpdate).where(TelegramUpdate.update_id.in_([1010, 1011]))
+                )
+            ).all()
+
+        assert job_count == 1
+        assert len(fake.documents) == 1
+        assert len(fake.photos) == 1
+        assert state.state == "completed"
+        assert state.export_job_id is not None
+        assert state.export_document_sent_at is not None
+        assert state.export_photo_sent_at is not None
+        assert state.export_files_sent_at is not None
+        assert sorted(update.status for update in updates) == ["completed", "completed"]
     finally:
         await _cleanup_telegram_test_app(engine)
 
