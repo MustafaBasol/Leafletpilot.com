@@ -39,6 +39,13 @@ def test_config_loads_default_values(monkeypatch) -> None:
         "JWT_SECRET_KEY",
         "JWT_ALGORITHM",
         "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "TELEGRAM_BOT_ENABLED",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_WEBHOOK_SECRET",
+        "TELEGRAM_BOT_USERNAME",
+        "TELEGRAM_WEBHOOK_BASE_URL",
+        "TELEGRAM_HTTP_TIMEOUT_SECONDS",
+        "TELEGRAM_HTTP_MAX_ATTEMPTS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -51,6 +58,8 @@ def test_config_loads_default_values(monkeypatch) -> None:
     assert settings.backend_cors_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]
     assert settings.jwt_algorithm == "HS256"
     assert settings.access_token_expire_minutes == 480
+    assert settings.telegram_bot_enabled is False
+    assert settings.telegram_bot_token == ""
 
 
 def test_health_response_exposes_no_secret_values() -> None:
@@ -111,6 +120,83 @@ def test_production_requires_database_url(monkeypatch) -> None:
         Settings(_env_file=None)
 
 
+def test_telegram_disabled_permits_empty_config(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "false")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_BASE_URL", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.telegram_bot_enabled is False
+
+
+def test_telegram_enabled_requires_token(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "s" * 40)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+        Settings(_env_file=None)
+
+
+def test_telegram_enabled_requires_webhook_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+
+    with pytest.raises(ValueError, match="TELEGRAM_WEBHOOK_SECRET"):
+        Settings(_env_file=None)
+
+
+def test_telegram_rejects_placeholder_secret_and_http_url_in_production(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_BASE_URL", "https://api.example.com")
+
+    with pytest.raises(ValueError, match="non-placeholder"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "s" * 40)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_BASE_URL", "http://api.example.com")
+    with pytest.raises(ValueError, match="HTTPS"):
+        Settings(_env_file=None)
+
+
+def test_telegram_rejects_invalid_timeout_and_retry(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_HTTP_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValueError, match="TELEGRAM_HTTP_TIMEOUT_SECONDS"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("TELEGRAM_HTTP_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("TELEGRAM_HTTP_MAX_ATTEMPTS", "0")
+    with pytest.raises(ValueError, match="TELEGRAM_HTTP_MAX_ATTEMPTS"):
+        Settings(_env_file=None)
+
+
+def test_telegram_validation_error_does_not_echo_token_or_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    token = "123:should-not-appear"
+    secret = "s" * 40
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_BASE_URL", "http://api.example.com")
+
+    with pytest.raises(ValueError) as exc_info:
+        Settings(_env_file=None)
+
+    assert token not in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
+
 def _set_valid_production_env(monkeypatch) -> None:
     for key in (
         "APP_NAME",
@@ -128,6 +214,13 @@ def _set_valid_production_env(monkeypatch) -> None:
         "JWT_SECRET_KEY",
         "JWT_ALGORITHM",
         "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "TELEGRAM_BOT_ENABLED",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_WEBHOOK_SECRET",
+        "TELEGRAM_BOT_USERNAME",
+        "TELEGRAM_WEBHOOK_BASE_URL",
+        "TELEGRAM_HTTP_TIMEOUT_SECONDS",
+        "TELEGRAM_HTTP_MAX_ATTEMPTS",
     ):
         monkeypatch.delenv(key, raising=False)
 

@@ -12,6 +12,13 @@ EXAMPLE_JWT_SECRETS = {
     "secret",
     "changeme",
 }
+EXAMPLE_TELEGRAM_SECRETS = {
+    "secret",
+    "changeme",
+    "change-me",
+    "telegram-webhook-secret",
+    "example-secret",
+}
 
 
 class Settings(BaseSettings):
@@ -20,6 +27,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     app_name: str = Field(default="LeafletPilot API", alias="APP_NAME")
@@ -48,6 +56,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=480, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
+    telegram_bot_enabled: bool = Field(default=False, alias="TELEGRAM_BOT_ENABLED")
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
+    telegram_bot_username: str = Field(default="", alias="TELEGRAM_BOT_USERNAME")
+    telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
+    telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
+    telegram_http_max_attempts: int = Field(default=2, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
 
     @property
     def is_production(self) -> bool:
@@ -82,6 +97,12 @@ class Settings(BaseSettings):
 
         if self.access_token_expire_minutes < 1:
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be at least 1.")
+        if self.telegram_http_timeout_seconds < 1 or self.telegram_http_timeout_seconds > 60:
+            raise ValueError("TELEGRAM_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
+        if self.telegram_http_max_attempts < 1 or self.telegram_http_max_attempts > 5:
+            raise ValueError("TELEGRAM_HTTP_MAX_ATTEMPTS must be between 1 and 5.")
+        if self.telegram_bot_enabled:
+            self._validate_enabled_telegram_settings()
 
         if "*" in self.backend_cors_origins:
             raise ValueError("BACKEND_CORS_ORIGINS cannot include '*' while CORS credentials are enabled.")
@@ -116,6 +137,19 @@ class Settings(BaseSettings):
         if "*" in self.trusted_hosts:
             raise ValueError("TRUSTED_HOSTS cannot include '*' in production.")
         return self
+
+    def _validate_enabled_telegram_settings(self) -> None:
+        if not self.telegram_bot_token.strip():
+            raise ValueError("TELEGRAM_BOT_TOKEN is required when TELEGRAM_BOT_ENABLED=true.")
+        if not self.telegram_webhook_secret.strip():
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_BOT_ENABLED=true.")
+        normalized_secret = self.telegram_webhook_secret.strip().lower()
+        if len(self.telegram_webhook_secret.strip()) < 32 or normalized_secret in EXAMPLE_TELEGRAM_SECRETS:
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET must be a strong non-placeholder value.")
+        if not self.telegram_webhook_base_url.strip():
+            raise ValueError("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_BOT_ENABLED=true.")
+        if self.is_production and urlparse(self.telegram_webhook_base_url).scheme != "https":
+            raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
 
 
 @lru_cache

@@ -6,6 +6,7 @@ from app.models.invitation import INVITATION_STATUSES, MarketInvitation
 from app.models.market import MARKET_USER_ROLES, Market, MarketUser
 from app.models.messaging import Conversation, IncomingMessage
 from app.models.template import Template
+from app.models.telegram import TelegramAccount, TelegramConversationState, TelegramUpdate
 from app.models.user import User
 
 __all__ = [
@@ -28,5 +29,8 @@ __all__ = [
     "ProductAlias",
     "ProductImage",
     "Template",
+    "TelegramAccount",
+    "TelegramConversationState",
+    "TelegramUpdate",
     "User",
 ]

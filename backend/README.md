@@ -19,6 +19,8 @@ fast on unsafe configuration, Docker images are available for the API and Vite
 frontend, production Compose keeps PostgreSQL private and export files
 persistent, and production seeding is disabled. See
 [docs/deployment/PRODUCTION_DEPLOYMENT.md](../docs/deployment/PRODUCTION_DEPLOYMENT.md).
+Phase 19B adds an optional internal Telegram bot MVP for manually linked users.
+See [docs/deployment/TELEGRAM_BOT_MVP.md](../docs/deployment/TELEGRAM_BOT_MVP.md).
 
 ## Phase 18D Auth Quick Start
 
