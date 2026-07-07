@@ -16,8 +16,10 @@ backend/.pytest_cache/
 # Local environment files
 .env
 .env.local
+.env.production
 backend/.env
 backend/.env.local
+backend/.env.production
 backend/storage/
 storage/
 
@@ -34,3 +36,5 @@ backend/.venv/
 # Frontend generated files
 node_modules/
 dist/
+
+.env.production.local

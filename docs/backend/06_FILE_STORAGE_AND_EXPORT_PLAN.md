@@ -38,6 +38,18 @@ LOCAL_STORAGE_DIR=storage
 
 Relative paths resolve under `backend/`. Generated files are ignored by git.
 
+Phase 19A production Compose keeps this local storage model and mounts a named
+volume at `/app/storage`. Set `LOCAL_STORAGE_DIR=/app/storage` in production.
+Generated files survive backend container recreation as long as the volume or
+host directory is preserved. The backend stores safe relative storage keys and
+download routes verify market, campaign, and file ownership before returning
+bytes.
+
+Back up the storage volume together with the database using
+`deploy/backup/storage_backup.sh`. Database and storage backups should be taken
+close together so `CampaignFile` rows and exported bytes remain consistent
+during restore.
+
 Future production storage should use S3-compatible object storage so the backend
 can run against AWS S3, Cloudflare R2, Supabase Storage, MinIO, or another
 compatible provider.

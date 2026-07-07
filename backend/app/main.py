@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -16,6 +17,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         debug=settings.debug,
     )
+
+    if settings.trusted_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
 
     app.add_middleware(
         CORSMiddleware,

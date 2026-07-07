@@ -39,6 +39,7 @@ DEMO_VIEWER_EMAIL = "viewer@leafletpilot.local"
 DEMO_MARKET_SLUG = "anadolu-market"
 DEMO_SECOND_MARKET_SLUG = "avrupa-market"
 DEMO_CAMPAIGN_SLUG = "hafta-28-kampanyasi"
+PRODUCTION_SEED_MESSAGE = "Development seed is disabled in production."
 DEMO_CAMPAIGN_TITLE = "Hafta 28 Kampanyası"
 DEMO_CAMPAIGN_RAW_TEXT = """Coca Cola 2L - 1.59€
 Eti Burçak - 0.99€
@@ -200,6 +201,11 @@ DEMO_TEMPLATES = (
 def require_database_url() -> None:
     if not settings.database_url or AsyncSessionLocal is None:
         raise RuntimeError("DATABASE_URL is required to seed development data.")
+
+
+def require_seed_allowed() -> None:
+    if settings.is_production:
+        raise RuntimeError(PRODUCTION_SEED_MESSAGE)
 
 
 async def seed_dev_data(session: AsyncSession) -> dict[str, Any]:
@@ -569,7 +575,13 @@ def update_fields(instance: Any, **values: Any) -> bool:
 
 
 async def main() -> None:
-    require_database_url()
+    try:
+        require_seed_allowed()
+        require_database_url()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+
     try:
         async with AsyncSessionLocal() as session:
             result = await seed_dev_data(session)
