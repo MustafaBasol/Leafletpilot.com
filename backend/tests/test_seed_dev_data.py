@@ -54,7 +54,12 @@ class FakeSession:
 
 def test_seed_script_constants_and_helpers() -> None:
     assert seed_dev_data.DEMO_USER_EMAIL == "demo@leafletpilot.com"
+    assert seed_dev_data.DEMO_USER_PASSWORD == "demo1234"
     assert seed_dev_data.DEMO_MARKET_SLUG == "anadolu-market"
+    assert seed_dev_data.verify_password(
+        seed_dev_data.DEMO_USER_PASSWORD,
+        seed_dev_data.hash_password(seed_dev_data.DEMO_USER_PASSWORD),
+    )
 
     barcodes = [product.barcode for product in seed_dev_data.DEMO_PRODUCTS]
     assert len(barcodes) == len(set(barcodes))

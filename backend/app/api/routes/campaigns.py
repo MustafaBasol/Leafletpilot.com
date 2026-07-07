@@ -75,7 +75,11 @@ async def create_campaign(
 
 
 @router.post("/parse-text", response_model=CampaignParseResponse)
-async def parse_campaign_text_endpoint(payload: CampaignParseRequest) -> CampaignParseResponse:
+async def parse_campaign_text_endpoint(
+    payload: CampaignParseRequest,
+    market_id: UUID = Depends(get_required_market_id),
+) -> CampaignParseResponse:
+    _ = market_id
     parsed_items = parse_campaign_text(payload.raw_text, default_currency=payload.default_currency)
     items = [
         ParsedCampaignLineRead(

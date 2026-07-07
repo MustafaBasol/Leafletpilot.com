@@ -419,3 +419,43 @@ npm.cmd run smoke
 Next step: Phase 18C or Phase 19 should start minimal auth/tenancy and role
 authorization. Telegram MVP should come after that foundation, or only behind a
 clear internal-only deployment boundary.
+
+## Phase 18C: Minimal Auth And Market Tenancy Foundation
+
+Implemented scope:
+
+- Local MVP email/password login at `POST /api/auth/login`.
+- Bearer access token and `GET /api/auth/me`.
+- Seeded demo user `demo@leafletpilot.com` with local-only password `demo1234`.
+- Token-based current user resolution.
+- Membership-checked selected market access using `X-Market-Id`.
+- `/api/catalog/*`, `/api/campaigns/*`, `/api/templates/*`, preview, export,
+  and download routes require authentication and market membership.
+- Frontend real API mode stores the token and first returned market, sends
+  `Authorization` plus `X-Market-Id`, validates `/auth/me` on app load, and
+  clears invalid sessions.
+
+Excluded work:
+
+- No Telegram or WhatsApp.
+- No S3/R2/cloud storage.
+- No payments or deployment.
+- No OAuth or external auth provider.
+- No refresh tokens, password reset, invitation flow, or full role matrix.
+- No AI parsing, OCR, Excel/PDF import, or visual template editor.
+
+Validation commands:
+
+```bash
+python -m pytest -q
+python -m alembic heads
+python -m alembic upgrade head
+python scripts/seed_dev_data.py
+npm.cmd run validate
+npm.cmd run build
+npm.cmd run smoke
+```
+
+Next step: Phase 18D should add role permissions, a market switcher, and user
+invitation/onboarding. Phase 19 can start Telegram MVP after this foundation is
+stable and deployment boundaries are clear.

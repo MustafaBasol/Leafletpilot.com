@@ -2,25 +2,17 @@ from collections.abc import AsyncGenerator
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_session
+from app.core.security import decode_access_token
+from app.models import MarketUser, User
 
 
-async def get_current_market_id(x_market_id: UUID | None = Header(default=None)) -> UUID | None:
-    """Temporary tenancy placeholder until real auth resolves the active market."""
-    return x_market_id
-
-
-async def get_required_market_id(
-    market_id: UUID | None = Depends(get_current_market_id),
-) -> UUID:
-    if market_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Market-Id is required for campaign routes.",
-        )
-    return market_id
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
@@ -32,6 +24,109 @@ async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DATABASE_URL is not configured.",
         ) from exc
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> User:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Oturum gerekli.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = decode_access_token(credentials.credentials)
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Geçersiz oturum.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Geçersiz oturum.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+    user = await session.scalar(
+        select(User)
+        .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
+        .where(User.id == user_uuid, User.is_active.is_(True))
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Geçersiz oturum.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
+async def require_market_member(
+    x_market_id: UUID | None = Header(default=None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> UUID:
+    if x_market_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Market-Id seçili market için gereklidir.",
+        )
+    membership = await session.scalar(
+        select(MarketUser)
+        .options(selectinload(MarketUser.market))
+        .where(
+            MarketUser.market_id == x_market_id,
+            MarketUser.user_id == current_user.id,
+            MarketUser.is_active.is_(True),
+        )
+    )
+    if membership is None or not membership.market.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu market için yetkiniz yok.",
+        )
+    return x_market_id
+
+
+async def get_current_market_id(market_id: UUID = Depends(require_market_member)) -> UUID:
+    return market_id
+
+
+async def get_required_market_id(market_id: UUID = Depends(require_market_member)) -> UUID:
+    return market_id
+
+
+def require_market_role(*allowed_roles: str):
+    async def dependency(
+        x_market_id: UUID | None = Header(default=None),
+        current_user: User = Depends(get_current_user),
+    ) -> UUID:
+        if x_market_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="X-Market-Id seçili market için gereklidir.",
+            )
+        membership = next(
+            (
+                item
+                for item in current_user.market_memberships
+                if item.market_id == x_market_id and item.is_active
+            ),
+            None,
+        )
+        if membership is None or membership.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bu işlem için market rolünüz yeterli değil.",
+            )
+        return x_market_id
+
+    return dependency
 
 
 async def get_campaign_session(

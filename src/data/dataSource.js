@@ -1,5 +1,6 @@
 ﻿import { demoMarketId, isRealApiEnabled } from "../api/config.js";
 import * as catalogApi from "../api/catalogApi.js";
+import { getSelectedMarketId } from "../api/authSession.js";
 import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
 import {
@@ -16,24 +17,24 @@ import {
 
 const statusLabels = {
   draft: "Taslak",
-  parsing: "ÃœrÃ¼nler analiz ediliyor",
-  matching: "ÃœrÃ¼nler eÅŸleÅŸtiriliyor",
-  missing_products: "Eksik Ã¼rÃ¼n var",
-  preview_ready: "Ã–nizleme hazÄ±r",
+  parsing: "Ürünler analiz ediliyor",
+  matching: "Ürünler eşleştiriliyor",
+  missing_products: "Eksik ürün var",
+  preview_ready: "Önizleme hazır",
   waiting_approval: "Onay bekliyor",
   revision_requested: "Revizyon istendi",
-  approved: "OnaylandÄ±",
-  generating_files: "Dosyalar oluÅŸturuluyor",
-  completed: "TamamlandÄ±",
-  failed: "BaÅŸarÄ±sÄ±z",
-  cancelled: "Ä°ptal edildi",
+  approved: "Onaylandı",
+  generating_files: "Dosyalar oluşturuluyor",
+  completed: "Tamamlandı",
+  failed: "Başarısız",
+  cancelled: "İptal edildi",
 };
 
 const channelLabels = {
   panel: "Panel",
   telegram: "Telegram",
   whatsapp: "WhatsApp",
-  import: "Ä°Ã§e AktarÄ±m",
+  import: "İçe Aktarım",
 };
 
 const sourceTypeLabels = {
@@ -45,26 +46,27 @@ const sourceTypeLabels = {
 };
 
 const matchStatusLabels = {
-  matched: "EÅŸleÅŸti",
+  matched: "Eşleşti",
   low_confidence: "Kontrol gerekli",
-  not_found: "BulunamadÄ±",
-  manual_selected: "Manuel seÃ§ildi",
-  new_product_needed: "Yeni Ã¼rÃ¼n gerekli",
-  use_without_image: "GÃ¶rselsiz devam",
-  excluded: "Kampanyadan Ã§Ä±karÄ±ldÄ±",
+  not_found: "Bulunamadı",
+  manual_selected: "Manuel seçildi",
+  new_product_needed: "Yeni ürün gerekli",
+  use_without_image: "Görselsiz devam",
+  excluded: "Kampanyadan çıkarıldı",
 };
 
 const resolutionByStatus = {
-  "EÅŸleÅŸti": "manual_selected",
-  "Yeni Ã¼rÃ¼n gerekli": "new_product_needed",
-  "GÃ¶rselsiz devam": "use_without_image",
-  "Kampanyadan Ã§Ä±karÄ±ldÄ±": "excluded",
-  "BulunamadÄ±": "not_found",
+  "Eşleşti": "manual_selected",
+  "Yeni ürün gerekli": "new_product_needed",
+  "Görselsiz devam": "use_without_image",
+  "Kampanyadan çıkarıldı": "excluded",
+  "Bulunamadı": "not_found",
 };
 
-function requireDemoMarketId() {
-  if (!demoMarketId) throw new Error("Real API modu için VITE_DEMO_MARKET_ID gerekli.");
-  return demoMarketId;
+function requireSelectedMarketId() {
+  const marketId = getSelectedMarketId();
+  if (!marketId) throw new Error("Real API modu için oturumdaki market seçimi gerekli.");
+  return marketId;
 }
 
 function formatDate(value) {
@@ -131,7 +133,7 @@ function mapCampaign(campaign) {
     missingCount: campaign.missing_count ?? 0,
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
     templateId: campaign.template_id || "",
-    template: campaign.template_name || (campaign.template_id ? "Åžablon adÄ± yok" : "Åžablon yok"),
+    template: campaign.template_name || (campaign.template_id ? "Şablon adı yok" : "Şablon yok"),
     createdAt: formatDate(campaign.created_at),
     updatedAt: formatUpdatedAt(campaign.updated_at),
     date: formatDate(campaign.campaign_start_date || campaign.created_at),
@@ -148,7 +150,7 @@ function mapCampaignItem(item, suggestions = []) {
     productId: item.product_id || "",
     rawLine: item.raw_line,
     incomingName: item.incoming_name,
-    matchedProduct: item.display_name || "EÅŸleÅŸme yok",
+    matchedProduct: item.display_name || "Eşleşme yok",
     price: formatMoney(item.price, item.currency),
     oldPrice: formatMoney(item.old_price, item.currency),
     currency: item.currency,
@@ -213,7 +215,7 @@ function mapProduct(product, { brandsById = new Map(), categoriesById = new Map(
     alternativeNames: (product.aliases || []).map((alias) => (typeof alias === "string" ? alias : alias.alias)).filter(Boolean),
     alternativeNameItems: (product.aliases || []).filter((alias) => typeof alias !== "string"),
     status: product.is_active ? "Aktif" : "Pasif",
-    imageStatus: product.images?.length ? "Var" : "GÃ¶rsel yok",
+    imageStatus: product.images?.length ? "Var" : "Görsel yok",
     usageCount: product.usage_count || 0,
   };
 }
@@ -238,13 +240,13 @@ function mapTemplate(template) {
     type: template.template_type || "market",
     templateType: template.template_type || "market",
     formats,
-    capacity: maxProductsPerPage ? `${maxProductsPerPage} Ã¼rÃ¼n / sayfa` : "Kapasite belirtilmedi",
+    capacity: maxProductsPerPage ? `${maxProductsPerPage} ürün / sayfa` : "Kapasite belirtilmedi",
     maxProductsPerPage,
     status: template.is_active ? "Aktif" : "Pasif",
     isDefault: template.slug === "premium-market",
     isGlobal: Boolean(template.is_global),
-    recommendation: template.description || "Bu ÅŸablon iÃ§in aÃ§Ä±klama henÃ¼z girilmedi.",
-    bestFor: template.is_global ? "TÃ¼m marketler" : "Bu market",
+    recommendation: template.description || "Bu şablon için açıklama henüz girilmedi.",
+    bestFor: template.is_global ? "Tüm marketler" : "Bu market",
     previewTone: config.preview_tone || "classic",
     createdAt: formatDateTime(template.created_at),
     updatedAt: formatDateTime(template.updated_at),
@@ -263,7 +265,7 @@ export function getDashboardData() {
 
 export async function getCampaigns() {
   if (!isRealApiEnabled) return campaigns;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   const response = await campaignApi.listCampaigns({ limit: 50, offset: 0 }, marketId);
   return unwrapList(response).map(mapCampaign);
@@ -271,20 +273,20 @@ export async function getCampaigns() {
 
 export async function getCampaignDetail(id) {
   if (!isRealApiEnabled) return findCampaignById(id);
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   return mapCampaignDetail(await campaignApi.getCampaign(id, marketId));
 }
 
 export async function getCampaignPreviewHtml(campaignId) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return campaignApi.getCampaignPreviewHtml(campaignId, marketId);
 }
 
 export async function getProducts() {
   if (!isRealApiEnabled) return products;
-  requireDemoMarketId();
+  requireSelectedMarketId();
 
   const { products: catalogProducts } = await getProductCatalogData();
   return catalogProducts;
@@ -299,7 +301,7 @@ export async function getProductCatalogData() {
       categories: uniqueByName(mockProducts.map((product) => product.category), "Kategori yok"),
     };
   }
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   const [productsResponse, brandsResponse, categoriesResponse] = await Promise.all([
     catalogApi.listProducts({ limit: 100, offset: 0, include_global: true }, marketId),
@@ -327,13 +329,13 @@ export async function getCatalogBrands() {
       is_global: false,
     }));
   }
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return unwrapList(await catalogApi.listBrands({ limit: 100, offset: 0, include_global: true }, marketId));
 }
 
 export async function createCatalogBrand(form) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return catalogApi.createBrand(
     {
       name: cleanText(form.name),
@@ -355,13 +357,13 @@ export async function getCatalogCategories() {
       is_global: false,
     }));
   }
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return unwrapList(await catalogApi.listCategories({ limit: 100, offset: 0, include_global: true }, marketId));
 }
 
 export async function createCatalogCategory(form) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return catalogApi.createCategory(
     {
       name: cleanText(form.name),
@@ -376,12 +378,12 @@ export async function createCatalogCategory(form) {
 
 export async function parseCampaignTextPreview({ rawText, currency = "EUR", language = "tr" }) {
   if (!isRealApiEnabled) return parsedWizardProducts;
-  return campaignApi.parseCampaignText({ raw_text: rawText, default_currency: currency, language });
+  return campaignApi.parseCampaignText({ raw_text: rawText, default_currency: currency, language }, requireSelectedMarketId());
 }
 
 export async function createCampaignFromText({ title, rawText, templateId, currency = "EUR", language = "tr" }) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return campaignApi.createCampaignFromText(
     {
       title: cleanText(title),
@@ -400,19 +402,19 @@ export async function createCampaignFromText({ title, rawText, templateId, curre
 
 export async function generateCampaignDetailSuggestions(campaignId) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return campaignApi.generateCampaignSuggestions(campaignId, { limit_per_item: 5 }, marketId);
 }
 
 export async function generateCampaignItemSuggestions(campaignId, itemId) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return campaignApi.generateItemSuggestions(campaignId, itemId, { limit: 5 }, marketId);
 }
 
 export async function resolveCampaignItem(campaignId, item, resolutionStatus, suggestion) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   const resolution = resolutionByStatus[resolutionStatus] || resolutionStatus || "manual_selected";
   return campaignApi.resolveCampaignItemMatch(
     campaignId,
@@ -421,7 +423,7 @@ export async function resolveCampaignItem(campaignId, item, resolutionStatus, su
       resolution,
       product_id: suggestion?.product_id || item.productId || null,
       display_name: suggestion?.suggested_name || item.matchedProduct || item.incomingName,
-      notes: suggestion ? "Ã–neri Ã¼zerinden eÅŸleÅŸtirildi." : "Panel Ã¼zerinden gÃ¼ncellendi.",
+      notes: suggestion ? "Öneri üzerinden eşleştirildi." : "Panel üzerinden güncellendi.",
     },
     marketId,
   );
@@ -429,7 +431,7 @@ export async function resolveCampaignItem(campaignId, item, resolutionStatus, su
 
 export async function createCampaignExportJob(campaignId, requestedFormats = ["pdf", "png"]) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return campaignApi.createExportJob(
     campaignId,
     { job_type: "final_export", requested_formats: requestedFormats, status: "queued" },
@@ -439,7 +441,7 @@ export async function createCampaignExportJob(campaignId, requestedFormats = ["p
 
 export async function downloadCampaignFile(campaignId, file) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   const blob = await campaignApi.downloadCampaignFile(campaignId, file.id, marketId);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -508,7 +510,7 @@ async function syncProductAliases(productId, form) {
   await Promise.all(
     existingAliases
       .filter((item) => item?.id && !desiredByName.has(String(item.alias || "").toLocaleLowerCase("tr-TR")))
-      .map((item) => catalogApi.deleteProductAlias(productId, item.id, demoMarketId)),
+      .map((item) => catalogApi.deleteProductAlias(productId, item.id, requireSelectedMarketId())),
   );
 
   existingAliases.forEach((item) => {
@@ -520,20 +522,20 @@ async function syncProductAliases(productId, form) {
   await Promise.all(
     desiredAliases
       .filter((alias) => !existingKeys.has(alias.toLocaleLowerCase("tr-TR")))
-      .map((alias) => catalogApi.createProductAlias(productId, { alias }, demoMarketId)),
+      .map((alias) => catalogApi.createProductAlias(productId, { alias }, requireSelectedMarketId())),
   );
 }
 
 export async function createCatalogProduct(form) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   return catalogApi.createProduct(buildProductPayload(form, { includeAliases: true }), marketId);
 }
 
 export async function updateCatalogProduct(productId, form) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   const product = await catalogApi.updateProduct(productId, buildProductPayload(form), marketId);
   await syncProductAliases(productId, form);
@@ -542,27 +544,27 @@ export async function updateCatalogProduct(productId, form) {
 
 export async function updateCatalogProductStatus(productId, isActive) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
 
   return catalogApi.updateProduct(productId, { is_active: isActive }, marketId);
 }
 
 export async function getTemplates() {
   if (!isRealApiEnabled) return templates;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   const response = await templateApi.listTemplates({ limit: 100, offset: 0, include_global: true }, marketId);
   return unwrapList(response).map(mapTemplate);
 }
 
 export async function getTemplateDetail(templateId) {
   if (!isRealApiEnabled) return templates.find((template) => template.id === templateId) || templates[0];
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return mapTemplate(await templateApi.getTemplate(templateId, marketId));
 }
 
 export async function updateTemplateStatus(templateId, isActive) {
   if (!isRealApiEnabled) return null;
-  const marketId = requireDemoMarketId();
+  const marketId = requireSelectedMarketId();
   return templateApi.updateTemplate(templateId, { is_active: isActive }, marketId);
 }
 

@@ -11,6 +11,11 @@ still uses local placeholder preview and file cards.
 Phase 18B keeps mock mode available but removes silent mock replacement in real
 API mode: supported screens show inline API errors when backend data cannot be
 loaded.
+Phase 18C adds real API login. In real API mode, the Login page calls
+`POST /api/auth/login`, stores the returned Bearer token and first market in
+`localStorage`, validates `/api/auth/me` on app load, and sends
+`Authorization` plus `X-Market-Id` on business API calls. `localStorage` token
+storage is for the development MVP only.
 
 ## Environment Variables
 
@@ -24,10 +29,11 @@ VITE_DEMO_MARKET_ID=
 
 - `VITE_API_BASE_URL` points at the FastAPI API prefix.
 - `VITE_USE_REAL_API=true` switches supported screens to backend calls.
-- `VITE_DEMO_MARKET_ID` is sent as `X-Market-Id` for market-scoped requests.
+- `VITE_DEMO_MARKET_ID` is only a mock/internal fallback. In real auth mode the
+  selected market comes from the login or `/auth/me` response.
 
-If real API mode is enabled without `VITE_DEMO_MARKET_ID`, supported screens show
-a friendly inline error instead of crashing.
+If real API mode is enabled without a valid token and selected market, the app
+shows the login flow and clears invalid sessions.
 
 ## Run Backend
 
@@ -41,13 +47,12 @@ From `backend/`, set up PostgreSQL and dependencies using
 .\.venv\Scripts\python -m uvicorn app.main:app --reload
 ```
 
-The seed command prints:
+The seed command creates local demo credentials:
 
 ```text
-Demo market id: <market-id>
+demo@leafletpilot.com
+demo1234
 ```
-
-Use that value as `VITE_DEMO_MARKET_ID`.
 
 ## Mock Mode
 
@@ -73,10 +78,13 @@ With the backend running and seeded:
 ```text
 VITE_API_BASE_URL=http://127.0.0.1:8000/api
 VITE_USE_REAL_API=true
-VITE_DEMO_MARKET_ID=<market-id>
 ```
 
 Restart Vite after changing env variables.
+
+Login with `demo@leafletpilot.com` / `demo1234`. If the user has multiple
+markets, the frontend selects the first returned market for now. A market
+switcher is deferred to Phase 18D.
 
 Currently wired operations:
 
@@ -180,9 +188,10 @@ and template active/passive.
 
 ## Current Limitations
 
-- No real auth; `X-Market-Id` is the temporary tenancy placeholder.
-- No real tenancy or role authorization; production/live use still needs those
-  foundations before external customer access.
+- Minimal auth and membership-checked tenancy are implemented. Full role
+  authorization is still deferred.
+- Token storage uses `localStorage` for local MVP only; production needs a safer
+  token strategy, refresh tokens, password reset, and invitation flow.
 - PDF/PNG file generation is local and synchronous only.
 - No S3 uploads or signed cloud downloads.
 - No Telegram or WhatsApp integration.

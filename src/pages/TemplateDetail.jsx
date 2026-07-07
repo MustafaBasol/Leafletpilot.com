@@ -7,14 +7,14 @@ import { Badge, Button, Card, ExportPanel, PageHeader, PreviewFrame, StatusBadge
 function emptyTemplate(templateId) {
   return {
     id: templateId,
-    name: "Åžablon yÃ¼kleniyor",
+    name: "Şablon yükleniyor",
     type: "-",
     formats: [],
     capacity: "-",
     maxProductsPerPage: "-",
     status: "Pasif",
     isDefault: false,
-    recommendation: "Åžablon verisi henÃ¼z yÃ¼klenmedi.",
+    recommendation: "Şablon verisi henüz yüklenmedi.",
     bestFor: "-",
   };
 }
@@ -58,21 +58,21 @@ export function TemplateDetail({ templateId }) {
     <>
       <PageHeader
         title={template.name}
-        description={`${template.type} Â· ${template.capacity} Â· ${template.formats.join(", ")}`}
+        description={`${template.type} · ${template.capacity} · ${template.formats.join(", ")}`}
         actions={
           <>
-            <Button onClick={() => setMessage("Bu ÅŸablon varsayÄ±lan olarak iÅŸaretlendi.")}>VarsayÄ±lan Yap</Button>
-            <Button onClick={() => setMessage("Ã–nizleme oluÅŸturma simÃ¼le edildi.")}>Ã–nizleme OluÅŸtur</Button>
-            <Button onClick={() => setMessage("Åžablon kopyasÄ± oluÅŸturuldu.")}>Kopyala</Button>
-            <Button variant="primary" onClick={() => setMessage("DÃ¼zenleme paneli bu fazda temsilidir.")}>
-              DÃ¼zenle
+            <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
+            <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
+            <Button onClick={() => setMessage("Şablon kopyası oluşturuldu.")}>Kopyala</Button>
+            <Button variant="primary" onClick={() => setMessage("Düzenleme paneli bu fazda temsilidir.")}>
+              Düzenle
             </Button>
           </>
         }
       />
       {message ? <p className="inline-result">{message}</p> : null}
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
-      {isLoading ? <p className="inline-result">Åžablon detayÄ± yÃ¼kleniyor...</p> : null}
+      {isLoading ? <p className="inline-result">Şablon detayı yükleniyor...</p> : null}
 
       <section className="detail-hero card">
         <div>
@@ -80,7 +80,7 @@ export function TemplateDetail({ templateId }) {
           <h2>{template.name}</h2>
           <p>{template.recommendation}</p>
           <div className="file-badges">
-            {template.isDefault ? <Badge tone="primary">VarsayÄ±lan</Badge> : null}
+            {template.isDefault ? <Badge tone="primary">Varsayılan</Badge> : null}
             {template.formats.map((format) => (
               <span key={format}>{format}</span>
             ))}
@@ -88,11 +88,11 @@ export function TemplateDetail({ templateId }) {
         </div>
         <dl className="summary-grid">
           <div>
-            <dt>Åžablon tipi</dt>
+            <dt>Şablon tipi</dt>
             <dd>{template.type}</dd>
           </div>
           <div>
-            <dt>Maksimum Ã¼rÃ¼n</dt>
+            <dt>Maksimum ürün</dt>
             <dd>{template.maxProductsPerPage}</dd>
           </div>
           <div>
@@ -100,24 +100,24 @@ export function TemplateDetail({ templateId }) {
             <dd>{template.bestFor}</dd>
           </div>
           <div>
-            <dt>VarsayÄ±lan</dt>
-            <dd>{template.isDefault ? "Evet" : "HayÄ±r"}</dd>
+            <dt>Varsayılan</dt>
+            <dd>{template.isDefault ? "Evet" : "Hayır"}</dd>
           </div>
         </dl>
       </section>
 
       <section className="dashboard-grid">
-        <Card title="Åžablon Ã–nizleme" className="span-8">
-          <PreviewFrame title={template.name} status="Ã–rnek veri" products={products.slice(0, 8)} formats={formats} />
+        <Card title="Şablon Önizleme" className="span-8">
+          <PreviewFrame title={template.name} status="Örnek veri" products={products.slice(0, 8)} formats={formats} />
         </Card>
-        <Card title="Åžablon Bilgileri" className="span-4">
+        <Card title="Şablon Bilgileri" className="span-4">
           <dl className="detail-list">
             <div>
-              <dt>KullanÄ±m Ã¶nerisi</dt>
+              <dt>Kullanım önerisi</dt>
               <dd>{template.recommendation}</dd>
             </div>
             <div>
-              <dt>ÃœrÃ¼n kapasitesi</dt>
+              <dt>Ürün kapasitesi</dt>
               <dd>{template.capacity}</dd>
             </div>
             <div>
@@ -130,7 +130,7 @@ export function TemplateDetail({ templateId }) {
             </div>
           </dl>
         </Card>
-        <Card title="Ã–rnek Ã‡Ä±ktÄ±lar" className="span-12">
+        <Card title="Örnek Çıktılar" className="span-12">
           <ExportPanel files={generatedFiles} onAction={setMessage} />
         </Card>
       </section>

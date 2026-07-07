@@ -37,30 +37,30 @@ function scoreTone(score) {
 }
 
 function needsAttention(status) {
-  return ["Kontrol gerekli", "BulunamadÄ±", "Yeni Ã¼rÃ¼n gerekli", "GÃ¶rselsiz devam"].includes(status);
+  return ["Kontrol gerekli", "Bulunamadı", "Yeni ürün gerekli", "Görselsiz devam"].includes(status);
 }
 
 const fileStatusLabels = {
   pending: "Bekliyor",
-  generating: "OluÅŸturuluyor",
-  ready: "HazÄ±r",
-  failed: "BaÅŸarÄ±sÄ±z",
-  sent: "GÃ¶nderildi",
+  generating: "Oluşturuluyor",
+  ready: "Hazır",
+  failed: "Başarısız",
+  sent: "Gönderildi",
 };
 
 const exportJobStatusLabels = {
   queued: "Kuyrukta",
-  running: "Ã‡alÄ±ÅŸÄ±yor",
-  completed: "TamamlandÄ±",
-  failed: "BaÅŸarÄ±sÄ±z",
-  cancelled: "Ä°ptal edildi",
+  running: "Çalışıyor",
+  completed: "Tamamlandı",
+  failed: "Başarısız",
+  cancelled: "İptal edildi",
 };
 
 const exportJobTypeLabels = {
-  preview: "Ã–nizleme",
-  final_export: "Final Ã§Ä±ktÄ±",
-  regenerate_preview: "Ã–nizlemeyi yenile",
-  send_files: "Dosya gÃ¶nderimi",
+  preview: "Önizleme",
+  final_export: "Final çıktı",
+  regenerate_preview: "Önizlemeyi yenile",
+  send_files: "Dosya gönderimi",
 };
 
 function formatDateTime(value) {
@@ -82,7 +82,7 @@ function mapFileForPanel(file) {
     id: file.id,
     name,
     downloadName: name,
-    type: file.file_type || "Kampanya dosyasÄ±",
+    type: file.file_type || "Kampanya dosyası",
     format: file.format || "-",
     size: file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : "-",
     status: fileStatusLabels[file.status] || file.status || "Bekliyor",
@@ -93,9 +93,9 @@ function mapFileForPanel(file) {
 function emptyCampaign(campaignId) {
   return {
     id: campaignId,
-    name: "Kampanya yÃ¼kleniyor",
+    name: "Kampanya yükleniyor",
     market: "Demo Market",
-    template: "Åžablon yok",
+    template: "Şablon yok",
     channel: "Panel",
     sourceType: "-",
     status: "Taslak",
@@ -135,7 +135,7 @@ export function CampaignDetail({ campaignId }) {
       setRows(detail.items || []);
       setApiError("");
     } catch (error) {
-      setApiError(error.message || "Kampanya detayÄ± yÃ¼klenemedi.");
+      setApiError(error.message || "Kampanya detayı yüklenemedi.");
     } finally {
       setIsLoading(false);
     }
@@ -151,7 +151,7 @@ export function CampaignDetail({ campaignId }) {
       setPreviewError("");
     } catch (error) {
       setPreview(null);
-      setPreviewError(error.message || "Ã–nizleme yÃ¼klenemedi. Placeholder gÃ¶steriliyor.");
+      setPreviewError(error.message || "Önizleme yüklenemedi. Placeholder gösteriliyor.");
     } finally {
       setIsPreviewLoading(false);
     }
@@ -170,7 +170,7 @@ export function CampaignDetail({ campaignId }) {
       await loadCampaign();
       setNotice(successMessage);
     } catch (error) {
-      setApiError(error.message || "Ä°ÅŸlem tamamlanamadÄ±.");
+      setApiError(error.message || "İşlem tamamlanamadı.");
     } finally {
       setActionLoading("");
     }
@@ -181,7 +181,7 @@ export function CampaignDetail({ campaignId }) {
       currentRows.map((row) => (row.id === selectedMissing?.id ? { ...row, status, score: Math.max(row.score, 82) } : row)),
     );
     setSelectedMissing(null);
-    setNotice("Eksik Ã¼rÃ¼n eÅŸleÅŸtirmesi yerel olarak gÃ¼ncellendi.");
+    setNotice("Eksik ürün eşleştirmesi yerel olarak güncellendi.");
   }
 
   async function resolveProduct(status, suggestion) {
@@ -192,15 +192,15 @@ export function CampaignDetail({ campaignId }) {
 
     const item = selectedMissing;
     if (!item) return;
-    if (status === "EÅŸleÅŸti" && !suggestion?.product_id && !item.productId) {
-      setApiError("Real API modunda eÅŸleÅŸtirme iÃ§in backend Ã¶nerisinden Ã¼rÃ¼n seÃ§in.");
+    if (status === "Eşleşti" && !suggestion?.product_id && !item.productId) {
+      setApiError("Real API modunda eşleştirme için backend önerisinden ürün seçin.");
       return;
     }
     setSelectedMissing(null);
     await runRealAction(
       `resolve-${item.id}`,
       () => resolveCampaignItem(campaignId, item, status, suggestion),
-      "ÃœrÃ¼n eÅŸleÅŸtirmesi gÃ¼ncellendi.",
+      "Ürün eşleştirmesi güncellendi.",
     );
   }
 
@@ -208,20 +208,20 @@ export function CampaignDetail({ campaignId }) {
     if (!product) return;
     setRows((currentRows) => currentRows.filter((row) => row.id !== product.id));
     setConfirmRemoveProduct(null);
-    setNotice("ÃœrÃ¼n kampanyadan Ã§Ä±karÄ±ldÄ±.");
+    setNotice("Ürün kampanyadan çıkarıldı.");
   }
 
   async function generateFiles(formats) {
     await runRealAction(
       "export-job",
       () => createCampaignExportJob(campaignId, formats),
-      formats?.length === 1 ? `${formats[0].toUpperCase()} dosyasÄ± Ã¼retildi.` : "PDF ve PNG dosyalarÄ± Ã¼retildi.",
+      formats?.length === 1 ? `${formats[0].toUpperCase()} dosyası üretildi.` : "PDF ve PNG dosyaları üretildi.",
     );
   }
 
   async function downloadFile(file) {
     if (!isRealApiEnabled) {
-      setNotice("Mock modda indirme simÃ¼le edildi.");
+      setNotice("Mock modda indirme simüle edildi.");
       return;
     }
     try {
@@ -244,7 +244,7 @@ export function CampaignDetail({ campaignId }) {
     <>
       <PageHeader
         title={campaign.name}
-        description={`${campaign.market} Â· ${campaign.template} Â· ${campaign.channel} Â· ${campaign.createdAt}`}
+        description={`${campaign.market} · ${campaign.template} · ${campaign.channel} · ${campaign.createdAt}`}
         actions={
           <>
             <Button
@@ -254,12 +254,12 @@ export function CampaignDetail({ campaignId }) {
                   ? runRealAction(
                       "all-suggestions",
                       () => generateCampaignDetailSuggestions(campaignId),
-                      "TÃ¼m Ã¼rÃ¼nler iÃ§in Ã¶neriler gÃ¼ncellendi.",
+                      "Tüm ürünler için öneriler güncellendi.",
                     )
-                  : setNotice("Ã–neri Ã¼retimi mock modda simÃ¼le edildi.")
+                  : setNotice("Öneri üretimi mock modda simüle edildi.")
               }
             >
-              {actionLoading === "all-suggestions" ? "Ã–neriler Ã¼retiliyor..." : "TÃ¼m Ã–nerileri Ãœret"}
+              {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
             </Button>
             <Button
               disabled={isLoading || actionLoading === "export-job"}
@@ -268,28 +268,28 @@ export function CampaignDetail({ campaignId }) {
                   ? runRealAction(
                       "export-job",
                       () => createCampaignExportJob(campaignId, ["pdf", "png"]),
-                      "PDF ve PNG dosyalarÄ± Ã¼retildi.",
+                      "PDF ve PNG dosyaları üretildi.",
                     )
-                  : setNotice("Final dosyalarÄ± Ã¼retim iÃ§in hazÄ±rlandÄ±.")
+                  : setNotice("Final dosyaları üretim için hazırlandı.")
               }
             >
-              {actionLoading === "export-job" ? "Dosya Ã¼retiliyor..." : "Dosya Ãœret"}
+              {actionLoading === "export-job" ? "Dosya üretiliyor..." : "Dosya Üret"}
             </Button>
-            <Button variant="primary" onClick={() => setNotice("Dosya gÃ¶nderimi bu fazda placeholder olarak kalÄ±yor.")}>
-              KullanÄ±cÄ±ya GÃ¶nder
+            <Button variant="primary" onClick={() => setNotice("Dosya gönderimi bu fazda placeholder olarak kalıyor.")}>
+              Kullanıcıya Gönder
             </Button>
           </>
         }
       />
       {notice ? <p className="inline-result">{notice}</p> : null}
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
-      {isLoading ? <p className="inline-result">Kampanya detayÄ± yÃ¼kleniyor...</p> : null}
+      {isLoading ? <p className="inline-result">Kampanya detayı yükleniyor...</p> : null}
 
       <section className="detail-hero card">
         <div>
           <StatusBadge status={campaign.status} />
           <h2>{campaign.name}</h2>
-          <p>Market, kaynak, kanal ve Ã¼rÃ¼n eÅŸleÅŸme durumu bu kampanya Ã¼zerinden takip ediliyor.</p>
+          <p>Market, kaynak, kanal ve ürün eşleşme durumu bu kampanya üzerinden takip ediliyor.</p>
         </div>
         <dl className="summary-grid">
           <div>
@@ -305,11 +305,11 @@ export function CampaignDetail({ campaignId }) {
             <dd>{campaign.channel}</dd>
           </div>
           <div>
-            <dt>ÃœrÃ¼n</dt>
+            <dt>Ürün</dt>
             <dd>{campaign.productCount}</dd>
           </div>
           <div>
-            <dt>EÅŸleÅŸen</dt>
+            <dt>Eşleşen</dt>
             <dd>{campaign.matchedCount ?? "-"}</dd>
           </div>
           <div>
@@ -317,27 +317,27 @@ export function CampaignDetail({ campaignId }) {
             <dd>{campaign.missingCount ?? "-"}</dd>
           </div>
           <div>
-            <dt>DÃ¼ÅŸÃ¼k GÃ¼ven</dt>
+            <dt>Düşük Güven</dt>
             <dd>{campaign.lowConfidenceCount ?? "-"}</dd>
           </div>
           <div>
-            <dt>GÃ¼ncelleme</dt>
+            <dt>Güncelleme</dt>
             <dd>{campaign.updatedAtFull || campaign.updatedAt}</dd>
           </div>
         </dl>
       </section>
 
       <section className="dashboard-grid">
-        <Card title="BroÅŸÃ¼r Ã–nizleme" className="span-8">
+        <Card title="Broşür Önizleme" className="span-8">
           {isRealApiEnabled ? (
             <div className="real-preview-panel">
               <div className="real-preview-toolbar">
                 <div>
                   <strong>{preview?.template_name || campaign.template}</strong>
-                  <small>{preview?.generated_at ? `Son Ã¼retim: ${formatDateTime(preview.generated_at)}` : "HTML Ã¶nizleme"}</small>
+                  <small>{preview?.generated_at ? `Son üretim: ${formatDateTime(preview.generated_at)}` : "HTML önizleme"}</small>
                 </div>
                 <Button disabled={isPreviewLoading} onClick={loadPreview}>
-                  {isPreviewLoading ? "Ã–nizleme yÃ¼kleniyor..." : "Ã–nizlemeyi Yenile"}
+                  {isPreviewLoading ? "Önizleme yükleniyor..." : "Önizlemeyi Yenile"}
                 </Button>
               </div>
               {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
@@ -346,20 +346,20 @@ export function CampaignDetail({ campaignId }) {
                   className="campaign-preview-iframe"
                   sandbox=""
                   srcDoc={preview.html}
-                  title={`${campaign.name} Ã¶nizleme`}
+                  title={`${campaign.name} önizleme`}
                 />
               ) : (
-                <PreviewFrame title={campaign.name} status="Placeholder Ã¶nizleme" />
+                <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
               )}
             </div>
           ) : (
-            <PreviewFrame title={campaign.name} status="Placeholder Ã¶nizleme" />
+            <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
           )}
         </Card>
 
-        <Card title="Eksik ÃœrÃ¼nler" className="span-4">
+        <Card title="Eksik Ürünler" className="span-4">
           <div className="stack-list">
-            {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren Ã¼rÃ¼n yok.</p> : null}
+            {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren ürün yok.</p> : null}
             {missingRows.map((product) => (
               <article className="missing-action-row" key={product.id}>
                 <div>
@@ -368,7 +368,7 @@ export function CampaignDetail({ campaignId }) {
                 </div>
                 <StatusBadge status={product.status} />
                 <div className="row-actions">
-                  <Button onClick={() => setSelectedMissing(product)}>EÅŸleÅŸtir</Button>
+                  <Button onClick={() => setSelectedMissing(product)}>Eşleştir</Button>
                   {isRealApiEnabled ? (
                     <Button
                       disabled={actionLoading === `item-suggestions-${product.id}`}
@@ -376,11 +376,11 @@ export function CampaignDetail({ campaignId }) {
                         runRealAction(
                           `item-suggestions-${product.id}`,
                           () => generateCampaignItemSuggestions(campaignId, product.id),
-                          "ÃœrÃ¼n Ã¶nerileri gÃ¼ncellendi.",
+                          "Ürün önerileri güncellendi.",
                         )
                       }
                     >
-                      Ã–neri Ãœret
+                      Öneri Üret
                     </Button>
                   ) : (
                     <Button onClick={() => setConfirmRemoveProduct(product)}>Kampanyadan çıkar</Button>
@@ -391,18 +391,18 @@ export function CampaignDetail({ campaignId }) {
           </div>
         </Card>
 
-        <Card title="ÃœrÃ¼n EÅŸleÅŸtirme Tablosu" className="span-12">
+        <Card title="Ürün Eşleştirme Tablosu" className="span-12">
           <Table
             columns={[
-              "GÃ¶rsel",
-              "Gelen ÃœrÃ¼n AdÄ±",
-              "EÅŸleÅŸen ÃœrÃ¼n",
+              "Görsel",
+              "Gelen Ürün Adı",
+              "Eşleşen Ürün",
               "Fiyat",
               "Eski Fiyat",
               "Kategori",
-              "EÅŸleÅŸme Skoru",
+              "Eşleşme Skoru",
               "Durum",
-              "Ã–neriler",
+              "Öneriler",
               "Aksiyon",
             ]}
           >
@@ -437,19 +437,19 @@ export function CampaignDetail({ campaignId }) {
                       onClick={() =>
                         runRealAction(
                           `resolve-${product.id}`,
-                          () => resolveCampaignItem(campaignId, product, "EÅŸleÅŸti", suggestion),
-                          "ÃœrÃ¼n eÅŸleÅŸtirmesi gÃ¼ncellendi.",
+                          () => resolveCampaignItem(campaignId, product, "Eşleşti", suggestion),
+                          "Ürün eşleştirmesi güncellendi.",
                         )
                       }
                     >
-                      {suggestion.suggested_name || "Ã–neri"} (%{Math.round(Number(suggestion.score || 0))})
+                      {suggestion.suggested_name || "Öneri"} (%{Math.round(Number(suggestion.score || 0))})
                     </button>
                   ))}
-                  {isRealApiEnabled && !(product.suggestions || []).length ? <small>Ã–neri yok</small> : null}
+                  {isRealApiEnabled && !(product.suggestions || []).length ? <small>Öneri yok</small> : null}
                 </td>
                 <td>
                   <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>
-                    EÅŸleÅŸtir
+                    Eşleştir
                   </button>
                 </td>
               </tr>
@@ -457,7 +457,7 @@ export function CampaignDetail({ campaignId }) {
           </Table>
         </Card>
 
-        <Card title="Ã‡Ä±ktÄ±lar" className="span-12">
+        <Card title="Çıktılar" className="span-12">
           <ExportPanel
             files={files}
             isGenerating={actionLoading === "export-job"}
@@ -471,10 +471,10 @@ export function CampaignDetail({ campaignId }) {
         </Card>
 
         {isRealApiEnabled ? (
-          <Card title="Ã‡Ä±ktÄ± Ä°ÅŸleri" className="span-12">
-            {exportJobs.length === 0 ? <p className="catalog-empty">HenÃ¼z Ã§Ä±ktÄ± iÅŸi yok.</p> : null}
+          <Card title="Çıktı İşleri" className="span-12">
+            {exportJobs.length === 0 ? <p className="catalog-empty">Henüz çıktı işi yok.</p> : null}
             {exportJobs.length ? (
-              <Table columns={["Tip", "Durum", "Formatlar", "Deneme", "OluÅŸturma"]}>
+              <Table columns={["Tip", "Durum", "Formatlar", "Deneme", "Oluşturma"]}>
                 {exportJobs.map((job) => (
                   <tr key={job.id}>
                     <td>{exportJobTypeLabels[job.job_type] || job.job_type}</td>
@@ -491,7 +491,7 @@ export function CampaignDetail({ campaignId }) {
           </Card>
         ) : null}
 
-        <Card title="Mesaj GeÃ§miÅŸi" className="span-6">
+        <Card title="Mesaj Geçmişi" className="span-6">
           <div className="message-list">
             {messages.map((message) => (
               <article key={`${message.sender}-${message.time}`}>
@@ -503,7 +503,7 @@ export function CampaignDetail({ campaignId }) {
           </div>
         </Card>
 
-        <Card title="Ä°ÅŸlem GeÃ§miÅŸi" className="span-6">
+        <Card title="İşlem Geçmişi" className="span-6">
           <ol className="activity-timeline">
             {campaignActivities.map((activity) => (
               <li key={activity.label}>

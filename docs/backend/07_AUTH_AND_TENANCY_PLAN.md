@@ -4,6 +4,23 @@
 
 Prepare LeafletPilot for real customers without overbuilding auth in the MVP. The backend should enforce market scoping from the first database migration, even while the frontend still uses mock local auth.
 
+## Phase 18C Implemented Baseline
+
+Phase 18C replaces the unsafe `X-Market-Id`-only demo access with minimal real
+auth:
+
+- `POST /api/auth/login` accepts email/password and returns a Bearer access token.
+- `GET /api/auth/me` returns the current user and active markets.
+- Seed creates `demo@leafletpilot.com` with local-only password `demo1234`.
+- `/api/catalog/*`, `/api/campaigns/*`, and `/api/templates/*` require a token.
+- The frontend stores the token and first returned market in `localStorage` for the local MVP.
+- `X-Market-Id` remains as the selected market header, but backend dependencies verify active `MarketUser` membership before allowing access.
+- Health endpoints remain public.
+
+Remaining hardening: httpOnly cookie or safer token strategy, refresh tokens,
+full role matrix, password reset, invitation/onboarding flow, audit coverage,
+and deployment-grade secret management.
+
 ## Role Model
 
 ### Platform Admin

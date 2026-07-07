@@ -27,11 +27,13 @@ from app.models import (  # noqa: E402
     User,
 )
 from app.schemas.campaign import CampaignCreateFromTextRequest  # noqa: E402
+from app.core.security import hash_password, verify_password  # noqa: E402
 from app.services.campaign import create_campaign_from_text  # noqa: E402
 from app.services.catalog import normalize_alias, slugify  # noqa: E402
 
 
 DEMO_USER_EMAIL = "demo@leafletpilot.com"
+DEMO_USER_PASSWORD = "demo1234"
 DEMO_MARKET_SLUG = "anadolu-market"
 DEMO_CAMPAIGN_SLUG = "hafta-28-kampanyasi"
 DEMO_CAMPAIGN_TITLE = "Hafta 28 Kampanyası"
@@ -199,7 +201,7 @@ async def upsert_user(session: AsyncSession, counts: dict[str, int]) -> User:
         user = User(
             email=DEMO_USER_EMAIL,
             full_name="Demo Admin",
-            password_hash=None,
+            password_hash=hash_password(DEMO_USER_PASSWORD),
             is_active=True,
         )
         session.add(user)
@@ -207,7 +209,10 @@ async def upsert_user(session: AsyncSession, counts: dict[str, int]) -> User:
         await session.flush()
         return user
 
-    changed = update_fields(user, full_name="Demo Admin", is_active=True)
+    password_hash = user.password_hash
+    if not verify_password(DEMO_USER_PASSWORD, password_hash):
+        password_hash = hash_password(DEMO_USER_PASSWORD)
+    changed = update_fields(user, full_name="Demo Admin", password_hash=password_hash, is_active=True)
     counts["updated" if changed else "unchanged"] += 1
     return user
 
