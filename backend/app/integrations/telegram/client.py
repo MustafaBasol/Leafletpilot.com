@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -47,13 +46,13 @@ class TelegramClient:
         *,
         token: str,
         timeout_seconds: int = 20,
-        max_attempts: int = 2,
+        max_attempts: int = 1,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._token = token
         self._base_url = f"https://api.telegram.org/bot{token}"
         self._timeout = httpx.Timeout(timeout_seconds)
-        self._max_attempts = max_attempts
+        self._max_attempts = 1
         self._client = http_client or httpx.AsyncClient(timeout=self._timeout)
         self._owns_client = http_client is None
 
@@ -112,25 +111,18 @@ class TelegramClient:
 
     async def _request(self, method: str, **kwargs: Any) -> None:
         url = f"{self._base_url}/{method}"
-        last_exc: Exception | None = None
-        for attempt in range(1, self._max_attempts + 1):
-            try:
-                response = await self._client.post(url, **kwargs)
-                response.raise_for_status()
-                body = response.json()
-                if body.get("ok") is not True:
-                    description = str(body.get("description") or "Telegram API returned ok=false")
-                    raise TelegramClientError(_redact(description, self._token))
-                return
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt >= self._max_attempts:
-                    break
-                await asyncio.sleep(0.2 * attempt)
-            except httpx.HTTPStatusError as exc:
-                message = f"Telegram API HTTP error {exc.response.status_code}"
-                raise TelegramClientError(message) from exc
-        raise TelegramClientError("Telegram API request failed.") from last_exc
+        try:
+            response = await self._client.post(url, **kwargs)
+            response.raise_for_status()
+            body = response.json()
+            if body.get("ok") is not True:
+                description = str(body.get("description") or "Telegram API returned ok=false")
+                raise TelegramClientError(_redact(description, self._token))
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise TelegramClientError(_redact("Telegram API request failed.", self._token)) from exc
+        except httpx.HTTPStatusError as exc:
+            message = f"Telegram API HTTP error {exc.response.status_code}"
+            raise TelegramClientError(_redact(message, self._token)) from exc
 
 
 def build_telegram_client() -> TelegramClient:

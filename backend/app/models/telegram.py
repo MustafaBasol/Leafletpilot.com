@@ -78,6 +78,7 @@ class TelegramUpdate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(String(1000))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TelegramConversationState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -105,6 +106,10 @@ class TelegramConversationState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     pending_title: Mapped[str | None] = mapped_column(String(255))
     campaign_id: Mapped[UUID | None] = mapped_column(ForeignKey("campaigns.id"))
     export_job_id: Mapped[UUID | None] = mapped_column(ForeignKey("export_jobs.id"))
+    export_document_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_photo_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_files_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_delivery_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(1000))
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

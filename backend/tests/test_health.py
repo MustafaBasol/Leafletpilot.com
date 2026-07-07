@@ -58,8 +58,19 @@ def test_config_loads_default_values(monkeypatch) -> None:
     assert settings.backend_cors_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]
     assert settings.jwt_algorithm == "HS256"
     assert settings.access_token_expire_minutes == 480
+    assert settings.frontend_base_url == "http://localhost:5173"
     assert settings.telegram_bot_enabled is False
     assert settings.telegram_bot_token == ""
+    assert settings.telegram_http_max_attempts == 1
+
+
+def test_frontend_base_url_has_single_development_default(monkeypatch) -> None:
+    monkeypatch.delenv("FRONTEND_BASE_URL", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert Settings.model_fields["frontend_base_url"].default == "http://localhost:5173"
+    assert settings.frontend_base_url == "http://localhost:5173"
 
 
 def test_health_response_exposes_no_secret_values() -> None:
@@ -176,7 +187,7 @@ def test_telegram_rejects_invalid_timeout_and_retry(monkeypatch) -> None:
         Settings(_env_file=None)
 
     monkeypatch.setenv("TELEGRAM_HTTP_TIMEOUT_SECONDS", "20")
-    monkeypatch.setenv("TELEGRAM_HTTP_MAX_ATTEMPTS", "0")
+    monkeypatch.setenv("TELEGRAM_HTTP_MAX_ATTEMPTS", "2")
     with pytest.raises(ValueError, match="TELEGRAM_HTTP_MAX_ATTEMPTS"):
         Settings(_env_file=None)
 

@@ -27,7 +27,7 @@ TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_BOT_USERNAME=
 TELEGRAM_WEBHOOK_BASE_URL=
 TELEGRAM_HTTP_TIMEOUT_SECONDS=20
-TELEGRAM_HTTP_MAX_ATTEMPTS=2
+TELEGRAM_HTTP_MAX_ATTEMPTS=1
 ```
 
 When `TELEGRAM_BOT_ENABLED=true`, the backend requires:
@@ -82,6 +82,8 @@ rejected with a safe message.
 
 No Excel, PDF, OCR, image input, voice transcription, item-by-item editing,
 public signup, automatic retry queue, or background worker exists in this MVP.
+Telegram outbound send/edit/file calls are not automatically retried because
+they are non-idempotent POST operations.
 Export generation is synchronous.
 
 ## Webhook Registration

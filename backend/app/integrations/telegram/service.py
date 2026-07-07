@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +16,8 @@ from app.integrations.telegram.schemas import InlineKeyboardMarkup, TelegramUpda
 from app.integrations.telegram.state_machine import TelegramState
 from app.models import (
     CampaignFile,
+    Campaign,
+    ExportJob,
     MarketUser,
     TelegramAccount,
     TelegramConversationState,
@@ -42,6 +44,7 @@ HELP_TEXT = (
     "Sut 1L - 1.29\n"
     "Coca Cola 2L old 1.99 new 1.59"
 )
+PROCESSING_LEASE = timedelta(minutes=5)
 
 
 async def process_update(
@@ -74,15 +77,21 @@ async def process_update(
 
 
 async def _begin_update(session: AsyncSession, update: TelegramUpdatePayload) -> TelegramUpdate | None:
-    existing = await session.scalar(select(TelegramUpdate).where(TelegramUpdate.update_id == update.update_id))
+    now = utc_now()
+    existing = await session.scalar(
+        select(TelegramUpdate).where(TelegramUpdate.update_id == update.update_id).with_for_update()
+    )
     if existing is not None and existing.status == "completed":
         return None
     if existing is not None and existing.status in {"received", "processing"}:
-        return None
+        lease_started_at = existing.processing_started_at or existing.updated_at or existing.received_at
+        if lease_started_at is not None and now - lease_started_at < PROCESSING_LEASE:
+            return None
     if existing is not None:
         existing.status = "processing"
         existing.attempt_count += 1
         existing.last_error = None
+        existing.processing_started_at = now
         await session.commit()
         return existing
 
@@ -95,6 +104,7 @@ async def _begin_update(session: AsyncSession, update: TelegramUpdatePayload) ->
         chat_id=chat.id if chat else None,
         update_type=update.update_type,
         attempt_count=1,
+        processing_started_at=now,
     )
     session.add(record)
     try:
@@ -106,6 +116,7 @@ async def _begin_update(session: AsyncSession, update: TelegramUpdatePayload) ->
             return None
         duplicate.status = "processing"
         duplicate.attempt_count += 1
+        duplicate.processing_started_at = now
         await session.commit()
         return duplicate
     await session.refresh(record)
@@ -260,19 +271,32 @@ async def _handle_callback(
         return
     namespace, value = data.split(":", 1)
     if namespace == "market":
+        if state.state != TelegramState.AWAITING_MARKET.value:
+            await client.send_message(chat_id, "Bu market secimi artik gecerli degil. /markets yazabilirsiniz.")
+            return
         await _select_market(session, state, value, client)
     elif namespace == "export" and value == "confirm":
         await _generate_exports(session, state, client)
     elif namespace == "draft" and value == "restart":
+        if state.state not in {TelegramState.AWAITING_CONFIRMATION.value, TelegramState.COMPLETED.value}:
+            await client.send_message(chat_id, "Bu taslak islemi artik gecerli degil.")
+            return
         state.pending_raw_text = None
         state.parsed_summary = None
         state.pending_title = None
         state.campaign_id = None
         state.export_job_id = None
+        state.export_document_sent_at = None
+        state.export_photo_sent_at = None
+        state.export_files_sent_at = None
+        state.export_delivery_started_at = None
         state.state = TelegramState.AWAITING_PRODUCT_LIST.value
         await session.commit()
         await client.send_message(chat_id, "Listeyi yeniden gonderin.")
     elif namespace == "flow" and value == "cancel":
+        if state.state == TelegramState.COMPLETED.value:
+            await client.send_message(chat_id, "Bu akis zaten tamamlandi.")
+            return
         await _cancel(session, state, client)
     else:
         await client.send_message(chat_id, "Gecersiz islem.")
@@ -334,6 +358,12 @@ async def _generate_exports(
     client: TelegramClientProtocol,
 ) -> None:
     chat_id = _chat_id(state)
+    if state.state == TelegramState.COMPLETED.value:
+        await client.send_message(chat_id, "Bu akis zaten tamamlandi; dosyalar tekrar gonderilmeyecek.")
+        return
+    if state.state not in {TelegramState.AWAITING_CONFIRMATION.value, TelegramState.GENERATING_EXPORTS.value}:
+        await client.send_message(chat_id, "Bu export onayi artik gecerli degil.")
+        return
     membership = await _require_selected_mutation_membership(session, state)
     if membership is None:
         await client.send_message(chat_id, "Bu market icin export olusturma yetkiniz yok.")
@@ -341,18 +371,38 @@ async def _generate_exports(
     if state.campaign_id is None:
         await client.send_message(chat_id, "Export icin kampanya bulunamadi.")
         return
-    state.state = TelegramState.GENERATING_EXPORTS.value
-    await session.commit()
-    await client.send_message(chat_id, "PDF ve PNG olusturuluyor...")
-    job = await campaign_service.create_export_job(
-        session,
-        state.campaign_id,
-        ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
-        membership.market_id,
-    )
-    job.requested_by_user_id = state.user_id
-    state.export_job_id = job.id
-    await session.commit()
+    campaign = await session.get(Campaign, state.campaign_id)
+    if campaign is None or campaign.market_id != membership.market_id:
+        await client.send_message(chat_id, "Export icin kampanya bu markete ait degil.")
+        return
+    job = await _get_reusable_export_job(session, state, membership.market_id)
+    if job is None:
+        state.state = TelegramState.GENERATING_EXPORTS.value
+        state.export_document_sent_at = None
+        state.export_photo_sent_at = None
+        state.export_files_sent_at = None
+        state.export_delivery_started_at = utc_now()
+        await session.commit()
+        await client.send_message(chat_id, "PDF ve PNG olusturuluyor...")
+        job = await campaign_service.create_export_job(
+            session,
+            state.campaign_id,
+            ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
+            membership.market_id,
+        )
+        job.requested_by_user_id = state.user_id
+        state.export_job_id = job.id
+        await session.commit()
+    elif state.export_files_sent_at is not None:
+        state.state = TelegramState.COMPLETED.value
+        await session.commit()
+        await client.send_message(chat_id, "Bu akis zaten tamamlandi; dosyalar tekrar gonderilmeyecek.")
+        return
+    else:
+        state.state = TelegramState.GENERATING_EXPORTS.value
+        state.export_delivery_started_at = utc_now()
+        await session.commit()
+        await client.send_message(chat_id, "Mevcut PDF ve PNG yeniden gonderiliyor...")
     files = await _ready_export_files(session, job.result_file_ids or [])
     pdf = _find_file(files, "pdf")
     png = _find_file(files, "png")
@@ -363,8 +413,14 @@ async def _generate_exports(
         await client.send_message(chat_id, "PDF ve PNG hazirlanamadi. Daha sonra tekrar deneyin.")
         return
     try:
-        await client.send_document(chat_id, _safe_file_path(pdf), caption="LeafletPilot PDF")
-        await client.send_photo(chat_id, _safe_file_path(png), caption="LeafletPilot PNG")
+        if state.export_document_sent_at is None:
+            await client.send_document(chat_id, _safe_file_path(pdf), caption="LeafletPilot PDF")
+            state.export_document_sent_at = utc_now()
+            await session.commit()
+        if state.export_photo_sent_at is None:
+            await client.send_photo(chat_id, _safe_file_path(png), caption="LeafletPilot PNG")
+            state.export_photo_sent_at = utc_now()
+            await session.commit()
     except TelegramClientError as exc:
         state.state = TelegramState.AWAITING_CONFIRMATION.value
         state.last_error = _safe_error(exc)
@@ -372,8 +428,26 @@ async def _generate_exports(
         await client.send_message(chat_id, "Dosyalar Telegram'a gonderilemedi. Tekrar deneyebilirsiniz.")
         return
     state.state = TelegramState.COMPLETED.value
+    state.export_files_sent_at = utc_now()
     await session.commit()
     await client.send_message(chat_id, "PDF ve PNG gonderildi.")
+
+
+async def _get_reusable_export_job(
+    session: AsyncSession,
+    state: TelegramConversationState,
+    market_id: UUID,
+) -> ExportJob | None:
+    if state.export_job_id is None or state.campaign_id is None:
+        return None
+    job = await session.get(ExportJob, state.export_job_id)
+    if job is None:
+        return None
+    if job.market_id != market_id or job.campaign_id != state.campaign_id:
+        return None
+    if job.status != "completed" or not job.result_file_ids:
+        return None
+    return job
 
 
 async def _cancel(
@@ -553,6 +627,10 @@ def _reset_draft(state: TelegramConversationState) -> None:
     state.pending_title = None
     state.campaign_id = None
     state.export_job_id = None
+    state.export_document_sent_at = None
+    state.export_photo_sent_at = None
+    state.export_files_sent_at = None
+    state.export_delivery_started_at = None
     state.last_error = None
 
 

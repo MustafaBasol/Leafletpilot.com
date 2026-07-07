@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    frontend_base_url: str | None = Field(default=None, alias="FRONTEND_BASE_URL")
     trusted_hosts: list[str] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "::1", "testserver"],
         alias="TRUSTED_HOSTS",
@@ -62,7 +61,7 @@ class Settings(BaseSettings):
     telegram_bot_username: str = Field(default="", alias="TELEGRAM_BOT_USERNAME")
     telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
     telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
-    telegram_http_max_attempts: int = Field(default=2, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
+    telegram_http_max_attempts: int = Field(default=1, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
 
     @property
     def is_production(self) -> bool:
@@ -99,8 +98,10 @@ class Settings(BaseSettings):
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be at least 1.")
         if self.telegram_http_timeout_seconds < 1 or self.telegram_http_timeout_seconds > 60:
             raise ValueError("TELEGRAM_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
-        if self.telegram_http_max_attempts < 1 or self.telegram_http_max_attempts > 5:
-            raise ValueError("TELEGRAM_HTTP_MAX_ATTEMPTS must be between 1 and 5.")
+        if self.telegram_http_max_attempts != 1:
+            raise ValueError(
+                "TELEGRAM_HTTP_MAX_ATTEMPTS must be 1. Telegram send operations are not retried automatically."
+            )
         if self.telegram_bot_enabled:
             self._validate_enabled_telegram_settings()
 

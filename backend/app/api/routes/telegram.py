@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_catalog_session
 from app.core.config import settings
@@ -29,7 +30,7 @@ async def get_telegram_client() -> AsyncGenerator[TelegramClientProtocol, None]:
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
-    client: TelegramClientProtocol = Depends(get_telegram_client),
+    session: AsyncSession = Depends(get_catalog_session),
 ) -> dict[str, bool]:
     if not settings.telegram_bot_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram integration is disabled.")
@@ -37,8 +38,19 @@ async def telegram_webhook(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Telegram webhook secret.")
 
     content_length = request.headers.get("content-length")
-    if content_length is not None and int(content_length) > MAX_TELEGRAM_BODY_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Telegram update is too large.")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Content-Length header.",
+            ) from exc
+        if declared_length > MAX_TELEGRAM_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Telegram update is too large.",
+            )
     body = await request.body()
     if len(body) > MAX_TELEGRAM_BODY_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Telegram update is too large.")
@@ -47,8 +59,8 @@ async def telegram_webhook(
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Malformed Telegram update.") from exc
 
-    session_dependency = request.app.dependency_overrides.get(get_catalog_session, get_catalog_session)
-    async for session in session_dependency():
+    client_dependency = request.app.dependency_overrides.get(get_telegram_client, get_telegram_client)
+    async for client in client_dependency():
         await process_update(session, update, client)
     return {"ok": True}
 
