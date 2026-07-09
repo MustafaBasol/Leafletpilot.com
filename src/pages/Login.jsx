@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Button, Checkbox, Input } from "../components/ui/index.js";
 
 export function Login({ onLogin, initialError = "" }) {
-  const [email, setEmail] = useState("demo@leafletpilot.com");
-  const [password, setPassword] = useState("demo1234");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [isSubmitting, setSubmitting] = useState(false);
   const [error, setError] = useState(initialError);
@@ -28,28 +28,24 @@ export function Login({ onLogin, initialError = "" }) {
   return (
     <main className="login-shell">
       <section className="login-copy">
-        <a className="brand login-brand" href="#/login">
+        <a className="brand login-brand" href="#/">
           <span className="brand-mark">LP</span>
           <span>
             <strong>LeafletPilot</strong>
-            <small>AI Brochure Automation</small>
+            <small>Broşür Otomasyonu</small>
           </span>
         </a>
         <h1>Kampanya broşürlerinizi dakikalar içinde hazırlayın</h1>
         <p>Ürün listenizi gönderin, LeafletPilot profesyonel PDF ve sosyal medya görsellerinizi otomatik oluştursun.</p>
-        <div className="login-preview-card">
-          <strong>Anadolu Market</strong>
-          <span>Önizleme hazır · 24 ürün · 3 çıktı</span>
-        </div>
       </section>
       <form className="login-card" onSubmit={submitLogin}>
         <div>
           <h2>Giriş yap</h2>
-          <p>Yerel demo için demo@leafletpilot.com / demo1234 kullanın.</p>
+          <p>Hesabınıza erişmek için bilgilerinizi girin.</p>
         </div>
         {error ? <p className="inline-result inline-result-warning">{error}</p> : null}
-        <Input label="E-posta" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-        <Input label="Şifre" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        <Input label="E-posta" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+        <Input label="Şifre" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
         <Checkbox label="Beni hatırla" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
         <Button variant="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Giriş yapılıyor..." : "Giriş Yap"}
