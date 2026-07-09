@@ -2,7 +2,7 @@ export const navGroups = [
   {
     label: "Operasyon",
     items: [
-      { label: "Dashboard", path: "/", icon: "chart" },
+      { label: "Dashboard", path: "/dashboard", icon: "chart" },
       { label: "Kampanyalar", path: "/campaigns", icon: "file" },
       { label: "Yeni Kampanya", path: "/campaigns/new", icon: "plus", mutationOnly: true },
     ],
@@ -35,6 +35,10 @@ export const navGroups = [
 ];
 
 export const pageMeta = {
+  "/dashboard": {
+    title: "Dashboard",
+    description: "Kampanya durumu, katalog özeti ve son aktiviteler.",
+  },
   "/campaigns": {
     title: "Kampanyalar",
     description: "Kampanya listesi, filtreler ve çıktı aksiyonları.",
@@ -111,7 +115,8 @@ export const pageMeta = {
 
 export function getPageTitle(path) {
   if (path === "/login") return "Giriş";
+  if (path === "/dashboard") return "Dashboard";
   if (path.startsWith("/campaigns/") && path !== "/campaigns/new") return "Kampanya Detayı";
   if (path.startsWith("/templates/")) return "Şablon Detayı";
-  return path === "/" ? "Dashboard" : (pageMeta[path] || pageMeta["/campaigns"]).title;
+  return (pageMeta[path] || pageMeta["/campaigns"]).title;
 }
