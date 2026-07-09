@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_session
+from app.core.lifecycle import market_allows_mutations
 from app.core.roles import MarketRole
-from app.core.security import decode_access_token
-from app.models import MarketUser, User
+from app.core.security import decode_access_token, decode_platform_access_token
+from app.models import MarketUser, PlatformAdmin, User
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -67,6 +68,30 @@ async def get_current_user(
     return user
 
 
+async def get_current_platform_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> PlatformAdmin:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Platform oturumu gerekli.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = decode_platform_access_token(credentials.credentials)
+    admin_id = payload.get("sub")
+    if not isinstance(admin_id, str):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.")
+    try:
+        admin_uuid = UUID(admin_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.") from None
+    admin = await session.scalar(select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True)))
+    if admin is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.")
+    return admin
+
+
 async def get_current_market_membership(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
@@ -91,6 +116,8 @@ async def get_current_market_membership(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bu market için yetkiniz yok.",
         )
+    if membership.market.lifecycle_status == "archived":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market arşivlenmiş.")
     return membership
 
 
@@ -121,6 +148,11 @@ def require_market_roles(*allowed_roles: str | MarketRole):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Bu işlem için yetkiniz bulunmuyor.",
+            )
+        if not market_allows_mutations(membership.market):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bu markette değişiklik işlemleri geçici olarak durduruldu.",
             )
         return membership
 

@@ -243,6 +243,60 @@ async def test_telegram_viewer_cannot_start_new_campaign_when_test_database_url_
 
 
 @pytest.mark.asyncio
+async def test_telegram_suspended_and_archived_markets_do_not_create_campaigns_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed Telegram tests skipped.")
+
+    for lifecycle_status in ("suspended", "archived"):
+        engine, session_factory, fake = await _install_telegram_test_app(monkeypatch)
+        try:
+            telegram_user_id, market_id, _ = await _seed_linked_user(
+                session_factory,
+                role="market_staff",
+                lifecycle_status=lifecycle_status,
+            )
+            headers = {"X-Telegram-Bot-Api-Secret-Token": settings.telegram_webhook_secret}
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+                await client.post(
+                    "/api/integrations/telegram/webhook",
+                    headers=headers,
+                    json=_message_update(1200 if lifecycle_status == "suspended" else 1210, telegram_user_id, telegram_user_id, "/start"),
+                )
+                if lifecycle_status == "archived":
+                    async with session_factory() as session:
+                        state = await session.scalar(
+                            select(TelegramConversationState).where(
+                                TelegramConversationState.telegram_user_id == telegram_user_id
+                            )
+                        )
+                        state.selected_market_id = market_id
+                        await session.commit()
+                response = await client.post(
+                    "/api/integrations/telegram/webhook",
+                    headers=headers,
+                    json=_message_update(1201 if lifecycle_status == "suspended" else 1211, telegram_user_id, telegram_user_id, "/new"),
+                )
+
+            assert response.status_code == 200
+            async with session_factory() as session:
+                campaign_count = await session.scalar(
+                    select(func.count()).select_from(Campaign).where(Campaign.market_id == market_id)
+                )
+                export_count = await session.scalar(
+                    select(func.count()).select_from(ExportJob).where(ExportJob.market_id == market_id)
+                )
+            assert campaign_count == 0
+            assert export_count == 0
+            assert not fake.documents
+            assert not fake.photos
+            assert "operasyonlar" in fake.messages[-1][1]
+        finally:
+            await _cleanup_telegram_test_app(engine)
+
+
+@pytest.mark.asyncio
 async def test_telegram_staff_creates_campaign_and_duplicate_update_is_idempotent_when_test_database_url_is_configured(monkeypatch) -> None:
     if not settings.test_database_url:
         pytest.skip("TEST_DATABASE_URL is not configured; DB-backed Telegram tests skipped.")
@@ -846,13 +900,19 @@ async def _cleanup_telegram_test_app(engine) -> None:
     await engine.dispose()
 
 
-async def _seed_linked_user(session_factory, *, role: str):
+async def _seed_linked_user(session_factory, *, role: str, lifecycle_status: str = "active"):
     market_id = uuid4()
     user_id = uuid4()
     telegram_user_id = int(str(uuid4().int)[:12])
     async with session_factory() as session:
         user = User(id=user_id, email=f"telegram-{user_id}@example.com", is_active=True)
-        market = Market(id=market_id, name=f"Telegram Market {market_id}", slug=f"tg-{market_id}")
+        market = Market(
+            id=market_id,
+            name=f"Telegram Market {market_id}",
+            slug=f"tg-{market_id}",
+            lifecycle_status=lifecycle_status,
+            is_active=lifecycle_status != "archived",
+        )
         account = TelegramAccount(user=user, telegram_user_id=telegram_user_id, is_active=True)
         membership = MarketUser(market=market, user=user, role=role, is_active=True)
         session.add_all([user, market, account, membership])

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { acceptInvitation, acceptInvitationAuthenticated } from "../api/teamApi.js";
-import { clearAuthSession, saveAuthSession } from "../api/authSession.js";
+import { clearAuthSession, getStoredMarkets, saveAuthSession, setSelectedMarketId } from "../api/authSession.js";
 import { Button, Card } from "../components/ui/index.js";
 
 const mismatchMessage =
@@ -10,6 +10,19 @@ function getToken() {
   const hash = window.location.hash || "";
   const query = hash.includes("?") ? hash.slice(hash.indexOf("?")) : "";
   return new URLSearchParams(query).get("token") || "";
+}
+
+function resolveAcceptedMarket(previousMarkets, session) {
+  const previousIds = new Set(previousMarkets.map((market) => market.id));
+  return (
+    session.markets?.find((market) => !previousIds.has(market.id)) ||
+    session.markets?.[0] ||
+    null
+  );
+}
+
+function marketNeedsOnboarding(market) {
+  return Boolean(market && market.role === "market_admin" && market.onboarding_status !== "completed");
 }
 
 export function AcceptInvitation({ isAuthenticated, onSessionUpdated }) {
@@ -46,20 +59,17 @@ export function AcceptInvitation({ isAuthenticated, onSessionUpdated }) {
     }
     try {
       setSubmitting(true);
+      const previousMarkets = getStoredMarkets();
       const session = isAuthenticated
         ? await acceptInvitationAuthenticated({ token })
         : await acceptInvitation({ token, full_name: form.full_name, password: form.password });
       saveAuthSession(session);
+      const acceptedMarket = resolveAcceptedMarket(previousMarkets, session);
+      if (acceptedMarket) setSelectedMarketId(acceptedMarket.id);
       onSessionUpdated?.();
-      if (isAuthenticated) {
-        window.location.hash = "#/";
-        return;
-      }
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/login`);
-      setMessage("Hesabınız oluşturuldu. Şimdi giriş yapabilirsiniz.");
-      window.setTimeout(() => {
-        window.location.hash = "#/login";
-      }, 1200);
+      const destination = marketNeedsOnboarding(acceptedMarket) ? "#/onboarding" : "#/dashboard";
+      setMessage("Davet kabul edildi. Yönlendiriliyorsunuz.");
+      window.location.hash = destination;
     } catch (err) {
       if (err.message === mismatchMessage || err.body?.detail?.code === "invitation_email_mismatch") {
         setError(mismatchMessage);

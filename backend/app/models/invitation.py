@@ -47,11 +47,14 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_by_platform_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("platform_admins.id", name="fk_market_invites_platform_admin")
+    )
     accepted_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     market: Mapped[Market] = relationship()
-    created_by: Mapped[User] = relationship(foreign_keys=[created_by_user_id])
+    created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_user_id])
     accepted_by: Mapped[User | None] = relationship(foreign_keys=[accepted_by_user_id])

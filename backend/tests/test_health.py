@@ -39,6 +39,9 @@ def test_config_loads_default_values(monkeypatch) -> None:
         "JWT_SECRET_KEY",
         "JWT_ALGORITHM",
         "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "PUBLIC_SIGNUP_THROTTLE_SECRET",
+        "PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES",
+        "PUBLIC_SIGNUP_THROTTLE_LIMIT",
         "TELEGRAM_BOT_ENABLED",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
@@ -129,6 +132,38 @@ def test_production_requires_database_url(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="DATABASE_URL is required"):
         Settings(_env_file=None)
+
+
+def test_production_requires_public_signup_throttle_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.delenv("PUBLIC_SIGNUP_THROTTLE_SECRET", raising=False)
+
+    with pytest.raises(ValueError, match="PUBLIC_SIGNUP_THROTTLE_SECRET is required"):
+        Settings(_env_file=None)
+
+
+def test_production_rejects_short_public_signup_throttle_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("PUBLIC_SIGNUP_THROTTLE_SECRET", "short")
+
+    with pytest.raises(ValueError, match="PUBLIC_SIGNUP_THROTTLE_SECRET must be at least 32"):
+        Settings(_env_file=None)
+
+
+def test_production_rejects_placeholder_public_signup_throttle_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("PUBLIC_SIGNUP_THROTTLE_SECRET", "change-this-signup-throttle-secret-at-least-32-chars")
+
+    with pytest.raises(ValueError, match="PUBLIC_SIGNUP_THROTTLE_SECRET must not use an example placeholder"):
+        Settings(_env_file=None)
+
+
+def test_production_accepts_strong_public_signup_throttle_secret(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.public_signup_throttle_secret == "t" * 48
 
 
 def test_telegram_disabled_permits_empty_config(monkeypatch) -> None:
@@ -225,6 +260,9 @@ def _set_valid_production_env(monkeypatch) -> None:
         "JWT_SECRET_KEY",
         "JWT_ALGORITHM",
         "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "PUBLIC_SIGNUP_THROTTLE_SECRET",
+        "PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES",
+        "PUBLIC_SIGNUP_THROTTLE_LIMIT",
         "TELEGRAM_BOT_ENABLED",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
@@ -241,6 +279,9 @@ def _set_valid_production_env(monkeypatch) -> None:
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 48)
     monkeypatch.setenv("JWT_ALGORITHM", "HS256")
     monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+    monkeypatch.setenv("PUBLIC_SIGNUP_THROTTLE_SECRET", "t" * 48)
+    monkeypatch.setenv("PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES", "60")
+    monkeypatch.setenv("PUBLIC_SIGNUP_THROTTLE_LIMIT", "3")
     monkeypatch.setenv("BACKEND_CORS_ORIGINS", '["https://app.example.com"]')
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.example.com")
     monkeypatch.setenv("LOCAL_STORAGE_DIR", "/app/storage")

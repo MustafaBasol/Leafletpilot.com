@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,7 +12,7 @@ from app.api.deps import get_catalog_session
 from app.api.deps import require_market_member
 from app.core.config import settings
 from app.core.database import Base
-from app.core.security import hash_password
+from app.core.security import hash_invitation_token, hash_password
 from app.main import app
 from app.models import Market, MarketInvitation, MarketUser, User
 
@@ -169,7 +170,13 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 password_hash=hash_password(admin_password),
                 is_active=True,
             )
-            market = Market(id=market_id, name=f"Invite Market {market_id}", slug=f"invite-{market_id}")
+            market = Market(
+                id=market_id,
+                name=f"Invite Market {market_id}",
+                slug=f"invite-{market_id}",
+                onboarding_status="not_started",
+                onboarding_step=1,
+            )
             session.add_all([admin, market])
             await session.flush()
             session.add(MarketUser(market_id=market_id, user_id=admin.id, role="market_admin", is_active=True))
@@ -186,7 +193,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             invite_response = await async_client.post(
                 "/api/market-invitations",
                 headers=admin_headers,
-                json={"email": invited_email, "role": "viewer"},
+                json={"email": invited_email, "role": "market_admin"},
             )
             assert invite_response.status_code == 201
             invite = invite_response.json()
@@ -196,7 +203,53 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 json={"token": invite["invite_token"], "full_name": "Invited User", "password": invited_password},
             )
             assert accept_response.status_code == 200
-            assert any(market["id"] == str(market_id) and market["role"] == "viewer" for market in accept_response.json()["markets"])
+            accept_body = accept_response.json()
+            assert accept_body["token_type"] == "bearer"
+            assert accept_body["access_token"]
+            assert "platform" not in accept_body
+            accepted_market = next(market for market in accept_body["markets"] if market["id"] == str(market_id))
+            assert accepted_market["role"] == "market_admin"
+            assert accepted_market["lifecycle_status"] == "active"
+            assert accepted_market["onboarding_status"] == "not_started"
+            assert accepted_market["onboarding_step"] == 1
+            assert accepted_market["role"] == "market_admin" and accepted_market["onboarding_status"] != "completed"
+
+            invited_headers = {
+                "Authorization": f"Bearer {accept_body['access_token']}",
+                "X-Market-Id": str(market_id),
+            }
+            me = await async_client.get("/api/auth/me", headers={"Authorization": invited_headers["Authorization"]})
+            assert me.status_code == 200
+            assert me.json()["user"]["email"] == invited_email
+            onboarding = await async_client.get("/api/onboarding", headers=invited_headers)
+            assert onboarding.status_code == 200
+            profile_payload = {
+                "display_name": "Invite Market Updated",
+                "legal_name": "Invite Market Legal",
+                "country_code": "fr",
+                "city": "Paris",
+                "language": "tr",
+                "currency": "eur",
+                "timezone": "Europe/Paris",
+                "contact_email": invited_email,
+                "contact_phone": "+33123456789",
+            }
+            valid_profile = await async_client.patch(
+                "/api/onboarding/profile",
+                headers=invited_headers,
+                json=profile_payload,
+            )
+            assert valid_profile.status_code == 200, valid_profile.text
+            assert valid_profile.json()["timezone"] == "Europe/Paris"
+            invalid_profile = await async_client.patch(
+                "/api/onboarding/profile",
+                headers=invited_headers,
+                json={**profile_payload, "timezone": "Not/AZone"},
+            )
+            assert invalid_profile.status_code == 422
+            unchanged = await async_client.get("/api/onboarding", headers=invited_headers)
+            assert unchanged.status_code == 200
+            assert unchanged.json()["timezone"] == "Europe/Paris"
 
             invited_login = await async_client.post(
                 "/api/auth/login",
@@ -225,6 +278,59 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             assert mismatch.status_code == 403
             assert mismatch.json()["detail"]["code"] == "invitation_email_mismatch"
 
+            admin_invite_response = await async_client.post(
+                "/api/market-invitations",
+                headers=admin_headers,
+                json={"email": admin_email, "role": "market_admin"},
+            )
+            assert admin_invite_response.status_code == 201
+            admin_accept = await async_client.post(
+                "/api/auth/accept-invitation-authenticated",
+                headers={"Authorization": admin_headers["Authorization"]},
+                json={"token": admin_invite_response.json()["invite_token"]},
+            )
+            assert admin_accept.status_code == 200
+            assert admin_accept.json()["access_token"]
+            assert any(market["id"] == str(market_id) for market in admin_accept.json()["markets"])
+
+            expired_token = "expired-" + uuid4().hex
+            revoked_token = "revoked-" + uuid4().hex
+            async with session_factory() as session:
+                session.add_all(
+                    [
+                        MarketInvitation(
+                            market_id=market_id,
+                            email=f"expired-{market_id}@example.com",
+                            role="viewer",
+                            token_hash=hash_invitation_token(expired_token),
+                            status="pending",
+                            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+                            created_by_user_id=None,
+                        ),
+                        MarketInvitation(
+                            market_id=market_id,
+                            email=f"revoked-{market_id}@example.com",
+                            role="viewer",
+                            token_hash=hash_invitation_token(revoked_token),
+                            status="revoked",
+                            expires_at=datetime.now(UTC) + timedelta(days=1),
+                            created_by_user_id=None,
+                            revoked_at=datetime.now(UTC),
+                        ),
+                    ]
+                )
+                await session.commit()
+            expired = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": expired_token, "full_name": "Expired User", "password": invited_password},
+            )
+            revoked = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": revoked_token, "full_name": "Revoked User", "password": invited_password},
+            )
+            assert expired.status_code == 410
+            assert revoked.status_code == 409
+
         async with session_factory() as session:
             created_user = await session.scalar(select(User).where(User.email == invited_email))
             assert created_user is not None
@@ -233,7 +339,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 select(MarketUser).where(MarketUser.market_id == market_id, MarketUser.user_id == created_user.id)
             )
             assert membership is not None
-            assert membership.role == "viewer"
+            assert membership.role == "market_admin"
             accepted_invitation = await session.scalar(
                 select(MarketInvitation).where(MarketInvitation.email == invited_email)
             )

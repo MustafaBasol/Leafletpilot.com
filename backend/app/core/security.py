@@ -58,6 +58,11 @@ def hash_invitation_token(token: str) -> str:
     ).hexdigest()
 
 
+def hash_signup_throttle_key(value: str) -> str:
+    secret = settings.public_signup_throttle_secret or settings.jwt_secret_key
+    return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
     expires_at = datetime.now(UTC) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
@@ -80,7 +85,30 @@ def decode_access_token(token: str) -> dict[str, Any]:
     return payload
 
 
-def _encode_jwt(payload: dict[str, Any]) -> str:
+def create_platform_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
+    expires_at = datetime.now(UTC) + (
+        expires_delta or timedelta(minutes=settings.platform_access_token_expire_minutes)
+    )
+    payload = {
+        "sub": subject,
+        "exp": int(expires_at.timestamp()),
+        "typ": "platform_access",
+        "aud": "leafletpilot-platform",
+    }
+    return _encode_jwt(payload, secret=settings.platform_jwt_secret)
+
+
+def decode_platform_access_token(token: str) -> dict[str, Any]:
+    payload = _decode_jwt(token, secret=settings.platform_jwt_secret)
+    if payload.get("typ") != "platform_access" or payload.get("aud") != "leafletpilot-platform":
+        raise _credentials_error()
+    expires_at = payload.get("exp")
+    if not isinstance(expires_at, int) or expires_at < int(datetime.now(UTC).timestamp()):
+        raise _credentials_error("Token sÃ¼resi doldu.")
+    return payload
+
+
+def _encode_jwt(payload: dict[str, Any], secret: str | None = None) -> str:
     header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
     if settings.jwt_algorithm != "HS256":
         raise ValueError("Only HS256 JWT signing is supported by the MVP auth helper.")
@@ -90,18 +118,18 @@ def _encode_jwt(payload: dict[str, Any]) -> str:
             _base64url_json(payload),
         ]
     )
-    signature = _sign(signing_input)
+    signature = _sign(signing_input, secret=secret)
     return f"{signing_input}.{signature}"
 
 
-def _decode_jwt(token: str) -> dict[str, Any]:
+def _decode_jwt(token: str, secret: str | None = None) -> dict[str, Any]:
     try:
         header_segment, payload_segment, signature = token.split(".", 2)
     except ValueError:
         raise _credentials_error() from None
 
     signing_input = f"{header_segment}.{payload_segment}"
-    if not hmac.compare_digest(signature, _sign(signing_input)):
+    if not hmac.compare_digest(signature, _sign(signing_input, secret=secret)):
         raise _credentials_error()
 
     try:
@@ -115,9 +143,9 @@ def _decode_jwt(token: str) -> dict[str, Any]:
     return payload
 
 
-def _sign(signing_input: str) -> str:
+def _sign(signing_input: str, secret: str | None = None) -> str:
     digest = hmac.new(
-        settings.jwt_secret_key.encode("utf-8"),
+        (secret or settings.jwt_secret_key).encode("utf-8"),
         signing_input.encode("ascii"),
         hashlib.sha256,
     ).digest()

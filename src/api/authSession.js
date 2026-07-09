@@ -39,6 +39,11 @@ export function getSelectedMarketRole() {
   return getSelectedMarket()?.role || "";
 }
 
+export function selectedMarketNeedsOnboarding() {
+  const market = getSelectedMarket();
+  return Boolean(market && market.role === "market_admin" && market.onboarding_status !== "completed");
+}
+
 export function canManageTeam() {
   return getSelectedMarketRole() === "market_admin";
 }

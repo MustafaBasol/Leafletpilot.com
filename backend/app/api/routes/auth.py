@@ -46,11 +46,11 @@ async def me(current_user: User = Depends(get_current_user)) -> AuthSessionRead:
     return _build_session_payload(current_user)
 
 
-@router.post("/accept-invitation", response_model=AuthSessionRead)
+@router.post("/accept-invitation", response_model=LoginResponse)
 async def accept_invitation(
     payload: AcceptInvitationRequest,
     session: AsyncSession = Depends(get_catalog_session),
-) -> AuthSessionRead:
+) -> LoginResponse:
     invitation = await _get_valid_invitation(session, payload.token)
     existing_user = await _get_user_by_email(session, invitation.email)
     if existing_user is not None:
@@ -69,10 +69,10 @@ async def accept_invitation(
     await session.flush()
     await _accept_invitation_for_user(session, invitation, user)
     await session.commit()
-    return await _reload_session_payload(session, user.id)
+    return await _reload_login_response(session, user.id)
 
 
-@router.post("/accept-invitation-authenticated", response_model=AuthSessionRead)
+@router.post("/accept-invitation-authenticated", response_model=LoginResponse)
 async def accept_invitation_authenticated(
     payload: AcceptInvitationAuthenticatedRequest,
     current_user: User = Depends(get_current_user),
@@ -89,7 +89,7 @@ async def accept_invitation_authenticated(
         )
     await _accept_invitation_for_user(session, invitation, current_user)
     await session.commit()
-    return await _reload_session_payload(session, current_user.id)
+    return await _reload_login_response(session, current_user.id)
 
 
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
@@ -113,6 +113,9 @@ def _build_session_payload(user: User) -> AuthSessionRead:
             slug=membership.market.slug,
             role=membership.role,
             is_active=membership.market.is_active,
+            lifecycle_status=membership.market.lifecycle_status,
+            onboarding_status=membership.market.onboarding_status,
+            onboarding_step=membership.market.onboarding_step,
         )
         for membership in memberships
     ]
@@ -174,3 +177,17 @@ async def _reload_session_payload(session: AsyncSession, user_id) -> AuthSession
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı.")
     return _build_session_payload(user)
+
+
+async def _reload_login_response(session: AsyncSession, user_id) -> LoginResponse:
+    session_payload = await _reload_session_payload(session, user_id)
+    access_token = create_access_token(
+        str(session_payload.user.id),
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=session_payload.user,
+        markets=session_payload.markets,
+    )

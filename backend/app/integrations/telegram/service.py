@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.lifecycle import inactive_market_message, market_allows_mutations
 from app.core.roles import MARKET_MUTATION_ROLES
 from app.integrations.telegram.client import TelegramClientError, TelegramClientProtocol
 from app.integrations.telegram.schemas import InlineKeyboardMarkup, TelegramUpdate as TelegramUpdatePayload
@@ -181,8 +182,14 @@ async def _handle_command(
     elif command == "/markets":
         await _show_markets(session, state, client)
     elif command == "/new":
-        membership = await _require_selected_mutation_membership(session, state)
+        membership = await _selected_membership(session, state)
         if membership is None:
+            await client.send_message(chat_id, "Kampanya olusturmak icin market_admin veya market_staff rolu gerekir.")
+            return
+        if not market_allows_mutations(membership.market):
+            await client.send_message(chat_id, inactive_market_message())
+            return
+        if membership.role not in MARKET_MUTATION_ROLES:
             await client.send_message(chat_id, "Kampanya olusturmak icin market_admin veya market_staff rolu gerekir.")
             return
         _reset_draft(state)
@@ -228,9 +235,12 @@ async def _handle_plain_text(
         if not title:
             await client.send_message(chat_id, "Lutfen kampanya basligi gonderin.")
             return
-        membership = await _require_selected_mutation_membership(session, state)
-        if membership is None:
+        membership = await _selected_membership(session, state)
+        if membership is None or membership.role not in MARKET_MUTATION_ROLES:
             await client.send_message(chat_id, "Bu market icin kampanya olusturma yetkiniz yok.")
+            return
+        if not market_allows_mutations(membership.market):
+            await client.send_message(chat_id, inactive_market_message())
             return
         payload = CampaignCreateFromTextRequest(
             title=title,
@@ -362,9 +372,12 @@ async def _generate_exports(
     if state.state not in {TelegramState.AWAITING_CONFIRMATION.value, TelegramState.GENERATING_EXPORTS.value}:
         await client.send_message(chat_id, "Bu export onayi artik gecerli degil.")
         return
-    membership = await _require_selected_mutation_membership(session, state)
-    if membership is None:
+    membership = await _selected_membership(session, state)
+    if membership is None or membership.role not in MARKET_MUTATION_ROLES:
         await client.send_message(chat_id, "Bu market icin export olusturma yetkiniz yok.")
+        return
+    if not market_allows_mutations(membership.market):
+        await client.send_message(chat_id, inactive_market_message())
         return
     if state.campaign_id is None:
         await client.send_message(chat_id, "Export icin kampanya bulunamadi.")
@@ -517,7 +530,7 @@ async def _membership(session: AsyncSession, user_id: UUID, market_id: UUID) -> 
             MarketUser.is_active.is_(True),
         )
     )
-    if membership is None or membership.market is None or not membership.market.is_active:
+    if membership is None or membership.market is None:
         return None
     return membership
 
@@ -526,12 +539,19 @@ async def _require_selected_mutation_membership(
     session: AsyncSession,
     state: TelegramConversationState,
 ) -> MarketUser | None:
-    if state.selected_market_id is None:
-        return None
-    membership = await _membership(session, state.user_id, state.selected_market_id)
-    if membership is None or membership.role not in MARKET_MUTATION_ROLES:
+    membership = await _selected_membership(session, state)
+    if membership is None or membership.role not in MARKET_MUTATION_ROLES or not market_allows_mutations(membership.market):
         return None
     return membership
+
+
+async def _selected_membership(
+    session: AsyncSession,
+    state: TelegramConversationState,
+) -> MarketUser | None:
+    if state.selected_market_id is None:
+        return None
+    return await _membership(session, state.user_id, state.selected_market_id)
 
 
 async def _status_text(session: AsyncSession, state: TelegramConversationState) -> str:
