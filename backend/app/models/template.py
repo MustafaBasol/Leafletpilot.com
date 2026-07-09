@@ -44,4 +44,4 @@ class Template(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
-    market: Mapped[Market | None] = relationship()
+    market: Mapped[Market | None] = relationship(foreign_keys=[market_id])

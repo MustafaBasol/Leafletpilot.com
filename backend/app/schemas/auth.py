@@ -26,6 +26,9 @@ class AuthMarketRead(BaseModel):
     slug: str
     role: str
     is_active: bool
+    lifecycle_status: str = "active"
+    onboarding_status: str = "completed"
+    onboarding_step: int = 4
 
 
 class AuthSessionRead(BaseModel):

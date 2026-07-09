@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { acceptInvitation, acceptInvitationAuthenticated } from "../api/teamApi.js";
-import { clearAuthSession, saveAuthSession } from "../api/authSession.js";
+import { clearAuthSession, saveAuthSession, selectedMarketNeedsOnboarding } from "../api/authSession.js";
 import { Button, Card } from "../components/ui/index.js";
 
 const mismatchMessage =
@@ -51,15 +51,11 @@ export function AcceptInvitation({ isAuthenticated, onSessionUpdated }) {
         : await acceptInvitation({ token, full_name: form.full_name, password: form.password });
       saveAuthSession(session);
       onSessionUpdated?.();
-      if (isAuthenticated) {
-        window.location.hash = "#/";
-        return;
-      }
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/login`);
-      setMessage("Hesabınız oluşturuldu. Şimdi giriş yapabilirsiniz.");
+      const destination = selectedMarketNeedsOnboarding() ? "#/onboarding" : "#/dashboard";
+      setMessage("Davet kabul edildi. Yönlendiriliyorsunuz.");
       window.setTimeout(() => {
-        window.location.hash = "#/login";
-      }, 1200);
+        window.location.hash = destination;
+      }, 700);
     } catch (err) {
       if (err.message === mismatchMessage || err.body?.detail?.code === "invitation_email_mismatch") {
         setError(mismatchMessage);

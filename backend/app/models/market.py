@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,12 +23,22 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(255))
+    country_code: Mapped[str] = mapped_column(String(2), default="FR", nullable=False)
+    city: Mapped[str | None] = mapped_column(String(120))
     logo_url: Mapped[str | None] = mapped_column(String(1000))
     primary_color: Mapped[str | None] = mapped_column(String(32))
     secondary_color: Mapped[str | None] = mapped_column(String(32))
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
     language: Mapped[str] = mapped_column(String(16), default="tr", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)
+    contact_email: Mapped[str | None] = mapped_column(String(255))
+    contact_phone: Mapped[str | None] = mapped_column(String(64))
+    default_template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    onboarding_status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False)
+    onboarding_step: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     users: Mapped[list[MarketUser]] = relationship(

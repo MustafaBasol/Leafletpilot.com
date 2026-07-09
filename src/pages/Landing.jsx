@@ -349,7 +349,7 @@ export function Landing() {
           <a className="landing-btn landing-btn-ghost" href="#/login">
             Giriş Yap
           </a>
-          <a className="landing-btn landing-btn-primary" href="#/login">
+          <a className="landing-btn landing-btn-primary" href="#/start">
             Ücretsiz Dene
           </a>
         </div>
@@ -369,7 +369,7 @@ export function Landing() {
               üzerinden otomatik hazırlar. Tasarım programı yok, saatlerce uğraş yok.
             </p>
             <div className="landing-hero-actions">
-              <a className="landing-btn landing-btn-primary landing-btn-lg" href="#/login">
+              <a className="landing-btn landing-btn-primary landing-btn-lg" href="#/start">
                 İlk Broşürünüz Ücretsiz
               </a>
               <a className="landing-btn landing-btn-ghost landing-btn-lg" href="#nasil-calisir">
@@ -457,7 +457,7 @@ export function Landing() {
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
-                <a className={`landing-btn landing-btn-lg ${plan.highlighted ? "landing-btn-primary" : "landing-btn-ghost"}`} href="#/login">
+                <a className={`landing-btn landing-btn-lg ${plan.highlighted ? "landing-btn-primary" : "landing-btn-ghost"}`} href="#/start">
                   Ücretsiz Dene
                 </a>
               </article>
@@ -481,7 +481,7 @@ export function Landing() {
         <section className="landing-cta reveal">
           <h2>Bu haftanın kampanyasını LeafletPilot hazırlasın</h2>
           <p>Mevcut kampanya ürünlerinizle kısa bir demo hazırlayalım. İlk broşürünüz bizden.</p>
-          <a className="landing-btn landing-btn-cta landing-btn-lg" href="#/login">
+          <a className="landing-btn landing-btn-cta landing-btn-lg" href="#/start">
             İlk Broşürünüz Ücretsiz
           </a>
         </section>

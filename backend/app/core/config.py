@@ -11,6 +11,8 @@ EXAMPLE_JWT_SECRETS = {
     "change-this-development-secret",
     "secret",
     "changeme",
+    "change-this-platform-secret",
+    "change-this-platform-secret-at-least-32-chars",
 }
 EXAMPLE_TELEGRAM_SECRETS = {
     "secret",
@@ -18,6 +20,12 @@ EXAMPLE_TELEGRAM_SECRETS = {
     "change-me",
     "telegram-webhook-secret",
     "example-secret",
+}
+EXAMPLE_SIGNUP_THROTTLE_SECRETS = {
+    "change-this-signup-throttle-secret-at-least-32-chars",
+    "signup-throttle-secret",
+    "secret",
+    "changeme",
 }
 
 
@@ -53,6 +61,12 @@ class Settings(BaseSettings):
     )
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=480, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    platform_admin_enabled: bool = Field(default=False, alias="PLATFORM_ADMIN_ENABLED")
+    platform_jwt_secret: str = Field(default="", alias="PLATFORM_JWT_SECRET")
+    platform_access_token_expire_minutes: int = Field(default=240, alias="PLATFORM_ACCESS_TOKEN_EXPIRE_MINUTES")
+    public_signup_throttle_secret: str = Field(default="", alias="PUBLIC_SIGNUP_THROTTLE_SECRET")
+    public_signup_throttle_window_minutes: int = Field(default=60, alias="PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES")
+    public_signup_throttle_limit: int = Field(default=3, alias="PUBLIC_SIGNUP_THROTTLE_LIMIT")
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
     telegram_bot_enabled: bool = Field(default=False, alias="TELEGRAM_BOT_ENABLED")
@@ -96,6 +110,12 @@ class Settings(BaseSettings):
 
         if self.access_token_expire_minutes < 1:
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be at least 1.")
+        if self.platform_access_token_expire_minutes < 1:
+            raise ValueError("PLATFORM_ACCESS_TOKEN_EXPIRE_MINUTES must be at least 1.")
+        if self.public_signup_throttle_window_minutes < 1:
+            raise ValueError("PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES must be at least 1.")
+        if self.public_signup_throttle_limit < 1:
+            raise ValueError("PUBLIC_SIGNUP_THROTTLE_LIMIT must be at least 1.")
         if self.telegram_http_timeout_seconds < 1 or self.telegram_http_timeout_seconds > 60:
             raise ValueError("TELEGRAM_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
         if self.telegram_http_max_attempts != 1:
@@ -104,6 +124,8 @@ class Settings(BaseSettings):
             )
         if self.telegram_bot_enabled:
             self._validate_enabled_telegram_settings()
+        if self.platform_admin_enabled:
+            self._validate_platform_settings()
 
         if "*" in self.backend_cors_origins:
             raise ValueError("BACKEND_CORS_ORIGINS cannot include '*' while CORS credentials are enabled.")
@@ -133,6 +155,12 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET_KEY must be at least 32 characters in production.")
         if self.jwt_secret_key.strip().lower() in EXAMPLE_JWT_SECRETS:
             raise ValueError("JWT_SECRET_KEY must not use a development or example placeholder.")
+        if not self.public_signup_throttle_secret:
+            raise ValueError("PUBLIC_SIGNUP_THROTTLE_SECRET is required in production.")
+        if len(self.public_signup_throttle_secret) < 32:
+            raise ValueError("PUBLIC_SIGNUP_THROTTLE_SECRET must be at least 32 characters in production.")
+        if self.public_signup_throttle_secret.strip().lower() in EXAMPLE_SIGNUP_THROTTLE_SECRETS:
+            raise ValueError("PUBLIC_SIGNUP_THROTTLE_SECRET must not use an example placeholder.")
         if not self.trusted_hosts:
             raise ValueError("TRUSTED_HOSTS must include at least one host in production.")
         if "*" in self.trusted_hosts:
@@ -151,6 +179,11 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_BOT_ENABLED=true.")
         if self.is_production and urlparse(self.telegram_webhook_base_url).scheme != "https":
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
+
+    def _validate_platform_settings(self) -> None:
+        normalized_secret = self.platform_jwt_secret.strip().lower()
+        if len(self.platform_jwt_secret.strip()) < 32 or normalized_secret in EXAMPLE_JWT_SECRETS:
+            raise ValueError("PLATFORM_JWT_SECRET must be a strong non-placeholder value when PLATFORM_ADMIN_ENABLED=true.")
 
 
 @lru_cache

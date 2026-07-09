@@ -8,16 +8,25 @@ import { Dashboard } from "./pages/Dashboard.jsx";
 import { Landing } from "./pages/Landing.jsx";
 import { Login } from "./pages/Login.jsx";
 import { NewCampaign } from "./pages/NewCampaign.jsx";
+import { Onboarding } from "./pages/Onboarding.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { Settings } from "./pages/Settings.jsx";
+import { Start } from "./pages/Start.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
 import { Templates } from "./pages/Templates.jsx";
 import { Team } from "./pages/Team.jsx";
+import { PlatformAdminLayout } from "./pages/platform/PlatformAdminLayout.jsx";
+import { PlatformLogin } from "./pages/platform/PlatformLogin.jsx";
+import { PlatformMarketDetail } from "./pages/platform/PlatformMarketDetail.jsx";
+import { PlatformMarketList } from "./pages/platform/PlatformMarketList.jsx";
+import { SignupRequestDetail } from "./pages/platform/SignupRequestDetail.jsx";
+import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
-import { clearAuthSession, hasStoredAuthSession, saveAuthSession } from "./api/authSession.js";
+import { clearAuthSession, hasStoredAuthSession, saveAuthSession, selectedMarketNeedsOnboarding } from "./api/authSession.js";
 import { isRealApiEnabled } from "./api/config.js";
+import { clearPlatformSession, hasPlatformSession } from "./api/platformSession.js";
 
 const AUTH_KEY = "leafletpilot_mock_auth";
 
@@ -50,6 +59,7 @@ function Page({ path, sessionVersion }) {
   if (path === "/bot-connections") return <BotConnections />;
   if (path === "/settings") return <Settings />;
   if (path === "/team") return <Team />;
+  if (path === "/onboarding") return <Onboarding />;
   if (pageMeta[path]) return <PlaceholderPage path={path} />;
   return <PlaceholderPage path="/campaigns" />;
 }
@@ -62,6 +72,7 @@ export function App() {
   const [isCheckingSession, setCheckingSession] = useState(() => isRealApiEnabled && hasStoredAuthSession());
   const [authError, setAuthError] = useState("");
   const [sessionVersion, setSessionVersion] = useState(0);
+  const [isPlatformAuthenticated, setPlatformAuthenticated] = useState(() => hasPlatformSession());
 
   useEffect(() => {
     const handleMarketChanged = () => setSessionVersion((version) => version + 1);
@@ -132,12 +143,38 @@ export function App() {
     window.location.hash = "#/login";
   }
 
+  function platformLogout() {
+    clearPlatformSession();
+    setPlatformAuthenticated(false);
+    window.location.hash = "#/platform/login";
+  }
+
   if (isCheckingSession) {
     return <Landing />;
   }
 
   if (path === "/") {
     return <Landing />;
+  }
+
+  if (path === "/start") {
+    return <Start />;
+  }
+
+  if (path.startsWith("/platform")) {
+    if (path === "/platform/login") {
+      return <PlatformLogin onLogin={() => setPlatformAuthenticated(true)} />;
+    }
+    if (!isPlatformAuthenticated) {
+      window.location.hash = "#/platform/login";
+      return <PlatformLogin onLogin={() => setPlatformAuthenticated(true)} />;
+    }
+    let platformPage = <SignupRequestList />;
+    if (path === "/platform/signup-requests") platformPage = <SignupRequestList />;
+    else if (path.startsWith("/platform/signup-requests/")) platformPage = <SignupRequestDetail id={path.replace("/platform/signup-requests/", "")} />;
+    else if (path === "/platform/markets") platformPage = <PlatformMarketList />;
+    else if (path.startsWith("/platform/markets/")) platformPage = <PlatformMarketDetail id={path.replace("/platform/markets/", "")} />;
+    return <PlatformAdminLayout onLogout={platformLogout}>{platformPage}</PlatformAdminLayout>;
   }
 
   if (path === "/login") {
@@ -156,6 +193,11 @@ export function App() {
   if (!isAuthenticated) {
     window.location.hash = "#/login";
     return <Login onLogin={login} initialError={authError} />;
+  }
+
+  if (selectedMarketNeedsOnboarding() && path !== "/onboarding") {
+    window.location.hash = "#/onboarding";
+    return null;
   }
 
   return (

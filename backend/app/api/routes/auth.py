@@ -113,6 +113,9 @@ def _build_session_payload(user: User) -> AuthSessionRead:
             slug=membership.market.slug,
             role=membership.role,
             is_active=membership.market.is_active,
+            lifecycle_status=membership.market.lifecycle_status,
+            onboarding_status=membership.market.onboarding_status,
+            onboarding_step=membership.market.onboarding_step,
         )
         for membership in memberships
     ]
