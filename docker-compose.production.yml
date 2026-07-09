@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -17,6 +17,7 @@ services:
       - app
 
   backend:
+    init: true
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -110,3 +111,4 @@ volumes:
 networks:
   app:
     internal: true
+
