@@ -40,7 +40,7 @@ function useHashPath() {
 
 function Page({ path, sessionVersion }) {
   void sessionVersion;
-  if (path === "/") return <Dashboard />;
+  if (path === "/dashboard") return <Dashboard />;
   if (path === "/campaigns") return <Campaigns />;
   if (path === "/campaigns/new") return <NewCampaign />;
   if (path.startsWith("/campaigns/")) return <CampaignDetail campaignId={path.replace("/campaigns/", "")} />;
@@ -91,7 +91,6 @@ export function App() {
         if (isMounted) {
           setAuthenticated(false);
           setAuthError("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
-          window.location.hash = "#/login";
         }
       } finally {
         if (isMounted) setCheckingSession(false);
@@ -111,7 +110,7 @@ export function App() {
         localStorage.setItem(AUTH_KEY, "true");
       }
       setAuthenticated(true);
-      window.location.hash = "#/";
+      window.location.hash = "#/dashboard";
       return;
     }
 
@@ -120,7 +119,7 @@ export function App() {
     setSessionVersion((version) => version + 1);
     setAuthenticated(true);
     setAuthError("");
-    window.location.hash = "#/";
+    window.location.hash = "#/dashboard";
   }
 
   function logout() {
@@ -134,6 +133,10 @@ export function App() {
   }
 
   if (isCheckingSession) {
+    return <Landing />;
+  }
+
+  if (path === "/") {
     return <Landing />;
   }
 
@@ -151,9 +154,6 @@ export function App() {
   }
 
   if (!isAuthenticated) {
-    if (!isRealApiEnabled && path !== "/login") {
-      return <Landing />;
-    }
     window.location.hash = "#/login";
     return <Login onLogin={login} initialError={authError} />;
   }
