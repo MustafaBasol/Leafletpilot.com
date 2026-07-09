@@ -149,6 +149,14 @@ export function App() {
     window.location.hash = "#/platform/login";
   }
 
+  function handleSessionUpdated() {
+    setSessionVersion((version) => version + 1);
+    setAuthenticated(
+      isRealApiEnabled ? hasStoredAuthSession() : localStorage.getItem(AUTH_KEY) === "true",
+    );
+    setAuthError("");
+  }
+
   if (isCheckingSession) {
     return <Landing />;
   }
@@ -185,7 +193,7 @@ export function App() {
     return (
       <AcceptInvitation
         isAuthenticated={isAuthenticated}
-        onSessionUpdated={() => setSessionVersion((version) => version + 1)}
+        onSessionUpdated={handleSessionUpdated}
       />
     );
   }
