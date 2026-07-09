@@ -1,7 +1,9 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from ipaddress import ip_address, ip_network
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_catalog_session
@@ -28,8 +30,7 @@ async def create_public_signup_request(
 
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Onay gerekli.")
 
-    throttle_key = _build_throttle_key(request, payload.email)
-    if await _is_throttled(session, throttle_key):
+    if await _is_throttled(session, request, payload.email):
         await session.commit()
         return accepted
 
@@ -63,25 +64,78 @@ async def create_public_signup_request(
     return accepted
 
 
-def _build_throttle_key(request: Request, email: str) -> str:
-    host = request.client.host if request.client else "unknown"
-    return hash_signup_throttle_key(f"{host.lower()}:{email.lower()}")
-
-
-async def _is_throttled(session: AsyncSession, key_hash: str) -> bool:
+async def _is_throttled(session: AsyncSession, request: Request, email: str) -> bool:
     now = utc_now()
-    window_start = now - timedelta(minutes=settings.public_signup_throttle_window_minutes)
-    throttle = await session.scalar(
-        select(SignupThrottle)
-        .where(SignupThrottle.key_hash == key_hash, SignupThrottle.window_started_at >= window_start)
-        .order_by(SignupThrottle.window_started_at.desc())
-        .with_for_update()
+    window_seconds = settings.public_signup_throttle_window_minutes * 60
+    window_bucket = int(now.timestamp()) // window_seconds
+    window_started_at = datetime.fromtimestamp(window_bucket * window_seconds, tz=UTC)
+    cutoff_bucket = window_bucket - 48
+    await session.execute(delete(SignupThrottle).where(SignupThrottle.window_bucket < cutoff_bucket))
+
+    address = _client_address(request)
+    counts = [
+        await _increment_throttle(session, "ip", address, window_bucket, window_started_at),
+        await _increment_throttle(session, "email", email.strip().lower(), window_bucket, window_started_at),
+    ]
+    return any(count > settings.public_signup_throttle_limit for count in counts)
+
+
+async def _increment_throttle(
+    session: AsyncSession,
+    key_type: str,
+    raw_value: str,
+    window_bucket: int,
+    window_started_at: datetime,
+) -> int:
+    key_hash = hash_signup_throttle_key(f"{key_type}:{raw_value}")
+    statement = (
+        insert(SignupThrottle)
+        .values(
+            key_type=key_type,
+            key_hash=key_hash,
+            window_bucket=window_bucket,
+            window_started_at=window_started_at,
+            request_count=1,
+        )
+        .on_conflict_do_update(
+            constraint="uq_signup_throttles_type_key_bucket",
+            set_={
+                "request_count": SignupThrottle.request_count + 1,
+                "updated_at": utc_now(),
+            },
+        )
+        .returning(SignupThrottle.request_count)
     )
-    if throttle is None:
-        session.add(SignupThrottle(key_hash=key_hash, window_started_at=now, request_count=1))
+    return int(await session.scalar(statement) or 1)
+
+
+def _client_address(request: Request) -> str:
+    direct = request.client.host if request.client else "unknown"
+    if not settings.trusted_proxy_ips or not _is_trusted_proxy(direct):
+        return direct.lower()
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    first_forwarded = forwarded_for.split(",", 1)[0].strip()
+    if not first_forwarded:
+        return direct.lower()
+    try:
+        return str(ip_address(first_forwarded))
+    except ValueError:
+        return direct.lower()
+
+
+def _is_trusted_proxy(value: str) -> bool:
+    try:
+        candidate = ip_address(value)
+    except ValueError:
         return False
-    throttle.request_count += 1
-    return throttle.request_count > settings.public_signup_throttle_limit
+    for configured in settings.trusted_proxy_ips:
+        try:
+            if candidate in ip_network(configured, strict=False):
+                return True
+        except ValueError:
+            if configured == value:
+                return True
+    return False
 
 
 def _mask_email(email: str) -> str:

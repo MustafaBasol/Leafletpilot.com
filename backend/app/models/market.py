@@ -33,7 +33,9 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(255))
     contact_phone: Mapped[str | None] = mapped_column(String(64))
-    default_template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
+    default_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("templates.id", name="fk_markets_default_template_id_templates", use_alter=True)
+    )
     lifecycle_status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarding_status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False)

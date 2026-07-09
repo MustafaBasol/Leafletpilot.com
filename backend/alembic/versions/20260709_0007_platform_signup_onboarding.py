@@ -58,7 +58,7 @@ def upgrade() -> None:
     op.add_column("market_invitations", sa.Column("created_by_platform_admin_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.alter_column("market_invitations", "created_by_user_id", existing_type=postgresql.UUID(as_uuid=True), nullable=True)
     op.create_foreign_key(
-        "fk_market_invitations_created_by_platform_admin_id_platform_admins",
+        "fk_market_invites_platform_admin",
         "market_invitations",
         "platform_admins",
         ["created_by_platform_admin_id"],
@@ -119,7 +119,23 @@ def downgrade() -> None:
     op.drop_index("ix_signup_requests_email", table_name="signup_requests")
     op.drop_index("ix_signup_requests_status_created_at", table_name="signup_requests")
     op.drop_table("signup_requests")
-    op.drop_constraint("fk_market_invitations_created_by_platform_admin_id_platform_admins", "market_invitations", type_="foreignkey")
+    op.drop_constraint("fk_market_invites_platform_admin", "market_invitations", type_="foreignkey")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM market_invitations
+                WHERE created_by_user_id IS NULL
+                  AND created_by_platform_admin_id IS NOT NULL
+            ) THEN
+                RAISE EXCEPTION
+                    'Cannot downgrade 20260709_0007: platform-created invitations exist without tenant user creators. Revoke/resolve them or keep this migration.';
+            END IF;
+        END $$;
+        """
+    )
     op.alter_column("market_invitations", "created_by_user_id", existing_type=postgresql.UUID(as_uuid=True), nullable=False)
     op.drop_column("market_invitations", "created_by_platform_admin_id")
     op.drop_constraint("ck_markets_onboarding_status", "markets", type_="check")

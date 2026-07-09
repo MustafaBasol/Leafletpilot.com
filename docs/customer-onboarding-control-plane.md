@@ -18,6 +18,7 @@ Set these values before enabling platform administration:
 - `PUBLIC_SIGNUP_THROTTLE_SECRET`: strong non-placeholder value, at least 32 characters in production
 - `PUBLIC_SIGNUP_THROTTLE_WINDOW_MINUTES`
 - `PUBLIC_SIGNUP_THROTTLE_LIMIT`
+- `TRUSTED_PROXY_IPS`: comma-separated proxy IPs or CIDR ranges allowed to supply `X-Forwarded-For`
 
 No real secrets belong in committed env examples.
 
@@ -39,7 +40,9 @@ Rejected and unprovisioned requests are retained in this phase. Recommended rete
 
 ## Anti-Abuse
 
-The public endpoint accepts a hidden honeypot field and returns the same generic accepted response for bot submissions and duplicate-looking rapid submissions. Throttling is database-backed via `signup_throttles`. The throttle key is an HMAC of client address plus email using `PUBLIC_SIGNUP_THROTTLE_SECRET`; raw client IP and forwarded headers are not logged or exposed.
+The public endpoint accepts a hidden honeypot field and returns the same generic accepted response for bot submissions and duplicate-looking rapid submissions. Throttling is database-backed via `signup_throttles` with separate `ip` and `email` dimensions. Each dimension stores only an HMAC key, a window bucket, and a request count; raw client IPs and raw emails are never persisted.
+
+Throttle increments use PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` on `(key_type, key_hash, window_bucket)`, so concurrent first requests share one counter row. The app trusts `X-Forwarded-For` only when the direct peer address matches `TRUSTED_PROXY_IPS`; otherwise it falls back to the direct client address. Old throttle buckets are pruned opportunistically during public signup submissions.
 
 ## Provisioning
 
@@ -51,7 +54,9 @@ If provisioning is replayed after success, the endpoint returns the existing mar
 
 Existing markets migrate to `active` and `completed` onboarding, so production tenants remain accessible. New provisioned markets start in `trial` with onboarding `not_started`.
 
-Policy: suspended markets remain readable but tenant mutations are blocked through shared role dependencies. Archived markets are inactive and denied to tenant users.
+Allowed transitions are `trial -> active`, `trial -> suspended`, `active -> suspended`, `suspended -> active`, and `trial|active|suspended -> archived`. Same-state requests are no-ops. Reverse transitions to `trial` and any transition out of `archived` are rejected.
+
+Policy: suspended markets remain readable but tenant mutations are blocked through shared role dependencies. Archived markets are inactive and denied to tenant users. Telegram campaign creation and export generation use the same lifecycle policy before creating campaigns, jobs, or sending generated files.
 
 ## Tenant Onboarding
 
@@ -69,7 +74,7 @@ Market admins with incomplete onboarding are redirected to `#/onboarding`. Staff
 
 ## Rollback
 
-The migration downgrade removes the new platform/signup/onboarding structures and added market columns. It intentionally does not delete unrelated tenant data. If any platform-created invitation exists without a tenant creator, downgrading may require retiring those invitations first because the previous schema required `created_by_user_id`.
+The migration downgrade removes the new platform/signup/onboarding structures and added market columns. It intentionally does not delete unrelated tenant data. If any platform-created invitation exists without a tenant creator, the `20260709_0007` downgrade raises an explicit error and stops because the previous schema required `created_by_user_id`.
 
 ## Known Limitations
 

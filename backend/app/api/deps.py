@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_session
+from app.core.lifecycle import market_allows_mutations
 from app.core.roles import MarketRole
 from app.core.security import decode_access_token, decode_platform_access_token
 from app.models import MarketUser, PlatformAdmin, User
@@ -148,7 +149,7 @@ def require_market_roles(*allowed_roles: str | MarketRole):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Bu işlem için yetkiniz bulunmuyor.",
             )
-        if membership.market is not None and membership.market.lifecycle_status in {"suspended", "archived"}:
+        if not market_allows_mutations(membership.market):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Bu markette değişiklik işlemleri geçici olarak durduruldu.",

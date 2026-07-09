@@ -55,6 +55,7 @@ class Settings(BaseSettings):
         alias="TRUSTED_HOSTS",
     )
     secure_proxy_headers: bool = Field(default=False, alias="SECURE_PROXY_HEADERS")
+    trusted_proxy_ips: list[str] = Field(default_factory=list, alias="TRUSTED_PROXY_IPS")
     jwt_secret_key: str = Field(
         default="change-this-development-secret",
         alias="JWT_SECRET_KEY",
@@ -88,7 +89,7 @@ class Settings(BaseSettings):
             path = Path(__file__).resolve().parents[2] / path
         return path.resolve()
 
-    @field_validator("backend_cors_origins", "trusted_hosts", mode="before")
+    @field_validator("backend_cors_origins", "trusted_hosts", "trusted_proxy_ips", mode="before")
     @classmethod
     def parse_string_list(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):

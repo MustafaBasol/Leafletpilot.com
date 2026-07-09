@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -49,9 +49,13 @@ class SignupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class SignupThrottle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "signup_throttles"
     __table_args__ = (
-        Index("ix_signup_throttles_key_window", "key_hash", "window_started_at"),
+        CheckConstraint("key_type in ('ip', 'email')", name="ck_signup_throttles_key_type"),
+        UniqueConstraint("key_type", "key_hash", "window_bucket", name="uq_signup_throttles_type_key_bucket"),
+        Index("ix_signup_throttles_bucket", "window_bucket"),
     )
 
+    key_type: Mapped[str] = mapped_column(String(16), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    window_bucket: Mapped[int] = mapped_column(Integer, nullable=False)
     window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     request_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

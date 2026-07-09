@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_catalog_session, get_current_platform_admin
 from app.core.config import settings
+from app.core.lifecycle import can_transition_lifecycle
 from app.core.security import create_platform_access_token, generate_invitation_token, hash_invitation_token, verify_password
 from app.models import ActivityLog, Campaign, Market, MarketInvitation, MarketUser, PlatformAdmin, Product, SignupRequest
 from app.models.base import utc_now
@@ -257,8 +258,11 @@ async def update_market_lifecycle(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market bulunamadı.")
     if payload.lifecycle_status == "archived" and not payload.confirm_archive:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Arşivleme onayı gerekli.")
-    if market.lifecycle_status not in {"trial", "active", "suspended"} and payload.lifecycle_status != "archived":
+    if not can_transition_lifecycle(market.lifecycle_status, payload.lifecycle_status):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu lifecycle geçişi desteklenmiyor.")
+    if market.lifecycle_status == payload.lifecycle_status:
+        item = await _market_item(session, market)
+        return PlatformMarketDetail(**item.model_dump(), **_market_detail_fields(market))
     market.lifecycle_status = payload.lifecycle_status
     market.is_active = payload.lifecycle_status != "archived"
     session.add(
