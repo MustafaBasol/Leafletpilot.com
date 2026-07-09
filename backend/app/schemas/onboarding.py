@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,6 +25,16 @@ class OnboardingProfileUpdate(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return value.strip().upper()
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        normalized = value.strip()
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError:
+            raise ValueError("Invalid timezone.") from None
+        return normalized
 
 
 class OnboardingBrandUpdate(BaseModel):
