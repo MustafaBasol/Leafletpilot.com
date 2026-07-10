@@ -3,9 +3,8 @@ from __future__ import annotations
 import hmac
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_catalog_session
 from app.core.config import settings
@@ -30,7 +29,6 @@ async def get_telegram_client() -> AsyncGenerator[TelegramClientProtocol, None]:
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
-    session: AsyncSession = Depends(get_catalog_session),
 ) -> dict[str, bool]:
     if not settings.telegram_bot_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram integration is disabled.")
@@ -59,9 +57,11 @@ async def telegram_webhook(
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Malformed Telegram update.") from exc
 
+    session_dependency = request.app.dependency_overrides.get(get_catalog_session, get_catalog_session)
     client_dependency = request.app.dependency_overrides.get(get_telegram_client, get_telegram_client)
-    async for client in client_dependency():
-        await process_update(session, update, client)
+    async for session in session_dependency():
+        async for client in client_dependency():
+            await process_update(session, update, client)
     return {"ok": True}
 
 

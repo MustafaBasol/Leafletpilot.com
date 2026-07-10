@@ -11,6 +11,9 @@ export const platformLabels = {
     showPassword: "Şifreyi göster",
     hidePassword: "Şifreyi gizle",
     invalidCredentials: "Geçersiz e-posta veya şifre",
+    operationFailed: "İşlem tamamlanamadı.",
+    overview: "Genel Bakış",
+    logout: "Çıkış",
     pendingSignup: "Bekleyen Başvuru",
     awaitingOwner: "Owner Bekleniyor",
     onboarding: "Kurulumda",
@@ -65,6 +68,46 @@ export const platformLabels = {
     missing: "Eksik",
     unknownStatus: "Bilinmeyen durum",
     readinessReady: "Market yayına hazır.",
+    platformControl: "Platform Kontrol",
+    platformControlOverview: "Pilot müşteri onboarding ve market hazırlığını izleyin.",
+    marketOperationsOverview: "Yaşam döngüsü, hazırlık, owner daveti ve kurulum durumlarını izleyin.",
+    signupOperationsOverview: "Başvuruları inceleyin, onaylayın ve pilot markete dönüştürün.",
+    allLifecycle: "Tüm yaşam döngüleri",
+    allReadiness: "Tüm hazırlık durumları",
+    noMarketsForFilters: "Bu filtrelerde market yok.",
+    noSignupRequestsForFilters: "Bu filtrelerde başvuru yok.",
+    created: "Oluşturuldu",
+    updated: "Güncellendi",
+    lastUpdated: "Son güncelleme",
+    lastReason: "Son neden",
+    reasonPrompt: "Neden girin",
+    confirmArchiveMarket: "Market arşivlensin mi?",
+    confirmStatusChangeSuffix: "yapılsın mı?",
+    confirmRevokeOwnerInvitation: "Kullanılmamış owner daveti iptal edilsin mi?",
+    confirmRejectSignup: "Bu başvuru reddedilsin mi?",
+    confirmProvisionSignup: "Bu başvuru için market ve owner daveti oluşturulsun mu?",
+    expires: "Bitiş",
+    accepted: "Kabul",
+    ownerEmail: "Owner e-posta",
+    createInvitation: "Davet Oluştur",
+    rotateInvitation: "Davet Döndür",
+    revokeInvitation: "Davet İptal",
+    oneTimeInviteLink: "Tek seferlik davet bağlantısı",
+    copy: "Kopyala",
+    none: "Yok",
+    activateOrContinue: "Aktifleştir / Sürdür",
+    step: "adım",
+    platformActivity: "Platform Aktivitesi",
+    recentPlatformActivity: "Son Platform Aktivitesi",
+    action: "Aksiyon",
+    target: "Hedef",
+    noActivity: "Aktivite yok.",
+    noPlatformActivity: "Henüz platform aktivitesi yok.",
+    reviewNotes: "İnceleme notu",
+    approve: "Onayla",
+    marketProvision: "Market Provision",
+    provisionInviteNotice: "Davet bağlantısı yalnızca başarılı provision yanıtında gösterilir. E-posta gönderimi manuel olarak işaretlenir.",
+    createMarketAndInvitation: "Market Oluştur ve Davet Üret",
   },
   en: {
     platformAdmin: "Platform Admin",
@@ -76,6 +119,9 @@ export const platformLabels = {
     showPassword: "Show password",
     hidePassword: "Hide password",
     invalidCredentials: "Invalid email or password",
+    operationFailed: "The operation could not be completed.",
+    overview: "Overview",
+    logout: "Logout",
     pendingSignup: "Pending Signup",
     awaitingOwner: "Awaiting Owner",
     onboarding: "Onboarding",
@@ -130,6 +176,46 @@ export const platformLabels = {
     missing: "Missing",
     unknownStatus: "Unknown status",
     readinessReady: "Market is ready to go live.",
+    platformControl: "Platform Control",
+    platformControlOverview: "Track pilot customer onboarding and market readiness.",
+    marketOperationsOverview: "Track lifecycle, readiness, owner invitation, and onboarding status.",
+    signupOperationsOverview: "Review signup requests, approve them, and convert them into pilot markets.",
+    allLifecycle: "All lifecycle states",
+    allReadiness: "All readiness states",
+    noMarketsForFilters: "No markets match these filters.",
+    noSignupRequestsForFilters: "No signup requests match these filters.",
+    created: "Created",
+    updated: "Updated",
+    lastUpdated: "Last updated",
+    lastReason: "Last reason",
+    reasonPrompt: "Enter a reason",
+    confirmArchiveMarket: "Archive this market?",
+    confirmStatusChangeSuffix: "should be applied?",
+    confirmRevokeOwnerInvitation: "Revoke the unused owner invitation?",
+    confirmRejectSignup: "Reject this signup request?",
+    confirmProvisionSignup: "Create the market and owner invitation for this signup request?",
+    expires: "Expires",
+    accepted: "Accepted",
+    ownerEmail: "Owner email",
+    createInvitation: "Create Invitation",
+    rotateInvitation: "Rotate Invitation",
+    revokeInvitation: "Revoke Invitation",
+    oneTimeInviteLink: "One-time invitation link",
+    copy: "Copy",
+    none: "None",
+    activateOrContinue: "Activate / Continue",
+    step: "step",
+    platformActivity: "Platform Activity",
+    recentPlatformActivity: "Recent Platform Activity",
+    action: "Action",
+    target: "Target",
+    noActivity: "No activity.",
+    noPlatformActivity: "No platform activity yet.",
+    reviewNotes: "Review notes",
+    approve: "Approve",
+    marketProvision: "Market Provision",
+    provisionInviteNotice: "The invitation link is shown only after a successful provision response. Email delivery is marked manually.",
+    createMarketAndInvitation: "Create Market and Invitation",
   },
   fr: {
     platformAdmin: "Admin Plateforme",
@@ -141,6 +227,9 @@ export const platformLabels = {
     showPassword: "Afficher le mot de passe",
     hidePassword: "Masquer le mot de passe",
     invalidCredentials: "E-mail ou mot de passe invalide",
+    operationFailed: "L'opération n'a pas pu être terminée.",
+    overview: "Vue d'ensemble",
+    logout: "Déconnexion",
     pendingSignup: "Demande en attente",
     awaitingOwner: "Owner attendu",
     onboarding: "Configuration",
@@ -195,6 +284,46 @@ export const platformLabels = {
     missing: "Manquant",
     unknownStatus: "Statut inconnu",
     readinessReady: "Le market est prêt à être publié.",
+    platformControl: "Contrôle plateforme",
+    platformControlOverview: "Suivez l'onboarding client pilote et la préparation du market.",
+    marketOperationsOverview: "Suivez le cycle de vie, la préparation, l'invitation owner et la configuration.",
+    signupOperationsOverview: "Examinez les demandes, approuvez-les et convertissez-les en markets pilotes.",
+    allLifecycle: "Tous les cycles de vie",
+    allReadiness: "Tous les états de préparation",
+    noMarketsForFilters: "Aucun market pour ces filtres.",
+    noSignupRequestsForFilters: "Aucune demande pour ces filtres.",
+    created: "Créé",
+    updated: "Mis à jour",
+    lastUpdated: "Dernière mise à jour",
+    lastReason: "Dernier motif",
+    reasonPrompt: "Saisissez un motif",
+    confirmArchiveMarket: "Archiver ce market ?",
+    confirmStatusChangeSuffix: "doit être appliqué ?",
+    confirmRevokeOwnerInvitation: "Révoquer l'invitation owner inutilisée ?",
+    confirmRejectSignup: "Rejeter cette demande ?",
+    confirmProvisionSignup: "Créer le market et l'invitation owner pour cette demande ?",
+    expires: "Expiration",
+    accepted: "Accepté",
+    ownerEmail: "E-mail owner",
+    createInvitation: "Créer l'invitation",
+    rotateInvitation: "Renouveler l'invitation",
+    revokeInvitation: "Révoquer l'invitation",
+    oneTimeInviteLink: "Lien d'invitation à usage unique",
+    copy: "Copier",
+    none: "Aucun",
+    activateOrContinue: "Activer / Continuer",
+    step: "étape",
+    platformActivity: "Activité plateforme",
+    recentPlatformActivity: "Activité plateforme récente",
+    action: "Action",
+    target: "Cible",
+    noActivity: "Aucune activité.",
+    noPlatformActivity: "Aucune activité plateforme pour le moment.",
+    reviewNotes: "Notes de revue",
+    approve: "Approuver",
+    marketProvision: "Provision du market",
+    provisionInviteNotice: "Le lien d'invitation est affiché uniquement après une réponse de provision réussie. L'envoi e-mail est marqué manuellement.",
+    createMarketAndInvitation: "Créer le market et l'invitation",
   },
   de: {
     platformAdmin: "Plattform-Admin",
@@ -206,6 +335,9 @@ export const platformLabels = {
     showPassword: "Passwort anzeigen",
     hidePassword: "Passwort ausblenden",
     invalidCredentials: "Ungültige E-Mail oder ungültiges Passwort",
+    operationFailed: "Der Vorgang konnte nicht abgeschlossen werden.",
+    overview: "Übersicht",
+    logout: "Abmelden",
     pendingSignup: "Ausstehende Anmeldung",
     awaitingOwner: "Owner ausstehend",
     onboarding: "Einrichtung",
@@ -260,6 +392,46 @@ export const platformLabels = {
     missing: "Fehlt",
     unknownStatus: "Unbekannter Status",
     readinessReady: "Der Market ist bereit zur Veröffentlichung.",
+    platformControl: "Plattformsteuerung",
+    platformControlOverview: "Pilotkunden-Onboarding und Market-Bereitschaft verfolgen.",
+    marketOperationsOverview: "Lebenszyklus, Bereitschaft, Owner-Einladung und Einrichtung verfolgen.",
+    signupOperationsOverview: "Anfragen prüfen, genehmigen und in Pilot-Markets umwandeln.",
+    allLifecycle: "Alle Lebenszyklen",
+    allReadiness: "Alle Bereitschaftsstatus",
+    noMarketsForFilters: "Keine Markets für diese Filter.",
+    noSignupRequestsForFilters: "Keine Anfragen für diese Filter.",
+    created: "Erstellt",
+    updated: "Aktualisiert",
+    lastUpdated: "Letzte Aktualisierung",
+    lastReason: "Letzter Grund",
+    reasonPrompt: "Grund eingeben",
+    confirmArchiveMarket: "Diesen Market archivieren?",
+    confirmStatusChangeSuffix: "anwenden?",
+    confirmRevokeOwnerInvitation: "Ungenutzte Owner-Einladung widerrufen?",
+    confirmRejectSignup: "Diese Anfrage ablehnen?",
+    confirmProvisionSignup: "Market und Owner-Einladung für diese Anfrage erstellen?",
+    expires: "Ablauf",
+    accepted: "Angenommen",
+    ownerEmail: "Owner-E-Mail",
+    createInvitation: "Einladung erstellen",
+    rotateInvitation: "Einladung erneuern",
+    revokeInvitation: "Einladung widerrufen",
+    oneTimeInviteLink: "Einmaliger Einladungslink",
+    copy: "Kopieren",
+    none: "Keine",
+    activateOrContinue: "Aktivieren / Fortsetzen",
+    step: "Schritt",
+    platformActivity: "Plattformaktivität",
+    recentPlatformActivity: "Letzte Plattformaktivität",
+    action: "Aktion",
+    target: "Ziel",
+    noActivity: "Keine Aktivität.",
+    noPlatformActivity: "Noch keine Plattformaktivität.",
+    reviewNotes: "Prüfnotizen",
+    approve: "Genehmigen",
+    marketProvision: "Market-Provisionierung",
+    provisionInviteNotice: "Der Einladungslink wird nur nach einer erfolgreichen Provisionierungsantwort angezeigt. E-Mail-Versand wird manuell markiert.",
+    createMarketAndInvitation: "Market und Einladung erstellen",
   },
 };
 
@@ -267,6 +439,7 @@ export const statusLabels = {
   tr: {
     pending: "Bekliyor",
     reviewing: "İnceleniyor",
+    under_review: "İnceleniyor",
     approved: "Onaylandı",
     rejected: "Reddedildi",
     provisioned: "Kuruldu",
@@ -281,10 +454,17 @@ export const statusLabels = {
     ready: "Hazır",
     blocked: "Engelli",
     completed: "Tamamlandı",
+    revoked: "İptal edildi",
+    expired: "Süresi doldu",
+    manual: "Manuel",
+    sent: "Gönderildi",
+    failed: "Başarısız",
+    accepted: "Kabul edildi",
   },
   en: {
     pending: "Pending",
     reviewing: "Reviewing",
+    under_review: "Reviewing",
     approved: "Approved",
     rejected: "Rejected",
     provisioned: "Provisioned",
@@ -299,10 +479,17 @@ export const statusLabels = {
     ready: "Ready",
     blocked: "Blocked",
     completed: "Completed",
+    revoked: "Revoked",
+    expired: "Expired",
+    manual: "Manual",
+    sent: "Sent",
+    failed: "Failed",
+    accepted: "Accepted",
   },
   fr: {
     pending: "En attente",
     reviewing: "En revue",
+    under_review: "En revue",
     approved: "Approuvé",
     rejected: "Rejeté",
     provisioned: "Provisionné",
@@ -317,10 +504,17 @@ export const statusLabels = {
     ready: "Prêt",
     blocked: "Bloqué",
     completed: "Terminé",
+    revoked: "Révoqué",
+    expired: "Expiré",
+    manual: "Manuel",
+    sent: "Envoyé",
+    failed: "Échec",
+    accepted: "Accepté",
   },
   de: {
     pending: "Ausstehend",
     reviewing: "In Prüfung",
+    under_review: "In Prüfung",
     approved: "Genehmigt",
     rejected: "Abgelehnt",
     provisioned: "Eingerichtet",
@@ -335,6 +529,12 @@ export const statusLabels = {
     ready: "Bereit",
     blocked: "Blockiert",
     completed: "Abgeschlossen",
+    revoked: "Widerrufen",
+    expired: "Abgelaufen",
+    manual: "Manuell",
+    sent: "Gesendet",
+    failed: "Fehlgeschlagen",
+    accepted: "Angenommen",
   },
 };
 
@@ -383,6 +583,9 @@ export const blockerLabels = {
 
 const englishBlockerAliases = {
   "Required market setup is not complete.": "required_setup_incomplete",
+  "No active owner user or effective owner invitation.": "owner_invitation_pending",
+  "Market lifecycle is suspended.": "market_suspended",
+  "Market lifecycle is archived.": "market_suspended",
 };
 
 function normalizeLocale(locale) {
@@ -418,6 +621,25 @@ export function deriveReadiness(market) {
   const campaignCount = Number(market?.campaign_count || 0);
   const memberCount = Number(market?.member_count || 0);
 
+  if (market?.readiness) {
+    for (const blocker of market.readiness.blockers || []) {
+      blockers.push({ code: blockerCode(blocker) });
+    }
+    if (!market.readiness.has_active_market_user && !market?.owner_invitation?.is_effective) {
+      blockers.push({ code: "owner_invitation_pending" });
+    }
+    if (market.onboarding_status && market.onboarding_status !== "completed") {
+      blockers.push({ code: "onboarding_incomplete" });
+    }
+    if (!market.readiness.required_setup_complete && productCount < 1) {
+      blockers.push({ code: "product_required" });
+    }
+    if (!market?.legal_name || !market?.country_code || !market?.language || !market?.currency || !market?.timezone) {
+      blockers.push({ code: "profile_incomplete" });
+    }
+    return { status: market.readiness.state || "blocked", blockers: uniqueBlockers(blockers) };
+  }
+
   if (market?.lifecycle_status === "suspended" || market?.lifecycle_status === "archived") {
     blockers.push({ code: "market_suspended" });
   }
@@ -432,7 +654,17 @@ export function deriveReadiness(market) {
   }
 
   const status = blockers.length === 0 ? "ready" : market?.onboarding_status === "completed" ? "blocked" : "onboarding";
-  return { status, blockers };
+  return { status, blockers: uniqueBlockers(blockers) };
+}
+
+function uniqueBlockers(blockers) {
+  const seen = new Set();
+  return blockers.filter((blocker) => {
+    const code = blockerCode(blocker);
+    if (seen.has(code)) return false;
+    seen.add(code);
+    return true;
+  });
 }
 
 export function countRows(market, locale = "tr") {

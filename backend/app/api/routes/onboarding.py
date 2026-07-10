@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_catalog_session, require_market_admin
+from app.api.deps import DeferredCatalogSession, get_deferred_catalog_session, require_market_admin
 from app.models import ActivityLog, Market, MarketUser, Template
 from app.models.base import utc_now
 from app.schemas.onboarding import (
@@ -24,8 +23,9 @@ async def get_onboarding_state(membership: MarketUser = Depends(require_market_a
 async def update_onboarding_profile(
     payload: OnboardingProfileUpdate,
     membership: MarketUser = Depends(require_market_admin),
-    session: AsyncSession = Depends(get_catalog_session),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
 ) -> OnboardingStateRead:
+    session = await deferred_session.get()
     market = membership.market
     market.name = payload.display_name.strip()
     market.legal_name = payload.legal_name.strip() if payload.legal_name else market.legal_name
@@ -46,8 +46,9 @@ async def update_onboarding_profile(
 async def update_onboarding_brand(
     payload: OnboardingBrandUpdate,
     membership: MarketUser = Depends(require_market_admin),
-    session: AsyncSession = Depends(get_catalog_session),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
 ) -> OnboardingStateRead:
+    session = await deferred_session.get()
     market = membership.market
     market.primary_color = payload.primary_color
     market.secondary_color = payload.secondary_color
@@ -61,8 +62,9 @@ async def update_onboarding_brand(
 async def update_onboarding_template(
     payload: OnboardingTemplateUpdate,
     membership: MarketUser = Depends(require_market_admin),
-    session: AsyncSession = Depends(get_catalog_session),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
 ) -> OnboardingStateRead:
+    session = await deferred_session.get()
     market = membership.market
     if payload.default_template_id is not None:
         template = await session.scalar(
@@ -84,8 +86,9 @@ async def update_onboarding_template(
 @router.post("/complete", response_model=OnboardingStateRead)
 async def complete_onboarding(
     membership: MarketUser = Depends(require_market_admin),
-    session: AsyncSession = Depends(get_catalog_session),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
 ) -> OnboardingStateRead:
+    session = await deferred_session.get()
     market = membership.market
     market.onboarding_status = "completed"
     market.onboarding_step = 4

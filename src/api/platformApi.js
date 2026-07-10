@@ -58,6 +58,8 @@ async function request(path, { method = "GET", params, body, skipAuth = false } 
 export const platformApi = {
   login: (email, password) => request("/platform/auth/login", { method: "POST", skipAuth: true, body: { email, password } }),
   me: () => request("/platform/auth/me"),
+  overview: () => request("/platform/overview"),
+  listAudit: (params) => request("/platform/audit", { params }),
   listSignupRequests: (params) => request("/platform/signup-requests", { params }),
   getSignupRequest: (id) => request(`/platform/signup-requests/${id}`),
   updateSignupRequest: (id, body) => request(`/platform/signup-requests/${id}`, { method: "PATCH", body }),
@@ -65,4 +67,7 @@ export const platformApi = {
   listMarkets: (params) => request("/platform/markets", { params }),
   getMarket: (id) => request(`/platform/markets/${id}`),
   updateMarketLifecycle: (id, body) => request(`/platform/markets/${id}/lifecycle`, { method: "PATCH", body }),
+  createOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation`, { method: "POST", body }),
+  rotateOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation/rotate`, { method: "POST", body }),
+  revokeOwnerInvitation: (id) => request(`/platform/markets/${id}/owner-invitation/revoke`, { method: "POST" }),
 };

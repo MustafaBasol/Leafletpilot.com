@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  canApproveSignup,
+  canProvisionSignup,
+  canRejectSignup,
+  hasEffectiveOwnerInvitation,
+  labelFor,
+  normalizeApiError,
+  readinessLabels,
+  signupStatusLabels,
+} from "./platformOps.js";
+import {
   blockerLabel,
   countRows,
   deriveReadiness,
@@ -27,6 +37,33 @@ const statusValues = [
   "blocked",
   "completed",
 ];
+
+test("signup action availability follows Phase 20B state machine", () => {
+  assert.equal(canApproveSignup({ status: "pending" }), true);
+  assert.equal(canApproveSignup({ status: "approved" }), false);
+  assert.equal(canRejectSignup({ status: "approved" }), true);
+  assert.equal(canProvisionSignup({ status: "approved" }), true);
+  assert.equal(canProvisionSignup({ status: "approved", provisioned_market_id: "market-id" }), false);
+  assert.equal(canProvisionSignup({ status: "pending" }), false);
+});
+
+test("status and readiness helpers normalize operator-facing values", () => {
+  assert.equal(labelFor(signupStatusLabels, "under_review"), "İnceleniyor");
+  assert.equal(labelFor(signupStatusLabels, "reviewing"), "İnceleniyor");
+  assert.equal(labelFor(readinessLabels, "awaiting_owner"), "Owner bekleniyor");
+  assert.equal(labelFor(readinessLabels, "unknown"), "Bilinmeyen durum: unknown");
+});
+
+test("error and invitation helpers avoid raw object display", () => {
+  assert.equal(normalizeApiError({}), "İşlem tamamlanamadı.");
+  assert.equal(normalizeApiError("Plain error"), "Plain error");
+  assert.equal(normalizeApiError({ message: "Readable error" }), "Readable error");
+  assert.equal(normalizeApiError({ body: { detail: "API detail" } }), "API detail");
+  assert.equal(normalizeApiError({ message: { detail: "Nested detail" } }), "Nested detail");
+  assert.notEqual(normalizeApiError({ message: { detail: "" } }), "[object Object]");
+  assert.equal(hasEffectiveOwnerInvitation({ owner_invitation: { is_effective: true } }), true);
+  assert.equal(hasEffectiveOwnerInvitation({ owner_invitation: { is_effective: false } }), false);
+});
 
 test("public signup submit button has visible and accessible labels", async () => {
   const source = await readFile("src/pages/Start.jsx", "utf8");
@@ -65,6 +102,7 @@ test("Turkish platform labels do not render raw technical readiness and lifecycl
   assert.equal(statusLabel("trial", "tr"), "Deneme");
   assert.equal(statusLabel("awaiting_owner", "tr"), "Owner bekleniyor");
   assert.equal(blockerLabel("Required market setup is not complete.", "tr"), "Gerekli market kurulumu tamamlanmadı");
+  assert.equal(blockerLabel("No active owner user or effective owner invitation.", "tr"), "Owner daveti henüz kabul edilmedi");
 });
 
 test("readiness blockers are derived as readable translated messages", () => {
@@ -90,6 +128,33 @@ test("readiness blockers are derived as readable translated messages", () => {
   assert.equal(blockerLabel(readiness.blockers[0], "tr"), "Aktif kullanıcı bulunmuyor");
   assert.equal(blockerLabel(readiness.blockers[1], "tr"), "Onboarding tamamlanmadı");
   assert.equal(blockerLabel(readiness.blockers[2], "tr"), "En az bir ürün eklenmeli");
+});
+
+test("backend readiness blockers are translated and enriched with specific setup blockers", () => {
+  const readiness = deriveReadiness({
+    lifecycle_status: "trial",
+    onboarding_status: "not_started",
+    product_count: 0,
+    campaign_count: 2,
+    legal_name: "Vatan Market",
+    country_code: "FR",
+    language: "tr",
+    currency: "EUR",
+    timezone: "Europe/Paris",
+    readiness: {
+      state: "onboarding",
+      blockers: ["Required market setup is not complete."],
+      has_active_market_user: true,
+      required_setup_complete: false,
+    },
+  });
+
+  assert.equal(readiness.status, "onboarding");
+  assert.deepEqual(readiness.blockers.map((blocker) => blocker.code), [
+    "required_setup_incomplete",
+    "onboarding_incomplete",
+    "product_required",
+  ]);
 });
 
 test("product and campaign counts render with explicit labels", () => {
