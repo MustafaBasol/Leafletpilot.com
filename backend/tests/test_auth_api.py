@@ -384,3 +384,36 @@ async def test_public_invitation_accept_creates_user_and_password_can_login(monk
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_invitation_preview_throttles_repeated_token_attempts(monkeypatch) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed auth tests skipped.")
+    monkeypatch.setattr(settings, "public_signup_throttle_limit", 1)
+    monkeypatch.setattr(settings, "public_signup_throttle_window_minutes", 60)
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            payload = {"token": "missing-preview-token-" + uuid4().hex}
+            first = await async_client.post("/api/auth/invitation-preview", json=payload)
+            second = await async_client.post("/api/auth/invitation-preview", json=payload)
+
+            assert first.status_code == 200
+            assert first.json()["status"] == "invalid"
+            assert second.status_code == 429
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
