@@ -4,9 +4,9 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.api.deps import get_catalog_session, get_current_platform_admin
 from app.core.config import settings
@@ -71,14 +71,13 @@ async def platform_overview(
     pending_signup_count = await session.scalar(
         select(func.count()).select_from(SignupRequest).where(SignupRequest.status.in_(("pending", "reviewing", "approved")))
     )
-    markets = list((await session.scalars(select(Market))).all())
-    readiness_items = [await _readiness_summary(session, market) for market in markets]
+    readiness = await _readiness_counts(session)
     return PlatformOverview(
         pending_signup_count=pending_signup_count or 0,
-        markets_awaiting_owner=sum(1 for item in readiness_items if item.state == "awaiting_owner"),
-        markets_onboarding=sum(1 for item in readiness_items if item.state == "onboarding"),
-        ready_markets=sum(1 for item in readiness_items if item.state == "ready"),
-        suspended_markets=sum(1 for market in markets if market.lifecycle_status == "suspended"),
+        markets_awaiting_owner=readiness.get("awaiting_owner", 0),
+        markets_onboarding=readiness.get("onboarding", 0),
+        ready_markets=readiness.get("ready", 0),
+        suspended_markets=readiness.get("suspended", 0),
         recent_activity=await _recent_audit(session),
     )
 
@@ -285,15 +284,55 @@ async def list_platform_markets(
     _: PlatformAdmin = Depends(get_current_platform_admin),
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ListResponse[PlatformMarketListItem]:
-    statement = select(Market)
+    counts = _market_counts_subquery()
+    latest_invitation, latest_invitation_subquery = _latest_owner_invitation_subquery()
+    readiness_state = _readiness_state_expression(counts)
+    base_conditions = []
     if lifecycle_status:
-        statement = statement.where(Market.lifecycle_status == lifecycle_status)
-    result = await session.scalars(statement.order_by(Market.created_at.desc()))
-    all_items = [await _market_item(session, market) for market in result.all()]
+        base_conditions.append(Market.lifecycle_status == lifecycle_status)
     if readiness:
-        all_items = [item for item in all_items if item.readiness.state == readiness]
-    items = all_items[offset : offset + limit]
-    return ListResponse(items=items, total=len(all_items), limit=limit, offset=offset)
+        base_conditions.append(readiness_state == readiness)
+
+    total_from_clause = Market.__table__.outerjoin(counts, counts.c.market_id == Market.id)
+    from_clause = (
+        Market.__table__
+        .outerjoin(counts, counts.c.market_id == Market.id)
+        .outerjoin(latest_invitation_subquery, latest_invitation_subquery.c.market_id == Market.id)
+        .outerjoin(latest_invitation, latest_invitation.id == latest_invitation_subquery.c.invitation_id)
+    )
+    total_statement = select(func.count()).select_from(total_from_clause)
+    statement = (
+        select(
+            Market,
+            latest_invitation,
+            func.coalesce(counts.c.member_count, 0).label("member_count"),
+            func.coalesce(counts.c.active_user_count, 0).label("active_user_count"),
+            func.coalesce(counts.c.product_count, 0).label("product_count"),
+            func.coalesce(counts.c.campaign_count, 0).label("campaign_count"),
+        )
+        .select_from(from_clause)
+        .order_by(Market.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    for condition in base_conditions:
+        total_statement = total_statement.where(condition)
+        statement = statement.where(condition)
+
+    total = await session.scalar(total_statement)
+    rows = (await session.execute(statement)).all()
+    items = [
+        _market_item_from_counts(
+            market,
+            invitation,
+            member_count=member_count,
+            active_user_count=active_user_count,
+            product_count=product_count,
+            campaign_count=campaign_count,
+        )
+        for market, invitation, member_count, active_user_count, product_count, campaign_count in rows
+    ]
+    return ListResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
 @router.get("/markets/{market_id}", response_model=PlatformMarketDetail)
@@ -459,6 +498,37 @@ async def _market_item(session: AsyncSession, market: Market) -> PlatformMarketL
     )
 
 
+def _market_item_from_counts(
+    market: Market,
+    invitation: MarketInvitation | None,
+    *,
+    member_count: int,
+    active_user_count: int,
+    product_count: int,
+    campaign_count: int,
+) -> PlatformMarketListItem:
+    readiness = _readiness_summary_from_counts(
+        market,
+        invitation,
+        active_user_count=active_user_count,
+        product_count=product_count,
+    )
+    return PlatformMarketListItem(
+        id=market.id,
+        name=market.name,
+        slug=market.slug,
+        lifecycle_status=market.lifecycle_status,
+        trial_ends_at=market.trial_ends_at,
+        onboarding_status=market.onboarding_status,
+        member_count=member_count,
+        product_count=product_count,
+        campaign_count=campaign_count,
+        readiness=readiness,
+        owner_invitation=_invitation_summary(invitation) if invitation else None,
+        created_at=market.created_at,
+    )
+
+
 async def _market_detail(session: AsyncSession, market: Market) -> PlatformMarketDetail:
     item = await _market_item(session, market)
     return PlatformMarketDetail(
@@ -494,8 +564,23 @@ async def _readiness_summary(
         select(func.count()).select_from(MarketUser).where(MarketUser.market_id == market.id, MarketUser.is_active.is_(True))
     )
     product_count = await session.scalar(select(func.count()).select_from(Product).where(Product.market_id == market.id))
+    return _readiness_summary_from_counts(
+        market,
+        invitation,
+        active_user_count=active_users or 0,
+        product_count=product_count or 0,
+    )
+
+
+def _readiness_summary_from_counts(
+    market: Market,
+    invitation: MarketInvitation | None,
+    *,
+    active_user_count: int,
+    product_count: int,
+) -> PlatformReadinessSummary:
     blockers = []
-    has_active_user = bool(active_users)
+    has_active_user = bool(active_user_count)
     has_effective_invitation = invitation is not None and _invitation_is_effective(invitation)
     setup_complete = market.onboarding_status == "completed" and bool(product_count)
     if market.lifecycle_status in {"suspended", "archived"}:
@@ -521,6 +606,89 @@ async def _readiness_summary(
         required_setup_complete=setup_complete,
         last_activity_at=last_activity_at,
     )
+
+
+def _market_counts_subquery():
+    member_counts = (
+        select(
+            MarketUser.market_id.label("market_id"),
+            func.count(MarketUser.id).label("member_count"),
+            func.sum(case((MarketUser.is_active.is_(True), 1), else_=0)).label("active_user_count"),
+        )
+        .group_by(MarketUser.market_id)
+        .subquery()
+    )
+    product_counts = (
+        select(Product.market_id.label("market_id"), func.count(Product.id).label("product_count"))
+        .group_by(Product.market_id)
+        .subquery()
+    )
+    campaign_counts = (
+        select(Campaign.market_id.label("market_id"), func.count(Campaign.id).label("campaign_count"))
+        .group_by(Campaign.market_id)
+        .subquery()
+    )
+    return (
+        select(
+            Market.id.label("market_id"),
+            func.coalesce(member_counts.c.member_count, 0).label("member_count"),
+            func.coalesce(member_counts.c.active_user_count, 0).label("active_user_count"),
+            func.coalesce(product_counts.c.product_count, 0).label("product_count"),
+            func.coalesce(campaign_counts.c.campaign_count, 0).label("campaign_count"),
+        )
+        .select_from(Market)
+        .outerjoin(member_counts, member_counts.c.market_id == Market.id)
+        .outerjoin(product_counts, product_counts.c.market_id == Market.id)
+        .outerjoin(campaign_counts, campaign_counts.c.market_id == Market.id)
+        .subquery()
+    )
+
+
+def _latest_owner_invitation_subquery():
+    ranked = (
+        select(
+            MarketInvitation.id.label("invitation_id"),
+            MarketInvitation.market_id.label("market_id"),
+            func.row_number()
+            .over(partition_by=MarketInvitation.market_id, order_by=MarketInvitation.created_at.desc())
+            .label("rank"),
+        )
+        .where(MarketInvitation.role == "market_admin")
+        .subquery()
+    )
+    latest = (
+        select(ranked.c.market_id, ranked.c.invitation_id)
+        .where(ranked.c.rank == 1)
+        .subquery()
+    )
+    return aliased(MarketInvitation), latest
+
+
+def _readiness_state_expression(counts):
+    return case(
+        (Market.lifecycle_status == "suspended", "suspended"),
+        (Market.lifecycle_status == "archived", "blocked"),
+        (func.coalesce(counts.c.active_user_count, 0) == 0, "awaiting_owner"),
+        (
+            or_(Market.onboarding_status != "completed", func.coalesce(counts.c.product_count, 0) == 0),
+            "onboarding",
+        ),
+        else_="ready",
+    )
+
+
+async def _readiness_counts(session: AsyncSession) -> dict[str, int]:
+    counts = _market_counts_subquery()
+    readiness_state = _readiness_state_expression(counts).label("readiness_state")
+    rows = (
+        await session.execute(
+            select(readiness_state, func.count())
+            .select_from(Market)
+            .outerjoin(counts, counts.c.market_id == Market.id)
+            .group_by(readiness_state)
+        )
+    ).all()
+    return {state: count for state, count in rows}
 
 
 async def _owner_invitation(session: AsyncSession, market_id: UUID) -> MarketInvitation | None:

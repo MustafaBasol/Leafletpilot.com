@@ -19,8 +19,10 @@ def can_transition_lifecycle(current: str, target: str) -> bool:
 
 
 def market_allows_mutations(market: Market | None) -> bool:
-    lifecycle_status = market.lifecycle_status or "active" if market is not None else None
-    return market is not None and market.is_active and lifecycle_status in LIFECYCLE_MUTATION_STATES
+    if market is None:
+        return False
+    lifecycle_status = market.lifecycle_status or "active"
+    return bool(market.is_active and lifecycle_status in LIFECYCLE_MUTATION_STATES)
 
 
 def inactive_market_message() -> str:

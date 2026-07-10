@@ -141,16 +141,21 @@ async def get_current_market_membership(
             break
     else:
         membership = await session.scalar(statement)
-    if membership is None or membership.market is None or not membership.market.is_active:
+    if membership is None or membership.market is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bu market için yetkiniz yok.",
         )
     lifecycle_status = membership.market.lifecycle_status or "active"
-    if lifecycle_status not in {"trial", "active"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market su anda kullanima kapali.")
     if lifecycle_status == "archived":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market arşivlenmiş.")
+    if not membership.market.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu market için yetkiniz yok.",
+        )
+    if lifecycle_status not in {"trial", "active"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market su anda kullanima kapali.")
     return membership
 
 

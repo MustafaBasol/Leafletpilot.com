@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Card, Table } from "../../components/ui/index.js";
+import { normalizeApiError } from "./platformOps.js";
 
 function formatDate(value) {
   return value ? new Date(value).toLocaleString("tr-TR") : "-";
@@ -11,7 +12,7 @@ export function PlatformOverview() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    platformApi.overview().then(setOverview).catch((err) => setError(err.message));
+    platformApi.overview().then(setOverview).catch((err) => setError(normalizeApiError(err)));
   }, []);
 
   if (!overview && !error) return <p className="inline-result">Yükleniyor...</p>;

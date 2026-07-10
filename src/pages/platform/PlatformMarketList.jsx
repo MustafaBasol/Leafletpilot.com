@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Card, Table } from "../../components/ui/index.js";
-import { labelFor, lifecycleLabels, readinessLabels } from "./platformOps.js";
+import { labelFor, lifecycleLabels, normalizeApiError, readinessLabels } from "./platformOps.js";
 
 export function PlatformMarketList() {
   const [items, setItems] = useState([]);
@@ -15,7 +15,7 @@ export function PlatformMarketList() {
     platformApi
       .listMarkets(filters)
       .then((response) => setItems(response.items || []))
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(normalizeApiError(err)))
       .finally(() => setLoading(false));
   }, [filters.lifecycle_status, filters.readiness]);
 

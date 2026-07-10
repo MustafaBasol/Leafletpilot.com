@@ -40,7 +40,11 @@ export function canProvisionSignup(signup) {
 
 export function normalizeApiError(error) {
   if (!error) return "İşlem tamamlanamadı.";
+  if (typeof error === "string" && error.trim()) return error;
   if (typeof error.message === "string" && error.message.trim()) return error.message;
+  if (typeof error.body?.detail === "string" && error.body.detail.trim()) return error.body.detail;
+  if (typeof error.body?.message === "string" && error.body.message.trim()) return error.body.message;
+  if (typeof error.message?.detail === "string" && error.message.detail.trim()) return error.message.detail;
   return "İşlem tamamlanamadı.";
 }
 

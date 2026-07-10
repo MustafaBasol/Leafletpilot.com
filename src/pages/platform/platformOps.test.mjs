@@ -30,7 +30,11 @@ test("status and readiness labels normalize operator-facing values", () => {
 
 test("error and invitation helpers avoid raw object display", () => {
   assert.equal(normalizeApiError({}), "İşlem tamamlanamadı.");
+  assert.equal(normalizeApiError("Plain error"), "Plain error");
   assert.equal(normalizeApiError({ message: "Readable error" }), "Readable error");
+  assert.equal(normalizeApiError({ body: { detail: "API detail" } }), "API detail");
+  assert.equal(normalizeApiError({ message: { detail: "Nested detail" } }), "Nested detail");
+  assert.notEqual(normalizeApiError({ message: { detail: "" } }), "[object Object]");
   assert.equal(hasEffectiveOwnerInvitation({ owner_invitation: { is_effective: true } }), true);
   assert.equal(hasEffectiveOwnerInvitation({ owner_invitation: { is_effective: false } }), false);
 });

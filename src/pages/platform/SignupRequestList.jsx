@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Card, Table } from "../../components/ui/index.js";
-import { labelFor, signupStatusLabels } from "./platformOps.js";
+import { labelFor, normalizeApiError, signupStatusLabels } from "./platformOps.js";
 
 function formatDate(value) {
   return value ? new Date(value).toLocaleString("tr-TR") : "-";
@@ -19,7 +19,7 @@ export function SignupRequestList() {
     platformApi
       .listSignupRequests(filters)
       .then((response) => setItems(response.items || []))
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(normalizeApiError(err)))
       .finally(() => setLoading(false));
   }, [filters.status, filters.search]);
 
