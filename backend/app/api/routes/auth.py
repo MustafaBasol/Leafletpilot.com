@@ -62,11 +62,12 @@ async def invitation_preview(
         await session.commit()
         return InvitationPreviewResponse(status="invalid")
     normalized = _validate_invitation_state(invitation)
-    await session.commit()
     if normalized != "valid":
+        await session.commit()
         return InvitationPreviewResponse(status=normalized)
     market = await session.get(Market, invitation.market_id)
     existing_user = await _get_user_by_email(session, invitation.email)
+    await session.commit()
     return InvitationPreviewResponse(
         status="valid",
         email=invitation.email,
@@ -91,7 +92,10 @@ async def accept_invitation(
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Bu e-posta zaten kayıtlı. Mevcut kullanıcı giriş yapmalı.",
+            detail={
+                "code": "invitation_existing_user",
+                "message": "Bu e-posta zaten kayıtlı. Mevcut kullanıcı giriş yapmalı.",
+            },
         )
 
     user = User(
@@ -112,7 +116,7 @@ async def accept_invitation_authenticated(
     payload: AcceptInvitationAuthenticatedRequest,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_catalog_session),
-) -> AuthSessionRead:
+) -> LoginResponse:
     invitation = await _get_valid_invitation(session, payload.token, accepted_user_id=current_user.id)
     if invitation.status == "accepted" and invitation.accepted_by_user_id == current_user.id:
         return await _reload_login_response(session, current_user.id)
@@ -189,23 +193,31 @@ def _validate_invitation_state(invitation: MarketInvitation) -> str:
 async def _get_valid_invitation(session: AsyncSession, token: str, accepted_user_id=None) -> MarketInvitation:
     invitation = await _get_invitation_by_token(session, token, lock=True)
     if invitation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Geçersiz davet.")
+        raise _invitation_error(status.HTTP_404_NOT_FOUND, "invitation_invalid", "Geçersiz davet.")
     state = _validate_invitation_state(invitation)
     if state == "valid":
         return invitation
     if state == "revoked":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="İptal edilmiş davet.")
+        raise _invitation_error(status.HTTP_409_CONFLICT, "invitation_revoked", "İptal edilmiş davet.")
     if state == "accepted":
         if accepted_user_id is not None and invitation.accepted_by_user_id == accepted_user_id:
             return invitation
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Daha önce kullanılmış davet.")
+        raise _invitation_error(status.HTTP_409_CONFLICT, "invitation_accepted", "Daha önce kullanılmış davet.")
     if state == "expired":
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Süresi dolmuş davet.")
+        raise _invitation_error(status.HTTP_410_GONE, "invitation_expired", "Süresi dolmuş davet.")
     if state == "failed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Davet e-postası gönderilemedi. Yeniden gönderim gerekli.")
+        raise _invitation_error(
+            status.HTTP_409_CONFLICT,
+            "invitation_delivery_failed",
+            "Davet e-postası gönderilemedi. Yeniden gönderim gerekli.",
+        )
     if state != "valid":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Davet kullanılamaz.")
+        raise _invitation_error(status.HTTP_409_CONFLICT, "invitation_unavailable", "Davet kullanılamaz.")
     return invitation
+
+
+def _invitation_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 async def _accept_invitation_for_user(
@@ -221,20 +233,20 @@ async def _accept_invitation_for_user(
     )
     if membership is None:
         market = await session.get(Market, invitation.market_id)
-        session.add(
-            MarketUser(
-                market_id=invitation.market_id,
-                user_id=user.id,
-                role=invitation.role,
-                is_active=True,
-            )
+        membership = MarketUser(
+            market_id=invitation.market_id,
+            user_id=user.id,
+            role=invitation.role,
+            is_active=True,
         )
+        session.add(membership)
+        await session.flush()
         session.add(
             ActivityLog(
                 market_id=invitation.market_id,
                 user_id=user.id,
                 entity_type="market_user",
-                entity_id=user.id,
+                entity_id=membership.id,
                 action="owner_membership_created" if invitation.role == "market_admin" else "market_membership_created",
                 description="Invitation membership created",
                 metadata_={"role": invitation.role},

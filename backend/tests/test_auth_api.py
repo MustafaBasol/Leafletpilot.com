@@ -139,9 +139,10 @@ async def test_auth_flow_and_market_membership_when_test_database_url_is_configu
 
 
 @pytest.mark.asyncio
-async def test_public_invitation_accept_creates_user_and_password_can_login() -> None:
+async def test_public_invitation_accept_creates_user_and_password_can_login(monkeypatch) -> None:
     if not settings.test_database_url:
         pytest.skip("TEST_DATABASE_URL is not configured; DB-backed auth tests skipped.")
+    monkeypatch.setattr(settings, "public_signup_throttle_limit", 20)
 
     engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -263,6 +264,10 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 json={"token": invite["invite_token"], "full_name": "Invited User", "password": invited_password},
             )
             assert reuse_response.status_code == 409
+            assert reuse_response.json()["detail"]["code"] == "invitation_accepted"
+            accepted_preview = await async_client.post("/api/auth/invitation-preview", json={"token": invite["invite_token"]})
+            assert accepted_preview.status_code == 200
+            assert accepted_preview.json()["status"] == "accepted"
 
             other_invite_response = await async_client.post(
                 "/api/market-invitations",
@@ -295,6 +300,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
 
             expired_token = "expired-" + uuid4().hex
             revoked_token = "revoked-" + uuid4().hex
+            failed_token = "failed-" + uuid4().hex
             async with session_factory() as session:
                 session.add_all(
                     [
@@ -317,9 +323,30 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                             created_by_user_id=None,
                             revoked_at=datetime.now(UTC),
                         ),
+                        MarketInvitation(
+                            market_id=market_id,
+                            email=f"failed-{market_id}@example.com",
+                            role="viewer",
+                            token_hash=hash_invitation_token(failed_token),
+                            status="failed",
+                            expires_at=datetime.now(UTC) + timedelta(days=1),
+                            created_by_user_id=None,
+                        ),
                     ]
                 )
                 await session.commit()
+            invalid_preview = await async_client.post("/api/auth/invitation-preview", json={"token": "missing-" + uuid4().hex})
+            expired_preview = await async_client.post("/api/auth/invitation-preview", json={"token": expired_token})
+            revoked_preview = await async_client.post("/api/auth/invitation-preview", json={"token": revoked_token})
+            failed_preview = await async_client.post("/api/auth/invitation-preview", json={"token": failed_token})
+            assert invalid_preview.status_code == 200
+            assert invalid_preview.json()["status"] == "invalid"
+            assert expired_preview.status_code == 200
+            assert expired_preview.json()["status"] == "expired"
+            assert revoked_preview.status_code == 200
+            assert revoked_preview.json()["status"] == "revoked"
+            assert failed_preview.status_code == 200
+            assert failed_preview.json()["status"] == "failed"
             expired = await async_client.post(
                 "/api/auth/accept-invitation",
                 json={"token": expired_token, "full_name": "Expired User", "password": invited_password},
@@ -328,8 +355,16 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 "/api/auth/accept-invitation",
                 json={"token": revoked_token, "full_name": "Revoked User", "password": invited_password},
             )
+            failed = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": failed_token, "full_name": "Failed User", "password": invited_password},
+            )
             assert expired.status_code == 410
+            assert expired.json()["detail"]["code"] == "invitation_expired"
             assert revoked.status_code == 409
+            assert revoked.json()["detail"]["code"] == "invitation_revoked"
+            assert failed.status_code == 409
+            assert failed.json()["detail"]["code"] == "invitation_delivery_failed"
 
         async with session_factory() as session:
             created_user = await session.scalar(select(User).where(User.email == invited_email))

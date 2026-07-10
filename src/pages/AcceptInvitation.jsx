@@ -133,11 +133,16 @@ function getToken(path = "") {
 function normalizeError(error, text) {
   const code = error?.body?.detail?.code;
   if (code === "invitation_email_mismatch") return text.mismatch;
+  if (code === "invitation_existing_user") return text.existing;
+  if (code === "invitation_invalid") return text.invalid;
+  if (code === "invitation_expired") return text.expired;
+  if (code === "invitation_revoked") return text.revoked;
+  if (code === "invitation_accepted") return text.accepted;
+  if (code === "invitation_delivery_failed") return text.failed;
+  if (code === "invitation_unavailable") return text.invalid;
   const detail = error?.body?.detail;
-  if (typeof detail === "string") {
-    if (detail.includes("Süresi")) return text.expired;
-    if (detail.includes("İptal")) return text.revoked;
-    if (detail.includes("kullanılmış")) return text.accepted;
+  if (typeof detail === "object" && typeof detail?.message === "string") {
+    return detail.message;
   }
   return typeof error?.message === "string" ? error.message : text.server;
 }

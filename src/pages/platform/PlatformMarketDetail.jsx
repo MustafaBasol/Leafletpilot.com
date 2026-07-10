@@ -58,9 +58,11 @@ export function PlatformMarketDetail({ id }) {
     setError("");
     try {
       const body = { email: ownerEmail || null };
-      operation === "create"
-        ? await platformApi.createOwnerInvitation(id, body)
-        : await platformApi.rotateOwnerInvitation(id, body);
+      if (operation === "create") {
+        await platformApi.createOwnerInvitation(id, body);
+      } else {
+        await platformApi.rotateOwnerInvitation(id, body);
+      }
       await load();
     } catch (err) {
       setError(normalizeApiError(err));
