@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "validate": "node scripts/validate.mjs",
+    "test:platform": "node --test src/pages/platform/platformOps.test.mjs",
     "smoke": "node scripts/smoke-vite.mjs"
   },
   "dependencies": {

@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
 from app.api.deps import get_catalog_session
@@ -874,7 +875,7 @@ async def test_telegram_client_redacts_token_from_api_errors() -> None:
 async def _install_telegram_test_app(monkeypatch):
     monkeypatch.setattr(settings, "telegram_bot_enabled", True)
     monkeypatch.setattr(settings, "telegram_webhook_secret", "s" * 40)
-    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True, poolclass=NullPool)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)

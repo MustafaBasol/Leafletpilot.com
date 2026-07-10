@@ -36,6 +36,7 @@ class SignupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     consent_accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     consent_accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    review_notes: Mapped[str | None] = mapped_column(Text)
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     provisioned_market_id: Mapped[UUID | None] = mapped_column(ForeignKey("markets.id"))
     reviewed_by_platform_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("platform_admins.id"))
