@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Button, Card } from "../../components/ui/index.js";
+import { statusLabel, t } from "./platformI18n.js";
 
 export function SignupRequestDetail({ id }) {
   const [item, setItem] = useState(null);
@@ -59,7 +60,7 @@ export function SignupRequestDetail({ id }) {
     if (inviteUrl) await navigator.clipboard.writeText(inviteUrl);
   }
 
-  if (!item) return <p className="inline-result">Yükleniyor...</p>;
+  if (!item) return <p className="inline-result">{t("loading")}</p>;
 
   return (
     <>
@@ -68,28 +69,28 @@ export function SignupRequestDetail({ id }) {
           <h2>{item.market_name}</h2>
           <p>{item.contact_name} · {item.email}</p>
         </div>
-        <Badge>{item.status}</Badge>
+        <Badge>{statusLabel(item.status)}</Badge>
       </section>
       {error ? <p className="form-error">{error}</p> : null}
       <section className="dashboard-grid">
-        <Card title="Başvuru" className="span-6">
+        <Card title={t("signupRequests")} className="span-6">
           <dl className="detail-list">
-            <div><dt>Telefon</dt><dd>{item.phone || "-"}</dd></div>
-            <div><dt>Konum</dt><dd>{[item.city, item.country_code].filter(Boolean).join(", ")}</dd></div>
-            <div><dt>Dil</dt><dd>{item.preferred_language}</dd></div>
-            <div><dt>Aylık kampanya</dt><dd>{item.expected_campaigns_per_month ?? "-"}</dd></div>
-            <div><dt>Not</dt><dd>{item.notes || "-"}</dd></div>
+            <div><dt>{t("phone")}</dt><dd>{item.phone || "-"}</dd></div>
+            <div><dt>{t("location")}</dt><dd>{[item.city, item.country_code].filter(Boolean).join(", ")}</dd></div>
+            <div><dt>{t("language")}</dt><dd>{item.preferred_language}</dd></div>
+            <div><dt>{t("monthlyCampaigns")}</dt><dd>{item.expected_campaigns_per_month ?? "-"}</dd></div>
+            <div><dt>{t("notes")}</dt><dd>{item.notes || "-"}</dd></div>
           </dl>
           <div className="page-actions">
-            <Button onClick={markReviewing}>İncelemeye Al</Button>
+            <Button onClick={markReviewing}>{t("review")}</Button>
           </div>
         </Card>
-        <Card title="Ret" className="span-6">
+        <Card title={t("reject")} className="span-6">
           <label className="settings-form">
-            Ret nedeni
+            {t("rejectionReason")}
             <textarea rows="4" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} />
           </label>
-          <Button variant="danger" onClick={reject}>Reddet</Button>
+          <Button variant="danger" onClick={reject}>{t("reject")}</Button>
         </Card>
         <Card title="Market Provision" className="span-8">
           <p className="inline-result inline-result-warning">

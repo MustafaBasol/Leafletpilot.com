@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Card, Table } from "../../components/ui/index.js";
+import { statusLabel, t } from "./platformI18n.js";
+
+const statusOptions = ["pending", "reviewing", "rejected", "provisioned"];
 
 export function SignupRequestList() {
   const [items, setItems] = useState([]);
@@ -18,31 +21,30 @@ export function SignupRequestList() {
     <>
       <section className="page-heading">
         <div>
-          <h2>Başvurular</h2>
-          <p>Ücretsiz deneme başvurularını inceleyin ve uygun olanları markete dönüştürün.</p>
+          <h2>{t("signupRequests")}</h2>
+          <p>{t("signupOverview")}</p>
         </div>
       </section>
       <div className="filter-bar">
-        <input placeholder="Ara" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+        <input placeholder={t("search")} value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
         <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-          <option value="">Tüm durumlar</option>
-          <option value="pending">Bekliyor</option>
-          <option value="reviewing">İnceleniyor</option>
-          <option value="rejected">Reddedildi</option>
-          <option value="provisioned">Provision edildi</option>
+          <option value="">{t("allStatuses")}</option>
+          {statusOptions.map((status) => (
+            <option key={status} value={status}>{statusLabel(status)}</option>
+          ))}
         </select>
       </div>
       {error ? <p className="form-error">{error}</p> : null}
-      <Card title="Başvuru Listesi">
-        <Table columns={["Market", "Yetkili", "E-posta", "Durum", "Tarih", ""]}>
+      <Card title={t("signupRequestList")}>
+        <Table columns={[t("market"), t("contactPerson"), t("email"), t("status"), t("date"), ""]}>
           {items.map((item) => (
             <tr key={item.id}>
               <td><strong>{item.market_name}</strong><small>{item.city || item.country_code}</small></td>
               <td>{item.contact_name}</td>
               <td>{item.email}</td>
-              <td><Badge>{item.status}</Badge></td>
+              <td><Badge>{statusLabel(item.status)}</Badge></td>
               <td>{new Date(item.created_at).toLocaleString("tr-TR")}</td>
-              <td><a className="table-action" href={`#/platform/signup-requests/${item.id}`}>Aç</a></td>
+              <td><a className="table-action" href={`#/platform/signup-requests/${item.id}`}>{t("open")}</a></td>
             </tr>
           ))}
         </Table>
