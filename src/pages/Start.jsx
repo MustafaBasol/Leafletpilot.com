@@ -25,6 +25,7 @@ export function Start() {
 
   async function submit(event) {
     event.preventDefault();
+    if (state.loading) return;
     setState({ loading: true, success: "", error: "" });
     try {
       const payload = {
@@ -112,8 +113,13 @@ export function Start() {
           </label>
           {state.error ? <p className="inline-result inline-result-warning span-2">{state.error}</p> : null}
           {state.success ? <p className="inline-result span-2">{state.success}</p> : null}
-          <button className="landing-btn landing-btn-primary landing-btn-lg span-2" type="submit" disabled={state.loading}>
-            {state.loading ? "Gönderiliyor..." : "Başvuru Gönder"}
+          <button
+            className="landing-btn landing-btn-primary landing-btn-lg public-submit-button span-2"
+            type="submit"
+            disabled={state.loading}
+            aria-busy={state.loading}
+          >
+            {state.loading ? "Gönderiliyor..." : "Başvuruyu Gönder"}
           </button>
         </form>
       </section>

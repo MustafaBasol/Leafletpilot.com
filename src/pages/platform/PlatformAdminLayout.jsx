@@ -1,4 +1,5 @@
 import { getStoredPlatformAdmin } from "../../api/platformSession.js";
+import { t } from "./platformI18n.js";
 
 export function PlatformAdminLayout({ children, onLogout }) {
   const admin = getStoredPlatformAdmin();
@@ -13,11 +14,11 @@ export function PlatformAdminLayout({ children, onLogout }) {
           </span>
         </a>
         <nav>
-          <a href="#/platform">Genel Bakış</a>
-          <a href="#/platform/signup-requests">Başvurular</a>
-          <a href="#/platform/markets">Marketler</a>
+          <a href="#/platform">{t("overview")}</a>
+          <a href="#/platform/signup-requests">{t("signupRequests")}</a>
+          <a href="#/platform/markets">{t("markets")}</a>
         </nav>
-        <button className="sidebar-logout" onClick={onLogout}>Çıkış</button>
+        <button className="sidebar-logout" onClick={onLogout}>{t("logout")}</button>
       </aside>
       <main className="platform-main">{children}</main>
     </div>
