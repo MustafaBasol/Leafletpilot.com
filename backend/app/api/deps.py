@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,26 @@ async def _no_session_dependency() -> None:
     return None
 
 
-DeferredSession = Annotated[AsyncSession | None, Depends(_no_session_dependency)]
+OptionalSession = Annotated[AsyncSession | None, Depends(_no_session_dependency)]
+
+
+class DeferredCatalogSession:
+    def __init__(self, session_dependency):
+        self._session_dependency = session_dependency
+        self._session_iterator = None
+        self._session: AsyncSession | None = None
+
+    async def get(self) -> AsyncSession:
+        if self._session is None:
+            self._session_iterator = self._session_dependency()
+            self._session = await anext(self._session_iterator)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session_iterator is not None:
+            await self._session_iterator.aclose()
+            self._session_iterator = None
+            self._session = None
 
 
 async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
@@ -36,9 +55,19 @@ async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
         ) from exc
 
 
+async def get_deferred_catalog_session(request: Request) -> AsyncGenerator[DeferredCatalogSession, None]:
+    session_dependency = request.app.dependency_overrides.get(get_catalog_session, get_catalog_session)
+    deferred_session = DeferredCatalogSession(session_dependency)
+    try:
+        yield deferred_session
+    finally:
+        await deferred_session.close()
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: DeferredSession = None,
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
+    session: OptionalSession = None,
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -62,20 +91,12 @@ async def get_current_user(
             detail="Geçersiz oturum.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    if session is None:
-        async for managed_session in get_catalog_session():
-            user = await managed_session.scalar(
-                select(User)
-                .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
-                .where(User.id == user_uuid, User.is_active.is_(True))
-            )
-            break
-    else:
-        user = await session.scalar(
-            select(User)
-            .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
-            .where(User.id == user_uuid, User.is_active.is_(True))
-        )
+    active_session = session if session is not None else await deferred_session.get()
+    user = await active_session.scalar(
+        select(User)
+        .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
+        .where(User.id == user_uuid, User.is_active.is_(True))
+    )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -87,7 +108,8 @@ async def get_current_user(
 
 async def get_current_platform_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: DeferredSession = None,
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
+    session: OptionalSession = None,
 ) -> PlatformAdmin:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -103,14 +125,10 @@ async def get_current_platform_admin(
         admin_uuid = UUID(admin_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.") from None
-    if session is None:
-        async for managed_session in get_catalog_session():
-            admin = await managed_session.scalar(
-                select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True))
-            )
-            break
-    else:
-        admin = await session.scalar(select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True)))
+    active_session = session if session is not None else await deferred_session.get()
+    admin = await active_session.scalar(
+        select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True))
+    )
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.")
     return admin
@@ -119,7 +137,8 @@ async def get_current_platform_admin(
 async def get_current_market_membership(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
-    session: DeferredSession = None,
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
+    session: OptionalSession = None,
 ) -> MarketUser:
     if x_market_id is None:
         raise HTTPException(
@@ -135,12 +154,8 @@ async def get_current_market_membership(
             MarketUser.is_active.is_(True),
         )
     )
-    if session is None:
-        async for managed_session in get_catalog_session():
-            membership = await managed_session.scalar(statement)
-            break
-    else:
-        membership = await session.scalar(statement)
+    active_session = session if session is not None else await deferred_session.get()
+    membership = await active_session.scalar(statement)
     if membership is None or membership.market is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -162,9 +177,10 @@ async def get_current_market_membership(
 async def require_market_member(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_catalog_session),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
+    session: OptionalSession = None,
 ) -> UUID:
-    membership = await get_current_market_membership(x_market_id, current_user, session)
+    membership = await get_current_market_membership(x_market_id, current_user, deferred_session, session)
     return membership.market_id
 
 
@@ -209,7 +225,7 @@ require_market_admin = require_market_roles(MarketRole.MARKET_ADMIN)
 
 async def get_campaign_session(
     market_id: UUID = Depends(get_required_market_id),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
 ) -> AsyncGenerator[AsyncSession, None]:
     _ = market_id
-    async for session in get_catalog_session():
-        yield session
+    yield await deferred_session.get()
