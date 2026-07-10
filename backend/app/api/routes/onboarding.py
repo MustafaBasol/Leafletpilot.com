@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import DeferredCatalogSession, get_deferred_catalog_session, require_market_admin
-from app.models import ActivityLog, Market, MarketUser, Template
+from app.models import ActivityLog, Market, MarketUser, PlatformAuditLog, Product, Template
 from app.models.base import utc_now
 from app.schemas.onboarding import (
     OnboardingBrandUpdate,
@@ -104,6 +104,26 @@ async def complete_onboarding(
             metadata_={"step": 4},
         )
     )
+    session.add(
+        PlatformAuditLog(
+            actor_platform_admin_id=None,
+            action="onboarding_completed",
+            target_type="market",
+            target_id=market.id,
+            metadata_={"step": 4},
+        )
+    )
+    product_count = await session.scalar(select(Product.id).where(Product.market_id == market.id).limit(1))
+    if product_count is not None and market.lifecycle_status in {"trial", "active"}:
+        session.add(
+            PlatformAuditLog(
+                actor_platform_admin_id=None,
+                action="market_became_ready",
+                target_type="market",
+                target_id=market.id,
+                metadata_={"source": "onboarding_completed"},
+            )
+        )
     await session.commit()
     await session.refresh(market)
     return _read(market)

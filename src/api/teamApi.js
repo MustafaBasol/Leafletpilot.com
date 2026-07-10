@@ -27,3 +27,7 @@ export function acceptInvitation(payload) {
 export function acceptInvitationAuthenticated(payload) {
   return apiClient.post("/auth/accept-invitation-authenticated", payload, { skipMarket: true });
 }
+
+export function previewInvitation(payload) {
+  return apiClient.post("/auth/invitation-preview", payload, { skipAuth: true, skipMarket: true });
+}

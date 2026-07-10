@@ -191,9 +191,10 @@ export function App() {
     return <Login onLogin={login} initialError={authError} />;
   }
 
-  if (path.startsWith("/accept-invitation")) {
+  if (path.startsWith("/accept-invitation") || path.startsWith("/invite/")) {
     return (
       <AcceptInvitation
+        path={path}
         isAuthenticated={isAuthenticated}
         onSessionUpdated={handleSessionUpdated}
       />

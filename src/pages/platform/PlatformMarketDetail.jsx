@@ -17,7 +17,6 @@ export function PlatformMarketDetail({ id }) {
   const [market, setMarket] = useState(null);
   const [error, setError] = useState("");
   const [action, setAction] = useState("");
-  const [inviteUrl, setInviteUrl] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
 
   async function load() {
@@ -56,14 +55,12 @@ export function PlatformMarketDetail({ id }) {
 
   async function runInvitation(operation) {
     setAction(operation);
-    setInviteUrl("");
     setError("");
     try {
       const body = { email: ownerEmail || null };
-      const response = operation === "create"
+      operation === "create"
         ? await platformApi.createOwnerInvitation(id, body)
         : await platformApi.rotateOwnerInvitation(id, body);
-      setInviteUrl(response.accept_url || "");
       await load();
     } catch (err) {
       setError(normalizeApiError(err));
@@ -84,10 +81,6 @@ export function PlatformMarketDetail({ id }) {
     } finally {
       setAction("");
     }
-  }
-
-  async function copyInvite() {
-    if (inviteUrl) await navigator.clipboard.writeText(inviteUrl);
   }
 
   if (!market && !error) return <p className="inline-result">{t("loading")}</p>;
@@ -145,7 +138,12 @@ export function PlatformMarketDetail({ id }) {
               <div><dt>{t("email")}</dt><dd>{market.owner_invitation?.email || market.contact_email || "-"}</dd></div>
               <div><dt>{t("status")}</dt><dd>{ownerInvitationLabel(market.owner_invitation)}</dd></div>
               <div><dt>{t("expires")}</dt><dd>{formatDate(market.owner_invitation?.expires_at)}</dd></div>
+              <div><dt>{t("lastSent")}</dt><dd>{formatDate(market.owner_invitation?.last_sent_at)}</dd></div>
+              <div><dt>{t("sendCount")}</dt><dd>{market.owner_invitation?.send_count ?? 0}</dd></div>
               <div><dt>{t("accepted")}</dt><dd>{formatDate(market.owner_invitation?.accepted_at)}</dd></div>
+              {market.owner_invitation?.last_send_error ? (
+                <div><dt>{t("sendError")}</dt><dd>{market.owner_invitation.last_send_error}</dd></div>
+              ) : null}
             </dl>
             <label className="settings-form">
               {t("ownerEmail")}
@@ -156,13 +154,7 @@ export function PlatformMarketDetail({ id }) {
               <Button disabled={Boolean(action)} onClick={() => runInvitation("rotate")}>{t("rotateInvitation")}</Button>
               <Button variant="danger" disabled={Boolean(action) || !hasEffectiveOwnerInvitation(market)} onClick={revokeInvitation}>{t("revokeInvitation")}</Button>
             </div>
-            {inviteUrl ? (
-              <div className="invite-result">
-                <strong>{t("oneTimeInviteLink")}</strong>
-                <input readOnly value={inviteUrl} />
-                <Button onClick={copyInvite}>{t("copy")}</Button>
-              </div>
-            ) : null}
+            <p className="inline-result">{t("invitationEmailNotice")}</p>
           </Card>
           <Card title={t("profile")} className="span-6">
             <dl className="detail-list">

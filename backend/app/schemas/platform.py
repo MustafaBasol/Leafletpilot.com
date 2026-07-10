@@ -129,8 +129,11 @@ class PlatformInvitationSummary(BaseModel):
     expires_at: datetime
     accepted_at: datetime | None
     revoked_at: datetime | None
+    last_sent_at: datetime | None = None
+    send_count: int = 0
     created_at: datetime
-    delivery_status: str = "manual"
+    delivery_status: str = "pending"
+    last_send_error: str | None = None
     is_effective: bool = False
 
 
@@ -146,7 +149,7 @@ class PlatformAuditLogRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    actor_platform_admin_id: UUID
+    actor_platform_admin_id: UUID | None
     action: str
     target_type: str
     target_id: UUID | None

@@ -9,6 +9,19 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class InvitationPreviewRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+class InvitationPreviewResponse(BaseModel):
+    status: str
+    email: str | None = None
+    market_name: str | None = None
+    role: str | None = None
+    expires_at: datetime | None = None
+    requires_existing_login: bool = False
+
+
 class AuthUserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

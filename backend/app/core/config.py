@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     public_signup_throttle_limit: int = Field(default=3, alias="PUBLIC_SIGNUP_THROTTLE_LIMIT")
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
+    invitation_email_delivery: str = Field(default="disabled", alias="INVITATION_EMAIL_DELIVERY")
     telegram_bot_enabled: bool = Field(default=False, alias="TELEGRAM_BOT_ENABLED")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
@@ -123,6 +124,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TELEGRAM_HTTP_MAX_ATTEMPTS must be 1. Telegram send operations are not retried automatically."
             )
+        if self.invitation_email_delivery not in {"fake", "disabled"}:
+            raise ValueError("INVITATION_EMAIL_DELIVERY must be fake or disabled.")
         if self.telegram_bot_enabled:
             self._validate_enabled_telegram_settings()
         if self.platform_admin_enabled:
