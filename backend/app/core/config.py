@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
     invitation_email_delivery: str = Field(default="disabled", alias="INVITATION_EMAIL_DELIVERY")
+    invitation_smtp_host: str = Field(default="", alias="INVITATION_SMTP_HOST")
+    invitation_smtp_port: int = Field(default=587, alias="INVITATION_SMTP_PORT")
+    invitation_smtp_username: str = Field(default="", alias="INVITATION_SMTP_USERNAME")
+    invitation_smtp_password: str = Field(default="", alias="INVITATION_SMTP_PASSWORD")
+    invitation_smtp_from_address: str = Field(default="", alias="INVITATION_SMTP_FROM_ADDRESS")
+    invitation_smtp_from_name: str = Field(default="LeafletPilot", alias="INVITATION_SMTP_FROM_NAME")
+    invitation_smtp_security: str = Field(default="starttls", alias="INVITATION_SMTP_SECURITY")
+    invitation_smtp_timeout_seconds: int = Field(default=15, alias="INVITATION_SMTP_TIMEOUT_SECONDS")
     telegram_bot_enabled: bool = Field(default=False, alias="TELEGRAM_BOT_ENABLED")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
@@ -124,8 +132,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TELEGRAM_HTTP_MAX_ATTEMPTS must be 1. Telegram send operations are not retried automatically."
             )
-        if self.invitation_email_delivery not in {"fake", "disabled"}:
-            raise ValueError("INVITATION_EMAIL_DELIVERY must be fake or disabled.")
+        if self.invitation_email_delivery not in {"fake", "disabled", "smtp"}:
+            raise ValueError("INVITATION_EMAIL_DELIVERY must be fake, disabled, or smtp.")
+        if self.invitation_smtp_security not in {"starttls", "ssl", "none"}:
+            raise ValueError("INVITATION_SMTP_SECURITY must be starttls, ssl, or none.")
+        if self.invitation_smtp_port < 1 or self.invitation_smtp_port > 65535:
+            raise ValueError("INVITATION_SMTP_PORT must be between 1 and 65535.")
+        if self.invitation_smtp_timeout_seconds < 1 or self.invitation_smtp_timeout_seconds > 60:
+            raise ValueError("INVITATION_SMTP_TIMEOUT_SECONDS must be between 1 and 60.")
+        if self.invitation_email_delivery == "fake" and self.environment.lower() not in {"development", "test", "testing"}:
+            raise ValueError("INVITATION_EMAIL_DELIVERY=fake is only allowed in development or test environments.")
         if self.telegram_bot_enabled:
             self._validate_enabled_telegram_settings()
         if self.platform_admin_enabled:
@@ -151,6 +167,8 @@ class Settings(BaseSettings):
             raise ValueError("LOCAL_STORAGE_DIR must be explicitly configured in production.")
         if "log_level" not in configured_fields or not self.log_level:
             raise ValueError("LOG_LEVEL must be explicitly configured in production.")
+        if self.invitation_email_delivery == "smtp":
+            self._validate_smtp_invitation_settings()
         if not self.frontend_base_url:
             raise ValueError("FRONTEND_BASE_URL is required when ENVIRONMENT=production.")
         if urlparse(self.frontend_base_url).scheme != "https":
@@ -188,6 +206,18 @@ class Settings(BaseSettings):
         normalized_secret = self.platform_jwt_secret.strip().lower()
         if len(self.platform_jwt_secret.strip()) < 32 or normalized_secret in EXAMPLE_JWT_SECRETS:
             raise ValueError("PLATFORM_JWT_SECRET must be a strong non-placeholder value when PLATFORM_ADMIN_ENABLED=true.")
+
+    def _validate_smtp_invitation_settings(self) -> None:
+        if not self.invitation_smtp_host.strip():
+            raise ValueError("INVITATION_SMTP_HOST is required when INVITATION_EMAIL_DELIVERY=smtp.")
+        if not self.invitation_smtp_from_address.strip():
+            raise ValueError("INVITATION_SMTP_FROM_ADDRESS is required when INVITATION_EMAIL_DELIVERY=smtp.")
+        if not self.invitation_smtp_username.strip():
+            raise ValueError("INVITATION_SMTP_USERNAME is required when INVITATION_EMAIL_DELIVERY=smtp.")
+        if not self.invitation_smtp_password.strip():
+            raise ValueError("INVITATION_SMTP_PASSWORD is required when INVITATION_EMAIL_DELIVERY=smtp.")
+        if "@" not in self.invitation_smtp_from_address:
+            raise ValueError("INVITATION_SMTP_FROM_ADDRESS must be a valid email address.")
 
 
 @lru_cache

@@ -210,7 +210,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             accepted_market = next(market for market in accept_body["markets"] if market["id"] == str(market_id))
             assert accepted_market["role"] == "market_admin"
             assert accepted_market["lifecycle_status"] == "active"
-            assert accepted_market["onboarding_status"] == "not_started"
+            assert accepted_market["onboarding_status"] == "in_progress"
             assert accepted_market["onboarding_step"] == 1
             assert accepted_market["role"] == "market_admin" and accepted_market["onboarding_status"] != "completed"
 

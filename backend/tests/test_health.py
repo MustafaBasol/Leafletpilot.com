@@ -33,6 +33,15 @@ def test_config_loads_default_values(monkeypatch) -> None:
         "TEST_DATABASE_URL",
         "LOG_LEVEL",
         "FRONTEND_BASE_URL",
+        "INVITATION_EMAIL_DELIVERY",
+        "INVITATION_SMTP_HOST",
+        "INVITATION_SMTP_PORT",
+        "INVITATION_SMTP_USERNAME",
+        "INVITATION_SMTP_PASSWORD",
+        "INVITATION_SMTP_FROM_ADDRESS",
+        "INVITATION_SMTP_FROM_NAME",
+        "INVITATION_SMTP_SECURITY",
+        "INVITATION_SMTP_TIMEOUT_SECONDS",
         "LOCAL_STORAGE_DIR",
         "TRUSTED_HOSTS",
         "SECURE_PROXY_HEADERS",
@@ -62,6 +71,8 @@ def test_config_loads_default_values(monkeypatch) -> None:
     assert settings.jwt_algorithm == "HS256"
     assert settings.access_token_expire_minutes == 480
     assert settings.frontend_base_url == "http://localhost:5173"
+    assert settings.invitation_email_delivery == "disabled"
+    assert settings.invitation_smtp_security == "starttls"
     assert settings.telegram_bot_enabled is False
     assert settings.telegram_bot_token == ""
     assert settings.telegram_http_max_attempts == 1
@@ -166,6 +177,51 @@ def test_production_accepts_strong_public_signup_throttle_secret(monkeypatch) ->
     assert settings.public_signup_throttle_secret == "t" * 48
 
 
+def test_production_rejects_fake_invitation_email_delivery(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("INVITATION_EMAIL_DELIVERY", "fake")
+
+    with pytest.raises(ValueError, match="fake is only allowed"):
+        Settings(_env_file=None)
+
+
+def test_fake_invitation_email_delivery_is_limited_to_development_or_test(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("INVITATION_EMAIL_DELIVERY", "fake")
+
+    with pytest.raises(ValueError, match="development or test"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    settings = Settings(_env_file=None)
+    assert settings.invitation_email_delivery == "fake"
+
+
+def test_production_smtp_invitation_delivery_requires_complete_config(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("INVITATION_EMAIL_DELIVERY", "smtp")
+    monkeypatch.delenv("INVITATION_SMTP_HOST", raising=False)
+
+    with pytest.raises(ValueError, match="INVITATION_SMTP_HOST"):
+        Settings(_env_file=None)
+
+
+def test_production_accepts_complete_smtp_invitation_delivery(monkeypatch) -> None:
+    _set_valid_production_env(monkeypatch)
+    monkeypatch.setenv("INVITATION_EMAIL_DELIVERY", "smtp")
+    monkeypatch.setenv("INVITATION_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("INVITATION_SMTP_PORT", "465")
+    monkeypatch.setenv("INVITATION_SMTP_USERNAME", "mailer@example.com")
+    monkeypatch.setenv("INVITATION_SMTP_PASSWORD", "smtp-password-value")
+    monkeypatch.setenv("INVITATION_SMTP_FROM_ADDRESS", "noreply@example.com")
+    monkeypatch.setenv("INVITATION_SMTP_SECURITY", "ssl")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.invitation_email_delivery == "smtp"
+    assert settings.invitation_smtp_host == "smtp.example.com"
+
+
 def test_telegram_disabled_permits_empty_config(monkeypatch) -> None:
     _set_valid_production_env(monkeypatch)
     monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "false")
@@ -254,6 +310,15 @@ def _set_valid_production_env(monkeypatch) -> None:
         "TEST_DATABASE_URL",
         "LOG_LEVEL",
         "FRONTEND_BASE_URL",
+        "INVITATION_EMAIL_DELIVERY",
+        "INVITATION_SMTP_HOST",
+        "INVITATION_SMTP_PORT",
+        "INVITATION_SMTP_USERNAME",
+        "INVITATION_SMTP_PASSWORD",
+        "INVITATION_SMTP_FROM_ADDRESS",
+        "INVITATION_SMTP_FROM_NAME",
+        "INVITATION_SMTP_SECURITY",
+        "INVITATION_SMTP_TIMEOUT_SECONDS",
         "LOCAL_STORAGE_DIR",
         "TRUSTED_HOSTS",
         "SECURE_PROXY_HEADERS",

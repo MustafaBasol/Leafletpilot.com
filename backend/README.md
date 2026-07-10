@@ -691,6 +691,15 @@ configured `DATABASE_URL`.
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Access-token lifetime in minutes. |
 | `TEST_DATABASE_URL` | unset | Optional database URL for future integration tests. |
+| `INVITATION_EMAIL_DELIVERY` | `disabled` | Owner invitation delivery mode: `disabled`, `fake`, or `smtp`. `fake` is rejected in production. |
+| `INVITATION_SMTP_HOST` | unset | SMTP host used when `INVITATION_EMAIL_DELIVERY=smtp`. |
+| `INVITATION_SMTP_PORT` | `587` | SMTP port. |
+| `INVITATION_SMTP_USERNAME` | unset | SMTP username. Required for SMTP delivery. |
+| `INVITATION_SMTP_PASSWORD` | unset | SMTP password. Required for SMTP delivery and never logged by the application. |
+| `INVITATION_SMTP_FROM_ADDRESS` | unset | Sender email address for owner invitations. |
+| `INVITATION_SMTP_FROM_NAME` | `LeafletPilot` | Sender display name for owner invitations. |
+| `INVITATION_SMTP_SECURITY` | `starttls` | SMTP transport security: `starttls`, `ssl`, or `none`. |
+| `INVITATION_SMTP_TIMEOUT_SECONDS` | `15` | SMTP connection timeout in seconds. |
 | `LOCAL_STORAGE_DIR` | `storage` | Local root for generated campaign export files. Relative paths resolve under `backend/`. |
 | `LOG_LEVEL` | `INFO` | Python logging level. |
 | `FRONTEND_BASE_URL` | unset | Required HTTPS frontend URL in production; used for operator-facing links. |

@@ -8,8 +8,7 @@ to a real server and does not include production credentials.
 - Access tokens are still stored in frontend `localStorage`.
 - Telegram bot integration is optional, disabled by default, and registered
   manually. See [Internal Telegram Bot MVP](TELEGRAM_BOT_MVP.md).
-- There are no refresh tokens, password reset, MFA, OAuth, or automated
-  invitation emails.
+- There are no refresh tokens, password reset, MFA, or OAuth.
 - Export storage is local mounted storage only, with no S3/R2 replication.
 - There is no centralized observability stack or automatic zero-downtime
   migration guarantee.
@@ -42,25 +41,35 @@ to a real server and does not include production credentials.
 8. Set `FRONTEND_BASE_URL=https://${APP_DOMAIN}`.
 9. Set `VITE_API_BASE_URL=https://${API_DOMAIN}/api`. This value is public and
    embedded into the frontend image at build time.
-10. Build images:
+10. Configure owner invitation email delivery:
+    - Keep `INVITATION_EMAIL_DELIVERY=disabled` until SMTP credentials are ready.
+    - Set `INVITATION_EMAIL_DELIVERY=smtp` for real delivery.
+    - Fill `INVITATION_SMTP_HOST`, `INVITATION_SMTP_PORT`,
+      `INVITATION_SMTP_USERNAME`, `INVITATION_SMTP_PASSWORD`,
+      `INVITATION_SMTP_FROM_ADDRESS`, `INVITATION_SMTP_FROM_NAME`,
+      `INVITATION_SMTP_SECURITY`, and `INVITATION_SMTP_TIMEOUT_SECONDS`.
+    - Use `INVITATION_SMTP_SECURITY=starttls` unless the provider explicitly
+      requires `ssl` or `none`.
+    - `INVITATION_EMAIL_DELIVERY=fake` is rejected in production.
+11. Build images:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml build
     ```
 
-11. Start PostgreSQL:
+12. Start PostgreSQL:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml up -d postgres
     ```
 
-12. Verify PostgreSQL health:
+13. Verify PostgreSQL health:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml ps postgres
     ```
 
-13. Check Alembic heads:
+14. Check Alembic heads:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml run --rm migration python -m alembic heads
@@ -68,19 +77,19 @@ to a real server and does not include production credentials.
 
     There must be exactly one head.
 
-14. Run migration:
+15. Run migration:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml run --rm migration
     ```
 
-15. Check the database revision:
+16. Check the database revision:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml run --rm migration python -m alembic current
     ```
 
-16. Create the first production admin. Prefer prompts so the password is not in
+17. Create the first production admin. Prefer prompts so the password is not in
     shell history:
 
     ```bash
@@ -91,30 +100,42 @@ to a real server and does not include production credentials.
     `ADMIN_MARKET_NAME`, and `ADMIN_PASSWORD`. Avoid passing passwords as
     command arguments.
 
-17. Start backend and frontend:
+18. Start backend and frontend:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml up -d backend frontend
     ```
 
-18. Verify liveness and readiness:
+19. Verify liveness and readiness:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml exec backend python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health').read().decode())"
     docker compose --env-file .env.production -f docker-compose.production.yml exec backend python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health/db').read().decode())"
     ```
 
-19. Open `https://${APP_DOMAIN}` and log in as the created admin.
-20. Generate a test brochure PDF and PNG.
-21. Restart the backend and verify the exported file still downloads:
+20. Open `https://${APP_DOMAIN}` and log in as the created admin.
+21. Generate a test brochure PDF and PNG.
+22. Restart the backend and verify the exported file still downloads:
 
     ```bash
     docker compose --env-file .env.production -f docker-compose.production.yml restart backend
     ```
 
-22. Configure backup cron for database and storage.
-23. Run and verify one backup.
-24. Record the active image tags and migration revision.
+23. Configure backup cron for database and storage.
+24. Run and verify one backup.
+25. Record the active image tags and migration revision.
+
+## Owner Invitation Email
+
+Owner invitation delivery is fail-closed. With
+`INVITATION_EMAIL_DELIVERY=disabled`, provisioning and resend attempts create a
+retryable failed invitation and an audit entry instead of pretending an email
+was sent. With `INVITATION_EMAIL_DELIVERY=smtp`, sent metadata is written only
+after the SMTP provider accepts the message.
+
+Do not use `fake` outside development and tests. The production configuration
+validator rejects it before startup. SMTP errors are recorded without raw
+invitation tokens or SMTP passwords.
 
 ## Traefik Example
 
