@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
@@ -17,6 +18,13 @@ from app.models import MarketUser, PlatformAdmin, User
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+async def _no_session_dependency() -> None:
+    return None
+
+
+DeferredSession = Annotated[AsyncSession | None, Depends(_no_session_dependency)]
+
+
 async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
     try:
         async for session in get_session():
@@ -30,7 +38,7 @@ async def get_catalog_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: AsyncSession = Depends(get_catalog_session),
+    session: DeferredSession = None,
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -54,11 +62,20 @@ async def get_current_user(
             detail="Geçersiz oturum.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    user = await session.scalar(
-        select(User)
-        .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
-        .where(User.id == user_uuid, User.is_active.is_(True))
-    )
+    if session is None:
+        async for managed_session in get_catalog_session():
+            user = await managed_session.scalar(
+                select(User)
+                .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
+                .where(User.id == user_uuid, User.is_active.is_(True))
+            )
+            break
+    else:
+        user = await session.scalar(
+            select(User)
+            .options(selectinload(User.market_memberships).selectinload(MarketUser.market))
+            .where(User.id == user_uuid, User.is_active.is_(True))
+        )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,7 +87,7 @@ async def get_current_user(
 
 async def get_current_platform_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: AsyncSession = Depends(get_catalog_session),
+    session: DeferredSession = None,
 ) -> PlatformAdmin:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -86,7 +103,14 @@ async def get_current_platform_admin(
         admin_uuid = UUID(admin_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.") from None
-    admin = await session.scalar(select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True)))
+    if session is None:
+        async for managed_session in get_catalog_session():
+            admin = await managed_session.scalar(
+                select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True))
+            )
+            break
+    else:
+        admin = await session.scalar(select(PlatformAdmin).where(PlatformAdmin.id == admin_uuid, PlatformAdmin.is_active.is_(True)))
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geçersiz platform oturumu.")
     return admin
@@ -95,14 +119,14 @@ async def get_current_platform_admin(
 async def get_current_market_membership(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_catalog_session),
+    session: DeferredSession = None,
 ) -> MarketUser:
     if x_market_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="X-Market-Id seçili market için gereklidir.",
         )
-    membership = await session.scalar(
+    statement = (
         select(MarketUser)
         .options(selectinload(MarketUser.market))
         .where(
@@ -111,12 +135,21 @@ async def get_current_market_membership(
             MarketUser.is_active.is_(True),
         )
     )
+    if session is None:
+        async for managed_session in get_catalog_session():
+            membership = await managed_session.scalar(statement)
+            break
+    else:
+        membership = await session.scalar(statement)
     if membership is None or membership.market is None or not membership.market.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bu market için yetkiniz yok.",
         )
-    if membership.market.lifecycle_status == "archived":
+    lifecycle_status = membership.market.lifecycle_status or "active"
+    if lifecycle_status not in {"trial", "active"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market su anda kullanima kapali.")
+    if lifecycle_status == "archived":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu market arşivlenmiş.")
     return membership
 
@@ -171,7 +204,7 @@ require_market_admin = require_market_roles(MarketRole.MARKET_ADMIN)
 
 async def get_campaign_session(
     market_id: UUID = Depends(get_required_market_id),
-    session: AsyncSession = Depends(get_catalog_session),
 ) -> AsyncGenerator[AsyncSession, None]:
     _ = market_id
-    yield session
+    async for session in get_catalog_session():
+        yield session

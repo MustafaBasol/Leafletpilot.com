@@ -104,7 +104,12 @@ def _build_session_payload(user: User) -> AuthSessionRead:
     memberships = [
         membership
         for membership in user.market_memberships
-        if membership.is_active and membership.market is not None and membership.market.is_active
+        if (
+            membership.is_active
+            and membership.market is not None
+            and membership.market.is_active
+            and membership.market.lifecycle_status in {"trial", "active"}
+        )
     ]
     markets = [
         AuthMarketRead(

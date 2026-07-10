@@ -78,6 +78,7 @@ class SignupRequestRead(BaseModel):
     notes: str | None
     consent_accepted: bool
     status: str
+    review_notes: str | None
     rejection_reason: str | None
     provisioned_market_id: UUID | None
     reviewed_by_platform_admin_id: UUID | None
@@ -88,7 +89,8 @@ class SignupRequestRead(BaseModel):
 
 
 class SignupRequestUpdate(BaseModel):
-    status: str = Field(pattern="^(reviewing|rejected)$")
+    status: str = Field(pattern="^(reviewing|approved|rejected)$")
+    review_notes: str | None = Field(default=None, max_length=2000)
     rejection_reason: str | None = Field(default=None, max_length=2000)
 
 
@@ -119,6 +121,39 @@ class ProvisionMarketResponse(BaseModel):
     already_provisioned: bool = False
 
 
+class PlatformInvitationSummary(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    status: str
+    expires_at: datetime
+    accepted_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+    delivery_status: str = "manual"
+    is_effective: bool = False
+
+
+class PlatformReadinessSummary(BaseModel):
+    state: str
+    blockers: list[str] = Field(default_factory=list)
+    has_active_market_user: bool
+    required_setup_complete: bool
+    last_activity_at: datetime | None = None
+
+
+class PlatformAuditLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    actor_platform_admin_id: UUID
+    action: str
+    target_type: str
+    target_id: UUID | None
+    created_at: datetime
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+
+
 class PlatformMarketListItem(BaseModel):
     id: UUID
     name: str
@@ -129,6 +164,8 @@ class PlatformMarketListItem(BaseModel):
     member_count: int
     product_count: int
     campaign_count: int
+    readiness: PlatformReadinessSummary
+    owner_invitation: PlatformInvitationSummary | None = None
     created_at: datetime
 
 
@@ -145,8 +182,36 @@ class PlatformMarketDetail(PlatformMarketListItem):
     secondary_color: str | None
     onboarding_step: int
     onboarding_completed_at: datetime | None
+    lifecycle_reason: str | None
+    lifecycle_updated_at: datetime | None
+    lifecycle_updated_by_platform_admin_id: UUID | None
+    recent_activity: list[PlatformAuditLogRead] = Field(default_factory=list)
 
 
 class LifecycleUpdateRequest(BaseModel):
     lifecycle_status: str = Field(pattern="^(active|suspended|archived)$")
     confirm_archive: bool = False
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class OwnerInvitationActionRequest(BaseModel):
+    email: str | None = Field(default=None, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_optional_email(cls, value: str | None) -> str | None:
+        return normalize_email(value) if value else None
+
+
+class OwnerInvitationActionResponse(BaseModel):
+    invitation: PlatformInvitationSummary
+    accept_url: str | None = None
+
+
+class PlatformOverview(BaseModel):
+    pending_signup_count: int
+    markets_awaiting_owner: int
+    markets_onboarding: int
+    ready_markets: int
+    suspended_markets: int
+    recent_activity: list[PlatformAuditLogRead]

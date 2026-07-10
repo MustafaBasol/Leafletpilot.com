@@ -5,7 +5,7 @@ export function PlatformAdminLayout({ children, onLogout }) {
   return (
     <div className="platform-shell">
       <aside className="platform-sidebar">
-        <a className="brand" href="#/platform/signup-requests">
+        <a className="brand" href="#/platform">
           <span className="brand-mark">LP</span>
           <span>
             <strong>Platform</strong>
@@ -13,6 +13,7 @@ export function PlatformAdminLayout({ children, onLogout }) {
           </span>
         </a>
         <nav>
+          <a href="#/platform">Genel Bakış</a>
           <a href="#/platform/signup-requests">Başvurular</a>
           <a href="#/platform/markets">Marketler</a>
         </nav>
