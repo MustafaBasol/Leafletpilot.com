@@ -33,7 +33,7 @@ from app.schemas.platform import (
     SignupRequestRead,
     SignupRequestUpdate,
 )
-from app.services.invitation_email import InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
+from app.services.invitation_email import InvitationDeliveryDisabled, InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -465,6 +465,31 @@ async def revoke_owner_invitation(
     return _invitation_summary(invitation)
 
 
+@router.post("/markets/{market_id}/owner-invitation/manual-link", response_model=OwnerInvitationActionResponse)
+async def create_manual_owner_invitation_link(
+    market_id: UUID,
+    admin: PlatformAdmin = Depends(get_current_platform_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> OwnerInvitationActionResponse:
+    market = await session.get(Market, market_id, with_for_update=True)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
+    invitation = await _effective_owner_invitation(session, market.id)
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No usable owner invitation found.")
+    if settings.invitation_email_delivery != "disabled" or invitation.status != "manual_delivery_required":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Manual delivery is not required for this invitation.")
+    invitation.status = "revoked"
+    invitation.revoked_at = utc_now()
+    token, replacement = _new_owner_invitation(market.id, invitation.email, admin.id, utc_now())
+    replacement.status = "manual_delivery_required"
+    session.add(replacement)
+    _add_platform_audit(session, admin, "invitation_manual_link_created", "market_invitation", replacement.id, {"market_id": str(market.id)})
+    await session.commit()
+    await session.refresh(replacement)
+    return OwnerInvitationActionResponse(invitation=_invitation_summary(replacement), accept_url=_accept_url(token))
+
+
 async def _market_slug(session: AsyncSession, value: str, *, explicit: bool) -> str:
     base = sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "market"
     slug = base[:110]
@@ -710,7 +735,7 @@ async def _effective_owner_invitation(session: AsyncSession, market_id: UUID) ->
         .where(
             MarketInvitation.market_id == market_id,
             MarketInvitation.role == "market_admin",
-            MarketInvitation.status.in_(("pending", "sent")),
+            MarketInvitation.status.in_(("pending", "sent", "manual_delivery_required")),
         )
         .order_by(MarketInvitation.created_at.desc())
         .with_for_update()
@@ -727,7 +752,7 @@ async def _active_owner_invitation(session: AsyncSession, market_id: UUID) -> Ma
         .where(
             MarketInvitation.market_id == market_id,
             MarketInvitation.role == "market_admin",
-            MarketInvitation.status.in_(("pending", "sent", "failed")),
+            MarketInvitation.status.in_(("pending", "sent", "manual_delivery_required", "failed")),
         )
         .order_by(MarketInvitation.created_at.desc())
         .with_for_update()
@@ -763,7 +788,7 @@ async def _send_owner_invitation(
     resend: bool,
 ) -> None:
     try:
-        await send_owner_invitation_email(
+        delivery_result = await send_owner_invitation_email(
             OwnerInvitationEmail(
                 to_email=invitation.email,
                 market_name=market.name,
@@ -784,6 +809,11 @@ async def _send_owner_invitation(
             invitation.id,
             {"market_id": str(market.id), "resend": resend, "error": str(exc)},
         )
+        return
+    if isinstance(delivery_result, InvitationDeliveryDisabled):
+        invitation.status = "manual_delivery_required"
+        invitation.last_send_error = None
+        _add_platform_audit(session, admin, "invitation_manual_delivery_required", "market_invitation", invitation.id, {"market_id": str(market.id), "resend": resend})
         return
     invitation.status = "sent"
     invitation.last_sent_at = utc_now()
@@ -818,7 +848,7 @@ def _invitation_summary(invitation: MarketInvitation) -> PlatformInvitationSumma
 
 
 def _invitation_is_effective(invitation: MarketInvitation) -> bool:
-    return invitation.status in {"pending", "sent"} and invitation.expires_at > datetime.now(UTC)
+    return invitation.status in {"pending", "sent", "manual_delivery_required"} and invitation.expires_at > datetime.now(UTC)
 
 
 def _invitation_delivery_status(invitation: MarketInvitation) -> str:
@@ -828,6 +858,8 @@ def _invitation_delivery_status(invitation: MarketInvitation) -> str:
         return "sent"
     if invitation.status in {"accepted", "revoked", "expired"}:
         return invitation.status
+    if invitation.status == "manual_delivery_required":
+        return "manual_delivery_required"
     return "pending"
 
 

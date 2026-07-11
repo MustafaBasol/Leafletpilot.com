@@ -43,3 +43,9 @@ class TemplateRead(BaseModel):
     config_json: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
+
+
+class TemplatePreviewResponse(BaseModel):
+    html: str
+    template_name: str
+    generated_at: datetime

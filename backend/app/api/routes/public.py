@@ -64,7 +64,7 @@ async def create_public_signup_request(
     return accepted
 
 
-async def _is_throttled(session: AsyncSession, request: Request, email: str) -> bool:
+async def _is_throttled(session: AsyncSession, request: Request, email: str, *, purpose: str = "signup") -> bool:
     now = utc_now()
     window_seconds = settings.public_signup_throttle_window_minutes * 60
     window_bucket = int(now.timestamp()) // window_seconds
@@ -74,8 +74,8 @@ async def _is_throttled(session: AsyncSession, request: Request, email: str) -> 
 
     address = _client_address(request)
     counts = [
-        await _increment_throttle(session, "ip", address, window_bucket, window_started_at),
-        await _increment_throttle(session, "email", email.strip().lower(), window_bucket, window_started_at),
+        await _increment_throttle(session, "ip", address, window_bucket, window_started_at, purpose=purpose),
+        await _increment_throttle(session, "email", email.strip().lower(), window_bucket, window_started_at, purpose=purpose),
     ]
     return any(count > settings.public_signup_throttle_limit for count in counts)
 
@@ -86,8 +86,10 @@ async def _increment_throttle(
     raw_value: str,
     window_bucket: int,
     window_started_at: datetime,
+    *,
+    purpose: str = "signup",
 ) -> int:
-    key_hash = hash_signup_throttle_key(f"{key_type}:{raw_value}")
+    key_hash = hash_signup_throttle_key(f"{purpose}:{key_type}:{raw_value}")
     statement = (
         insert(SignupThrottle)
         .values(

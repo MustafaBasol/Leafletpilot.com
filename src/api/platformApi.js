@@ -70,4 +70,5 @@ export const platformApi = {
   createOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation`, { method: "POST", body }),
   rotateOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation/rotate`, { method: "POST", body }),
   revokeOwnerInvitation: (id) => request(`/platform/markets/${id}/owner-invitation/revoke`, { method: "POST" }),
+  createManualOwnerInvitationLink: (id) => request(`/platform/markets/${id}/owner-invitation/manual-link`, { method: "POST" }),
 };

@@ -15,3 +15,7 @@ export function createTemplate(payload, marketId) {
 export function updateTemplate(templateId, payload, marketId) {
   return apiClient.patch(`/templates/${templateId}`, payload, { marketId });
 }
+
+export function getTemplatePreviewHtml(templateId, marketId) {
+  return apiClient.get(`/templates/${templateId}/preview-html`, { marketId });
+}

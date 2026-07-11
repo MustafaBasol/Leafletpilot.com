@@ -58,6 +58,10 @@ class InvitationEmailError(RuntimeError):
     pass
 
 
+class InvitationDeliveryDisabled:
+    """Marker for intentional operator-controlled delivery."""
+
+
 class SMTPClient(Protocol):
     def __enter__(self) -> "SMTPClient": ...
 
@@ -98,17 +102,17 @@ def build_owner_invitation_email(message: OwnerInvitationEmail) -> EmailMessage:
     return email
 
 
-async def send_owner_invitation_email(message: OwnerInvitationEmail) -> None:
+async def send_owner_invitation_email(message: OwnerInvitationEmail) -> InvitationDeliveryDisabled | None:
     if settings.invitation_email_delivery == "disabled":
-        raise InvitationEmailError("Invitation email delivery is not configured.")
+        return InvitationDeliveryDisabled()
     if settings.invitation_email_delivery == "fake":
         if settings.environment.lower() not in {"development", "test", "testing"}:
             raise InvitationEmailError("Fake invitation email delivery is only allowed in development or test environments.")
         logger.info("Owner invitation email accepted by fake mailer.", extra={"to_domain": _safe_domain(message.to_email)})
-        return
+        return None
     if settings.invitation_email_delivery == "smtp":
         await asyncio.to_thread(_send_smtp_owner_invitation_email, message)
-        return
+        return None
     raise InvitationEmailError("Unsupported invitation email delivery mode.")
 
 

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_catalog_session, get_current_market_id, require_market_role
 from app.core.roles import MarketRole
 from app.schemas.common import ListResponse
-from app.schemas.template import TemplateCreate, TemplateRead, TemplateUpdate
+from app.schemas.template import TemplateCreate, TemplatePreviewResponse, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -52,6 +52,16 @@ async def get_template(
     session: AsyncSession = Depends(get_catalog_session),
 ) -> TemplateRead:
     return await template_service.get_template(session, template_id, market_id)
+
+
+@router.get("/{template_id}/preview-html", response_model=TemplatePreviewResponse)
+async def preview_template(
+    template_id: UUID,
+    market_id: UUID | None = Depends(get_current_market_id),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> TemplatePreviewResponse:
+    result = await template_service.render_template_preview(session, template_id, market_id)
+    return TemplatePreviewResponse(**result)
 
 
 @router.patch("/{template_id}", response_model=TemplateRead)

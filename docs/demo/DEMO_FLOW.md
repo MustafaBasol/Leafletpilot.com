@@ -1,5 +1,14 @@
 # LeafletPilot Customer Demo Flow
 
+## Phase 20D-2 readiness notes
+
+- Platform Admin provisioning with `INVITATION_EMAIL_DELIVERY=disabled` is shown as **Manual delivery required**, never as a transport failure.
+- An authenticated Platform Admin with the existing invitation permission can use **Copy invitation link**. The action rotates the effective invitation, returns the link once, and records an audit event without the token.
+- SMTP transport/configuration errors remain **failed**. Expired, revoked, and accepted invitations never yield a usable manual link.
+- Signup, invitation preview, and invitation acceptance use independent per-IP throttle namespaces.
+- Template detail uses the real HTML renderer with deterministic products from the selected tenant; preview-only rendering does not create campaign, export, file, or history records.
+- Pilot navigation exposes Dashboard, Products, Templates, Campaigns, Preview, Export, History/download, and Account/logout. Market, Files, Reports, Settings, and Bot Connections are hidden and direct access is guarded.
+
 ## Preconditions
 
 - Use only the isolated demo tenant described in `DEMO_DATA_STRATEGY.md`.

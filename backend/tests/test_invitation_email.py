@@ -5,6 +5,7 @@ import pytest
 from app.core.config import Settings, settings
 from app.services import invitation_email
 from app.services.invitation_email import (
+    InvitationDeliveryDisabled,
     InvitationEmailError,
     OwnerInvitationEmail,
     build_owner_invitation_email,
@@ -25,11 +26,12 @@ def _message(language: str = "en", url: str = "https://app.example.com/#/invite/
 
 
 @pytest.mark.asyncio
-async def test_disabled_invitation_mail_fails_safely(monkeypatch) -> None:
+async def test_disabled_invitation_mail_requires_manual_delivery(monkeypatch) -> None:
     monkeypatch.setattr(settings, "invitation_email_delivery", "disabled")
 
-    with pytest.raises(InvitationEmailError, match="not configured"):
-        await send_owner_invitation_email(_message())
+    result = await send_owner_invitation_email(_message())
+
+    assert isinstance(result, InvitationDeliveryDisabled)
 
 
 @pytest.mark.asyncio

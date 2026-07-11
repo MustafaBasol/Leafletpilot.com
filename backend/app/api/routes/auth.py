@@ -54,7 +54,7 @@ async def invitation_preview(
     request: Request,
     session: AsyncSession = Depends(get_catalog_session),
 ) -> InvitationPreviewResponse:
-    if await _is_throttled(session, request, payload.token[-16:]):
+    if await _is_throttled(session, request, payload.token[-16:], purpose="invitation_preview"):
         await session.commit()
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many invitation attempts.")
     invitation = await _get_invitation_by_token(session, payload.token, lock=False)
@@ -84,7 +84,7 @@ async def accept_invitation(
     request: Request,
     session: AsyncSession = Depends(get_catalog_session),
 ) -> LoginResponse:
-    if await _is_throttled(session, request, payload.token[-16:]):
+    if await _is_throttled(session, request, payload.token[-16:], purpose="invitation_accept"):
         await session.commit()
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many invitation attempts.")
     invitation = await _get_valid_invitation(session, payload.token)
@@ -185,7 +185,7 @@ def _validate_invitation_state(invitation: MarketInvitation) -> str:
         return "expired"
     if invitation.status == "failed":
         return "failed"
-    if invitation.status not in {"pending", "sent"}:
+    if invitation.status not in {"pending", "sent", "manual_delivery_required"}:
         return "invalid"
     return "valid"
 
