@@ -104,6 +104,8 @@ async def test_demo_tenant_postgres_idempotency_isolation_and_chromium_export_wh
             assert reseeded["products"] == 16
             recreated_brands = list((await session.scalars(select(Brand).where(Brand.market_id == market_id, Brand.slug == "demo-generic"))).all())
             assert [(brand.name, brand.slug) for brand in recreated_brands] == [("LeafletPilot Demo", "demo-generic")]
+            reseeded_export = await demo_tenant.generate_exports(session)
+            assert reseeded_export["status"] == "completed"
             assert (await demo_tenant.verify_demo(session))["status"] == "ready"
             assert await session.scalar(select(Campaign.id).where(Campaign.id == unrelated_campaign.id)) == unrelated_campaign.id
             assert await session.scalar(select(CampaignFile.id).where(CampaignFile.id == unrelated_file.id)) == unrelated_file.id
