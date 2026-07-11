@@ -69,7 +69,7 @@ The current API records disabled owner delivery as `failed`, reports “Invitati
 
 This procedure is for local isolated use only. It is not a production demo reset.
 
-Use a unique Compose project name and a synthetic environment file stored outside the repository, for example `C:\tmp\leafletpilot-audit.env`. Required list values must follow the JSON-array form used by `.env.production.example`; the backend README's comma-separated examples do not initialize correctly with the current settings loader.
+Use a unique Compose project name and a synthetic environment file stored outside the repository, for example `C:\tmp\leafletpilot-audit.env`. The settings loader accepts either the JSON-array form used by `.env.production.example` or the comma-separated form documented in `backend/README.md`; use one form consistently and validate the resolved configuration before starting services.
 
 Validate and start the isolated database:
 
