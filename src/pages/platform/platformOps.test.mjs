@@ -7,7 +7,10 @@ import {
   canRejectSignup,
   hasEffectiveOwnerInvitation,
   labelFor,
+  needsManualInvitationDelivery,
   normalizeApiError,
+  normalizeManualLinkError,
+  ownerInvitationStatusLabel,
   readinessLabels,
   signupStatusLabels,
 } from "./platformOps.js";
@@ -36,6 +39,7 @@ const statusValues = [
   "ready",
   "blocked",
   "completed",
+  "manual_delivery_required",
 ];
 
 test("signup action availability follows Phase 20B state machine", () => {
@@ -175,4 +179,29 @@ test("platform label dictionaries have tr/en/fr/de parity", () => {
   for (const locale of platformLocales) {
     assert.deepEqual(Object.keys(platformLabels[locale]).sort(), referenceKeys, locale);
   }
+});
+
+test("manual invitation status is localized and duplicate semantic states render once", () => {
+  const invitation = { status: "manual_delivery_required", delivery_status: "manual_delivery_required", is_effective: true };
+  assert.equal(statusLabel("manual_delivery_required", "tr"), "Manuel teslim gerekli");
+  assert.equal(ownerInvitationStatusLabel(invitation), "Manuel teslim gerekli");
+  assert.equal(needsManualInvitationDelivery(invitation), true);
+  assert.equal(needsManualInvitationDelivery({ ...invitation, is_effective: false }), false);
+  assert.equal(ownerInvitationStatusLabel({ status: "sent", delivery_status: "failed" }), "Gönderildi · Başarısız");
+  assert.equal(ownerInvitationStatusLabel({ status: "future_state", delivery_status: "future_state" }), "Bilinmeyen durum");
+});
+
+test("manual invitation link errors are localized and actionable", () => {
+  assert.match(normalizeManualLinkError({ status: 404 }), /Kullanılabilir davet bulunamadı/);
+  assert.match(normalizeManualLinkError({ status: 409 }), /Manuel teslim artık gerekli değil/);
+  assert.match(normalizeManualLinkError({ status: 500 }), /Güvenli davet bağlantısı oluşturulamadı/);
+});
+
+test("manual invitation UI uses the safe API flow without persistent URL storage", async () => {
+  const source = await readFile("src/pages/platform/PlatformMarketDetail.jsx", "utf8");
+  assert.match(source, /needsManualInvitationDelivery\(market\.owner_invitation\)/);
+  assert.match(source, /createManualOwnerInvitationLink\(id\)/);
+  assert.match(source, /navigator\.clipboard\.writeText\(response\.accept_url\)/);
+  assert.match(source, /await load\(\)/);
+  assert.doesNotMatch(source, /localStorage|sessionStorage/);
 });

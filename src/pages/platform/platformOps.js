@@ -1,4 +1,4 @@
-import { statusLabel, t } from "./platformI18n.js";
+import { statusLabel, statusLabels, t } from "./platformI18n.js";
 
 export const signupStatusLabels = {
   pending: statusLabel("pending"),
@@ -48,6 +48,35 @@ export function normalizeApiError(error) {
   if (typeof error.body?.message === "string" && error.body.message.trim()) return error.body.message;
   if (typeof error.message?.detail === "string" && error.message.detail.trim()) return error.message.detail;
   return t("operationFailed");
+}
+
+export function ownerInvitationStatusLabel(invitation, locale = "tr") {
+  if (!invitation) return t("none", locale);
+  const status = invitation.status;
+  const deliveryStatus = invitation.delivery_status;
+  if (!status && !deliveryStatus) return t("unknownStatus", locale);
+  if (!deliveryStatus || status === deliveryStatus) return ownerStatusLabel(status || deliveryStatus, locale);
+  if (!status) return ownerStatusLabel(deliveryStatus, locale);
+  return `${ownerStatusLabel(status, locale)} · ${ownerStatusLabel(deliveryStatus, locale)}`;
+}
+
+function ownerStatusLabel(value, locale) {
+  return typeof value === "string" && statusLabels[locale]?.[value]
+    ? statusLabel(value, locale)
+    : t("unknownStatus", locale);
+}
+
+export function needsManualInvitationDelivery(invitation) {
+  return Boolean(
+    invitation?.is_effective &&
+      (invitation.status === "manual_delivery_required" || invitation.delivery_status === "manual_delivery_required"),
+  );
+}
+
+export function normalizeManualLinkError(error) {
+  if (error?.status === 404) return t("manualLinkNotFound");
+  if (error?.status === 409) return t("manualLinkConflict");
+  return t("manualLinkFailed");
 }
 
 export function hasEffectiveOwnerInvitation(market) {
