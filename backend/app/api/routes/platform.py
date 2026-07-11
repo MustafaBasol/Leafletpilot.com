@@ -455,6 +455,7 @@ async def revoke_owner_invitation(
 ) -> PlatformInvitationSummary:
     invitation = await _effective_owner_invitation(session, market_id)
     if invitation is None:
+        await session.commit()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No effective owner invitation found.")
     invitation.status = "revoked"
     invitation.revoked_at = utc_now()

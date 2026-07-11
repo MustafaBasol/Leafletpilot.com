@@ -198,6 +198,14 @@ async def test_public_invitation_accept_creates_user_and_password_can_login(monk
             )
             assert invite_response.status_code == 201
             invite = invite_response.json()
+            valid_preview = await async_client.post(
+                "/api/auth/invitation-preview",
+                json={"token": invite["invite_token"]},
+            )
+            assert valid_preview.status_code == 200
+            assert valid_preview.json()["status"] == "valid"
+            assert valid_preview.json()["email"] == invited_email
+            assert valid_preview.json()["requires_existing_login"] is False
 
             accept_response = await async_client.post(
                 "/api/auth/accept-invitation",
@@ -289,6 +297,13 @@ async def test_public_invitation_accept_creates_user_and_password_can_login(monk
                 json={"email": admin_email, "role": "market_admin"},
             )
             assert admin_invite_response.status_code == 201
+            existing_user_preview = await async_client.post(
+                "/api/auth/invitation-preview",
+                json={"token": admin_invite_response.json()["invite_token"]},
+            )
+            assert existing_user_preview.status_code == 200
+            assert existing_user_preview.json()["status"] == "valid"
+            assert existing_user_preview.json()["requires_existing_login"] is True
             admin_accept = await async_client.post(
                 "/api/auth/accept-invitation-authenticated",
                 headers={"Authorization": admin_headers["Authorization"]},

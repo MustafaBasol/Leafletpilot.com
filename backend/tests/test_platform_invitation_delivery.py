@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -99,6 +100,18 @@ async def test_owner_invitation_delivery_success_metadata_and_resend_rotation(mo
             assert invitations[0].token_hash != invitations[1].token_hash
             assert invitations[1].last_sent_at is not None
             assert invitations[1].send_count == 1
+
+            invitations[1].expires_at = datetime.now(UTC) - timedelta(minutes=1)
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            revoke_expired = await async_client.post(f"/api/platform/markets/{market_id}/owner-invitation/revoke")
+            assert revoke_expired.status_code == 404
+
+        async with session_factory() as session:
+            expired_invitation = await session.scalar(select(MarketInvitation).where(MarketInvitation.id == invitations[1].id))
+            assert expired_invitation is not None
+            assert expired_invitation.status == "expired"
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         app.dependency_overrides.pop(get_current_platform_admin, None)
