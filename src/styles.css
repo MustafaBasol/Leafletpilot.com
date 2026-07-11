@@ -3369,9 +3369,28 @@ tbody tr:hover {
     padding: 56px 16px;
   }
 
-  .landing-cta {
+.landing-cta {
     margin: 0 16px 56px;
     padding: 48px 24px;
     border-radius: 20px;
   }
+}
+
+.password-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.password-field input {
+  min-width: 0;
+  flex: 1;
+}
+
+.password-field button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0 12px;
+  cursor: pointer;
 }

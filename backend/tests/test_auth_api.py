@@ -139,9 +139,10 @@ async def test_auth_flow_and_market_membership_when_test_database_url_is_configu
 
 
 @pytest.mark.asyncio
-async def test_public_invitation_accept_creates_user_and_password_can_login() -> None:
+async def test_public_invitation_accept_creates_user_and_password_can_login(monkeypatch) -> None:
     if not settings.test_database_url:
         pytest.skip("TEST_DATABASE_URL is not configured; DB-backed auth tests skipped.")
+    monkeypatch.setattr(settings, "public_signup_throttle_limit", 20)
 
     engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -197,6 +198,14 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             )
             assert invite_response.status_code == 201
             invite = invite_response.json()
+            valid_preview = await async_client.post(
+                "/api/auth/invitation-preview",
+                json={"token": invite["invite_token"]},
+            )
+            assert valid_preview.status_code == 200
+            assert valid_preview.json()["status"] == "valid"
+            assert valid_preview.json()["email"] == invited_email
+            assert valid_preview.json()["requires_existing_login"] is False
 
             accept_response = await async_client.post(
                 "/api/auth/accept-invitation",
@@ -210,7 +219,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             accepted_market = next(market for market in accept_body["markets"] if market["id"] == str(market_id))
             assert accepted_market["role"] == "market_admin"
             assert accepted_market["lifecycle_status"] == "active"
-            assert accepted_market["onboarding_status"] == "not_started"
+            assert accepted_market["onboarding_status"] == "in_progress"
             assert accepted_market["onboarding_step"] == 1
             assert accepted_market["role"] == "market_admin" and accepted_market["onboarding_status"] != "completed"
 
@@ -263,6 +272,10 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 json={"token": invite["invite_token"], "full_name": "Invited User", "password": invited_password},
             )
             assert reuse_response.status_code == 409
+            assert reuse_response.json()["detail"]["code"] == "invitation_accepted"
+            accepted_preview = await async_client.post("/api/auth/invitation-preview", json={"token": invite["invite_token"]})
+            assert accepted_preview.status_code == 200
+            assert accepted_preview.json()["status"] == "accepted"
 
             other_invite_response = await async_client.post(
                 "/api/market-invitations",
@@ -284,6 +297,13 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 json={"email": admin_email, "role": "market_admin"},
             )
             assert admin_invite_response.status_code == 201
+            existing_user_preview = await async_client.post(
+                "/api/auth/invitation-preview",
+                json={"token": admin_invite_response.json()["invite_token"]},
+            )
+            assert existing_user_preview.status_code == 200
+            assert existing_user_preview.json()["status"] == "valid"
+            assert existing_user_preview.json()["requires_existing_login"] is True
             admin_accept = await async_client.post(
                 "/api/auth/accept-invitation-authenticated",
                 headers={"Authorization": admin_headers["Authorization"]},
@@ -295,6 +315,7 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
 
             expired_token = "expired-" + uuid4().hex
             revoked_token = "revoked-" + uuid4().hex
+            failed_token = "failed-" + uuid4().hex
             async with session_factory() as session:
                 session.add_all(
                     [
@@ -317,9 +338,30 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                             created_by_user_id=None,
                             revoked_at=datetime.now(UTC),
                         ),
+                        MarketInvitation(
+                            market_id=market_id,
+                            email=f"failed-{market_id}@example.com",
+                            role="viewer",
+                            token_hash=hash_invitation_token(failed_token),
+                            status="failed",
+                            expires_at=datetime.now(UTC) + timedelta(days=1),
+                            created_by_user_id=None,
+                        ),
                     ]
                 )
                 await session.commit()
+            invalid_preview = await async_client.post("/api/auth/invitation-preview", json={"token": "missing-" + uuid4().hex})
+            expired_preview = await async_client.post("/api/auth/invitation-preview", json={"token": expired_token})
+            revoked_preview = await async_client.post("/api/auth/invitation-preview", json={"token": revoked_token})
+            failed_preview = await async_client.post("/api/auth/invitation-preview", json={"token": failed_token})
+            assert invalid_preview.status_code == 200
+            assert invalid_preview.json()["status"] == "invalid"
+            assert expired_preview.status_code == 200
+            assert expired_preview.json()["status"] == "expired"
+            assert revoked_preview.status_code == 200
+            assert revoked_preview.json()["status"] == "revoked"
+            assert failed_preview.status_code == 200
+            assert failed_preview.json()["status"] == "failed"
             expired = await async_client.post(
                 "/api/auth/accept-invitation",
                 json={"token": expired_token, "full_name": "Expired User", "password": invited_password},
@@ -328,8 +370,16 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
                 "/api/auth/accept-invitation",
                 json={"token": revoked_token, "full_name": "Revoked User", "password": invited_password},
             )
+            failed = await async_client.post(
+                "/api/auth/accept-invitation",
+                json={"token": failed_token, "full_name": "Failed User", "password": invited_password},
+            )
             assert expired.status_code == 410
+            assert expired.json()["detail"]["code"] == "invitation_expired"
             assert revoked.status_code == 409
+            assert revoked.json()["detail"]["code"] == "invitation_revoked"
+            assert failed.status_code == 409
+            assert failed.json()["detail"]["code"] == "invitation_delivery_failed"
 
         async with session_factory() as session:
             created_user = await session.scalar(select(User).where(User.email == invited_email))
@@ -346,6 +396,39 @@ async def test_public_invitation_accept_creates_user_and_password_can_login() ->
             assert accepted_invitation is not None
             assert accepted_invitation.status == "accepted"
             assert accepted_invitation.accepted_by_user_id == created_user.id
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_invitation_preview_throttles_repeated_token_attempts(monkeypatch) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed auth tests skipped.")
+    monkeypatch.setattr(settings, "public_signup_throttle_limit", 1)
+    monkeypatch.setattr(settings, "public_signup_throttle_window_minutes", 60)
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            payload = {"token": "missing-preview-token-" + uuid4().hex}
+            first = await async_client.post("/api/auth/invitation-preview", json=payload)
+            second = await async_client.post("/api/auth/invitation-preview", json=payload)
+
+            assert first.status_code == 200
+            assert first.json()["status"] == "invalid"
+            assert second.status_code == 429
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
+INVITATION_STATUSES = ("pending", "sent", "accepted", "revoked", "expired", "failed")
 
 
 class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -27,7 +27,7 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_market_invitations_role",
         ),
         CheckConstraint(
-            "status in ('pending', 'accepted', 'revoked', 'expired')",
+            "status in ('pending', 'sent', 'accepted', 'revoked', 'expired', 'failed')",
             name="ck_market_invitations_status",
         ),
         Index(
@@ -35,7 +35,7 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "market_id",
             "email",
             unique=True,
-            postgresql_where=text("status = 'pending'"),
+            postgresql_where=text("status in ('pending', 'sent', 'failed')"),
         ),
         Index("ix_market_invitations_market_id", "market_id"),
         Index("ix_market_invitations_token_hash", "token_hash"),
@@ -54,6 +54,9 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     accepted_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    send_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_send_error: Mapped[str | None] = mapped_column(String(1000))
 
     market: Mapped[Market] = relationship()
     created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_user_id])

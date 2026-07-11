@@ -33,6 +33,7 @@ from app.schemas.platform import (
     SignupRequestRead,
     SignupRequestUpdate,
 )
+from app.services.invitation_email import InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -250,6 +251,8 @@ async def provision_signup_request(
 
     token, invitation = _new_owner_invitation(market.id, signup_request.email, admin.id, now)
     session.add(invitation)
+    await session.flush()
+    await _send_owner_invitation(session, admin, market, invitation, token, resend=False)
 
     signup_request.status = "provisioned"
     signup_request.provisioned_market_id = market.id
@@ -265,13 +268,12 @@ async def provision_signup_request(
         signup_request.id,
         {"market_id": str(market.id), "signup_request_id": str(signup_request.id)},
     )
-    _add_platform_audit(session, admin, "owner_invitation_created", "market_invitation", invitation.id, {"market_id": str(market.id)})
+    _add_platform_audit(session, admin, "invitation_created", "market_invitation", invitation.id, {"market_id": str(market.id)})
     await session.commit()
     await session.refresh(signup_request)
     return ProvisionMarketResponse(
         signup_request=SignupRequestRead.model_validate(signup_request),
         market_id=market.id,
-        accept_url=_accept_url(token),
     )
 
 
@@ -400,9 +402,9 @@ async def create_owner_invitation(
     market = await session.get(Market, market_id, with_for_update=True)
     if market is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
-    pending = await _effective_owner_invitation(session, market.id)
+    pending = await _active_owner_invitation(session, market.id)
     if pending is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An effective owner invitation already exists.")
+        return OwnerInvitationActionResponse(invitation=_invitation_summary(pending))
     email = payload.email or market.contact_email
     if not email:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Owner email is required.")
@@ -410,10 +412,11 @@ async def create_owner_invitation(
     token, invitation = _new_owner_invitation(market.id, email, admin.id, now)
     session.add(invitation)
     await session.flush()
-    _add_platform_audit(session, admin, "owner_invitation_created", "market_invitation", invitation.id, {"market_id": str(market.id)})
+    await _send_owner_invitation(session, admin, market, invitation, token, resend=False)
+    _add_platform_audit(session, admin, "invitation_created", "market_invitation", invitation.id, {"market_id": str(market.id)})
     await session.commit()
     await session.refresh(invitation)
-    return OwnerInvitationActionResponse(invitation=_invitation_summary(invitation), accept_url=_accept_url(token))
+    return OwnerInvitationActionResponse(invitation=_invitation_summary(invitation))
 
 
 @router.post("/markets/{market_id}/owner-invitation/rotate", response_model=OwnerInvitationActionResponse)
@@ -426,7 +429,7 @@ async def rotate_owner_invitation(
     market = await session.get(Market, market_id, with_for_update=True)
     if market is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
-    pending = await _effective_owner_invitation(session, market.id)
+    pending = await _active_owner_invitation(session, market.id)
     if pending is not None:
         pending.status = "revoked"
         pending.revoked_at = utc_now()
@@ -437,10 +440,11 @@ async def rotate_owner_invitation(
     token, invitation = _new_owner_invitation(market.id, email, admin.id, now)
     session.add(invitation)
     await session.flush()
-    _add_platform_audit(session, admin, "owner_invitation_rotated", "market_invitation", invitation.id, {"market_id": str(market.id)})
+    await _send_owner_invitation(session, admin, market, invitation, token, resend=True)
+    _add_platform_audit(session, admin, "invitation_resent", "market_invitation", invitation.id, {"market_id": str(market.id)})
     await session.commit()
     await session.refresh(invitation)
-    return OwnerInvitationActionResponse(invitation=_invitation_summary(invitation), accept_url=_accept_url(token))
+    return OwnerInvitationActionResponse(invitation=_invitation_summary(invitation))
 
 
 @router.post("/markets/{market_id}/owner-invitation/revoke", response_model=PlatformInvitationSummary)
@@ -451,10 +455,11 @@ async def revoke_owner_invitation(
 ) -> PlatformInvitationSummary:
     invitation = await _effective_owner_invitation(session, market_id)
     if invitation is None:
+        await session.commit()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No effective owner invitation found.")
     invitation.status = "revoked"
     invitation.revoked_at = utc_now()
-    _add_platform_audit(session, admin, "owner_invitation_revoked", "market_invitation", invitation.id, {"market_id": str(market_id)})
+    _add_platform_audit(session, admin, "invitation_revoked", "market_invitation", invitation.id, {"market_id": str(market_id)})
     await session.commit()
     await session.refresh(invitation)
     return _invitation_summary(invitation)
@@ -705,7 +710,24 @@ async def _effective_owner_invitation(session: AsyncSession, market_id: UUID) ->
         .where(
             MarketInvitation.market_id == market_id,
             MarketInvitation.role == "market_admin",
-            MarketInvitation.status == "pending",
+            MarketInvitation.status.in_(("pending", "sent")),
+        )
+        .order_by(MarketInvitation.created_at.desc())
+        .with_for_update()
+    )
+    if invitation is not None and invitation.expires_at <= datetime.now(UTC):
+        invitation.status = "expired"
+        return None
+    return invitation
+
+
+async def _active_owner_invitation(session: AsyncSession, market_id: UUID) -> MarketInvitation | None:
+    invitation = await session.scalar(
+        select(MarketInvitation)
+        .where(
+            MarketInvitation.market_id == market_id,
+            MarketInvitation.role == "market_admin",
+            MarketInvitation.status.in_(("pending", "sent", "failed")),
         )
         .order_by(MarketInvitation.created_at.desc())
         .with_for_update()
@@ -726,8 +748,55 @@ def _new_owner_invitation(market_id: UUID, email: str, admin_id: UUID, now: date
         status="pending",
         expires_at=now + timedelta(days=settings.invitation_expire_days),
         created_by_platform_admin_id=admin_id,
+        send_count=0,
     )
     return token, invitation
+
+
+async def _send_owner_invitation(
+    session: AsyncSession,
+    admin: PlatformAdmin,
+    market: Market,
+    invitation: MarketInvitation,
+    token: str,
+    *,
+    resend: bool,
+) -> None:
+    try:
+        await send_owner_invitation_email(
+            OwnerInvitationEmail(
+                to_email=invitation.email,
+                market_name=market.name,
+                role=invitation.role,
+                accept_url=_accept_url(token),
+                expires_at=invitation.expires_at,
+                language=market.language,
+            )
+        )
+    except InvitationEmailError as exc:
+        invitation.status = "failed"
+        invitation.last_send_error = str(exc)
+        _add_platform_audit(
+            session,
+            admin,
+            "invitation_send_failed",
+            "market_invitation",
+            invitation.id,
+            {"market_id": str(market.id), "resend": resend, "error": str(exc)},
+        )
+        return
+    invitation.status = "sent"
+    invitation.last_sent_at = utc_now()
+    invitation.send_count = (invitation.send_count or 0) + 1
+    invitation.last_send_error = None
+    _add_platform_audit(
+        session,
+        admin,
+        "invitation_sent",
+        "market_invitation",
+        invitation.id,
+        {"market_id": str(market.id), "resend": resend},
+    )
 
 
 def _invitation_summary(invitation: MarketInvitation) -> PlatformInvitationSummary:
@@ -739,14 +808,27 @@ def _invitation_summary(invitation: MarketInvitation) -> PlatformInvitationSumma
         expires_at=invitation.expires_at,
         accepted_at=invitation.accepted_at,
         revoked_at=invitation.revoked_at,
+        last_sent_at=invitation.last_sent_at,
+        send_count=invitation.send_count or 0,
         created_at=invitation.created_at,
-        delivery_status="manual",
+        delivery_status=_invitation_delivery_status(invitation),
+        last_send_error=invitation.last_send_error,
         is_effective=_invitation_is_effective(invitation),
     )
 
 
 def _invitation_is_effective(invitation: MarketInvitation) -> bool:
-    return invitation.status == "pending" and invitation.expires_at > datetime.now(UTC)
+    return invitation.status in {"pending", "sent"} and invitation.expires_at > datetime.now(UTC)
+
+
+def _invitation_delivery_status(invitation: MarketInvitation) -> str:
+    if invitation.status == "failed":
+        return "failed"
+    if invitation.last_sent_at:
+        return "sent"
+    if invitation.status in {"accepted", "revoked", "expired"}:
+        return invitation.status
+    return "pending"
 
 
 def _accept_url(token: str) -> str:
@@ -755,7 +837,7 @@ def _accept_url(token: str) -> str:
 
 def _add_platform_audit(
     session: AsyncSession,
-    admin: PlatformAdmin,
+    admin: PlatformAdmin | None,
     action: str,
     target_type: str,
     target_id: UUID | None,
@@ -763,7 +845,7 @@ def _add_platform_audit(
 ) -> None:
     session.add(
         PlatformAuditLog(
-            actor_platform_admin_id=admin.id,
+            actor_platform_admin_id=admin.id if admin else None,
             action=action,
             target_type=target_type,
             target_id=target_id,

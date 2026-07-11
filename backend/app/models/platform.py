@@ -30,7 +30,7 @@ class PlatformAuditLog(UUIDPrimaryKeyMixin, Base):
         Index("ix_platform_audit_logs_created_at", "created_at"),
     )
 
-    actor_platform_admin_id: Mapped[UUID] = mapped_column(ForeignKey("platform_admins.id"), nullable=False)
+    actor_platform_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("platform_admins.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(120), nullable=False)
     target_type: Mapped[str] = mapped_column(String(120), nullable=False)
     target_id: Mapped[UUID | None]

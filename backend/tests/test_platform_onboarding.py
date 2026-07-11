@@ -229,6 +229,6 @@ def test_platform_invitation_summary_never_exposes_token_hash() -> None:
     )
 
     summary = _invitation_summary(invitation).model_dump()
-    assert summary["delivery_status"] == "manual"
+    assert summary["delivery_status"] == "pending"
     assert summary["is_effective"] is True
     assert "token_hash" not in summary
