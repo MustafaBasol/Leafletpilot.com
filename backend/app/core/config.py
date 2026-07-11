@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     demo_market_id: UUID | None = Field(default=None, alias="DEMO_MARKET_ID")
     demo_market_slug: str = Field(default="", alias="DEMO_MARKET_SLUG")
     demo_owner_email: str = Field(default="", alias="DEMO_OWNER_EMAIL")
+    demo_owner_initial_password: SecretStr | None = Field(default=None, alias="DEMO_OWNER_INITIAL_PASSWORD")
 
     @property
     def is_production(self) -> bool:

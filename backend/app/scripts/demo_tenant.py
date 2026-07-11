@@ -48,7 +48,6 @@ from app.schemas.export import ExportJobCreate
 
 
 DEMO_NAMESPACE = UUID("7b9d3d3a-1a6f-4f5c-a60c-20de7ed20d01")
-DEMO_OWNER_PASSWORD = "demo-only-local-password"
 DEMO_CAMPAIGN_SLUG = "haftanin-super-firsatlari"
 DEMO_CAMPAIGN_TITLE = "Haftanın Süper Fırsatları"
 DEMO_PRODUCTS = (
@@ -106,7 +105,7 @@ async def load_target(session: AsyncSession, *, allow_missing: bool = False) -> 
         )
         if membership is None or membership.role != "market_admin" or not membership.is_active:
             raise DemoOperationError("Configured demo owner is not an active market_admin membership.")
-    elif not allow_missing:
+    else:
         raise DemoOperationError("Configured demo owner does not exist.")
     return market, owner
 
@@ -117,6 +116,61 @@ def asset_source(slug: str) -> Path:
 
 def asset_key(market_id: UUID, slug: str) -> str:
     return f"markets/{market_id}/demo-assets/{slug}.png"
+
+
+def safe_demo_storage_path(storage_key: str, market_id: UUID, *, exact_subtree: str | None = None) -> Path:
+    """Resolve a deletable demo path without following links outside the tenant."""
+    root = settings.local_storage_path.resolve()
+    market_root = (root / "markets" / str(market_id)).resolve()
+    candidate = storage_path_for_key(storage_key)
+    if candidate == root or candidate == market_root or root not in candidate.parents or market_root not in candidate.parents:
+        raise DemoOperationError("Refusing storage path outside the configured demo market.")
+    parts = Path(storage_key).parts
+    expected = ("markets", str(market_id))
+    if parts[:2] != expected or (exact_subtree and parts[2:2 + len(Path(exact_subtree).parts)] != Path(exact_subtree).parts):
+        raise DemoOperationError("Refusing malformed or unexpected demo storage prefix.")
+    if candidate.exists() and candidate.is_symlink():
+        raise DemoOperationError("Refusing symlink in demo storage scope.")
+    return candidate
+
+
+def _collect_demo_files(market_id: UUID, keys: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    for key in keys:
+        paths.append(safe_demo_storage_path(key, market_id))
+    demo_root = safe_demo_storage_path(f"markets/{market_id}/demo-assets/.keep", market_id, exact_subtree="demo-assets").parent
+    if demo_root.exists():
+        for path in demo_root.rglob("*"):
+            if path.is_symlink():
+                raise DemoOperationError("Refusing symlink in demo asset storage scope.")
+            if path.is_file():
+                paths.append(path)
+    campaign_id = stable_id("campaign", DEMO_CAMPAIGN_SLUG)
+    export_root = safe_demo_storage_path(
+        f"markets/{market_id}/campaigns/{campaign_id}/exports/.keep",
+        market_id,
+        exact_subtree=f"campaigns/{campaign_id}/exports",
+    ).parent
+    if export_root.exists():
+        for path in export_root.rglob("*"):
+            if path.is_symlink():
+                raise DemoOperationError("Refusing symlink in demo export storage scope.")
+            if path.is_file():
+                paths.append(path)
+    return list(dict.fromkeys(paths))
+
+
+def cleanup_demo_files(paths: list[Path]) -> None:
+    for path in paths:
+        if path.is_symlink():
+            raise DemoOperationError(f"Refusing symlink cleanup path: {path}")
+        if path.exists():
+            path.unlink()
+    for path in sorted({p.parent for p in paths}, key=lambda p: len(p.parts), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
 
 
 def copy_asset(market_id: UUID, slug: str) -> tuple[str, int]:
@@ -136,6 +190,9 @@ async def reset_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[st
     campaign_ids = list((await session.scalars(select(Campaign.id).where(Campaign.market_id == market.id, Campaign.slug == DEMO_CAMPAIGN_SLUG))).all())
     product_ids = list((await session.scalars(select(Product.id).where(Product.market_id == market.id, Product.barcode.like("LP-DEMO-%")))).all())
     counts = {"campaigns": len(campaign_ids), "products": len(product_ids)}
+    file_keys = list((await session.scalars(select(ProductImage.storage_key).join(Product).where(Product.id.in_(product_ids), ProductImage.storage_key.is_not(None)))).all())
+    file_keys += list((await session.scalars(select(CampaignFile.storage_key).where(CampaignFile.campaign_id.in_(campaign_ids), CampaignFile.storage_key.is_not(None)))).all())
+    cleanup_paths = _collect_demo_files(market.id, [str(key) for key in file_keys])
     if dry_run:
         return counts
     if campaign_ids:
@@ -150,28 +207,31 @@ async def reset_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[st
         await session.execute(delete(ProductAlias).where(ProductAlias.product_id.in_(product_ids)))
         await session.execute(delete(ProductImage).where(ProductImage.product_id.in_(product_ids)))
         await session.execute(delete(Product).where(Product.id.in_(product_ids), Product.market_id == market.id))
-    await session.execute(delete(Category).where(Category.market_id == market.id))
-    await session.execute(delete(Brand).where(Brand.market_id == market.id))
-    await session.execute(delete(Template).where(Template.market_id == market.id, Template.slug.like("demo-%")))
+    await session.execute(delete(Category).where(Category.id.in_([stable_id("category", name) for name in {row[2] for row in DEMO_PRODUCTS}])))
+    await session.execute(delete(Brand).where(Brand.id == stable_id("brand", "LeafletPilot Demo"), Brand.market_id == market.id))
+    await session.execute(delete(Template).where(Template.id.in_([stable_id("template", slug) for slug in ("demo-premium", "demo-compact")]), Template.market_id == market.id))
     await session.flush()
-    root = storage_path_for_key(f"markets/{market.id}/demo-assets")
-    if root.exists():
-        shutil.rmtree(root)
-    export_root = storage_path_for_key(f"markets/{market.id}/campaigns")
-    if export_root.exists():
-        shutil.rmtree(export_root)
     await session.commit()
+    try:
+        cleanup_demo_files(cleanup_paths)
+    except Exception as exc:
+        raise DemoOperationError(f"Database reset committed but demo storage cleanup failed: {exc}") from exc
     return counts
 
 
 async def seed_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[str, int | str]:
     market, owner = await load_target(session, allow_missing=True)
+    if market is not None and not dry_run:
+        await reset_demo(session)
+        market, owner = await load_target(session, allow_missing=True)
     if market is None:
         market = Market(id=settings.demo_market_id, name="LeafletPilot Demo Market", slug=settings.demo_market_slug, country_code="TR", city="İstanbul", currency="EUR", language="tr", timezone="Europe/Paris", is_active=True)
         session.add(market)
         await session.flush()
     if owner is None:
-        owner = User(id=stable_id("user", settings.demo_owner_email), email=settings.demo_owner_email.lower(), full_name="LeafletPilot Demo Owner", password_hash=hash_password(DEMO_OWNER_PASSWORD), is_active=True)
+        if settings.is_production or settings.demo_owner_initial_password is None:
+            raise DemoOperationError("Creating a demo owner requires DEMO_OWNER_INITIAL_PASSWORD in an isolated environment.")
+        owner = User(id=stable_id("user", settings.demo_owner_email), email=settings.demo_owner_email.lower(), full_name="LeafletPilot Demo Owner", password_hash=hash_password(settings.demo_owner_initial_password.get_secret_value()), is_active=True)
         session.add(owner)
         await session.flush()
     membership = await session.scalar(select(MarketUser).where(MarketUser.market_id == market.id, MarketUser.user_id == owner.id))
@@ -236,9 +296,19 @@ async def generate_exports(session: AsyncSession) -> dict[str, int | str]:
 async def verify_demo(session: AsyncSession) -> dict[str, int | str]:
     market, owner = await load_target(session)
     product_count = await session.scalar(select(func.count(Product.id)).where(Product.market_id == market.id, Product.barcode.like("LP-DEMO-%")))
-    campaign = await session.scalar(select(Campaign).options(selectinload(Campaign.items), selectinload(Campaign.template)).where(Campaign.market_id == market.id, Campaign.slug == DEMO_CAMPAIGN_SLUG))
-    if product_count != 16 or campaign is None or len(campaign.items) != 10 or campaign.template is None:
+    expected_category_ids = {stable_id("category", row[2]) for row in DEMO_PRODUCTS}
+    expected_product_ids = {stable_id("product", row[4]) for row in DEMO_PRODUCTS}
+    expected_template_ids = {stable_id("template", slug) for slug in ("demo-premium", "demo-compact")}
+    category_ids = set((await session.scalars(select(Category.id).where(Category.market_id == market.id, Category.id.in_(expected_category_ids)))).all())
+    brand_ids = set((await session.scalars(select(Brand.id).where(Brand.market_id == market.id, Brand.id == stable_id("brand", "LeafletPilot Demo")))).all())
+    product_ids = set((await session.scalars(select(Product.id).where(Product.market_id == market.id, Product.id.in_(expected_product_ids)))).all())
+    template_ids = set((await session.scalars(select(Template.id).where(Template.market_id == market.id, Template.id.in_(expected_template_ids)))).all())
+    membership_count = await session.scalar(select(func.count(MarketUser.id)).where(MarketUser.market_id == market.id, MarketUser.user_id == owner.id, MarketUser.role == "market_admin", MarketUser.is_active.is_(True)))
+    campaign = await session.scalar(select(Campaign).options(selectinload(Campaign.items).selectinload(CampaignItem.product), selectinload(Campaign.template)).where(Campaign.market_id == market.id, Campaign.slug == DEMO_CAMPAIGN_SLUG))
+    if product_count != 16 or product_ids != expected_product_ids or category_ids != expected_category_ids or brand_ids != {stable_id("brand", "LeafletPilot Demo")} or template_ids != expected_template_ids or membership_count != 1 or campaign is None or campaign.id != stable_id("campaign", DEMO_CAMPAIGN_SLUG) or len(campaign.items) != 10 or campaign.template is None or campaign.template.market_id != market.id:
         raise DemoOperationError("Demo verification failed: market, product, campaign, or template invariant is missing.")
+    if [item.id for item in sorted(campaign.items, key=lambda item: item.sort_order)] != [stable_id("item", str(index)) for index in range(10)] or any(item.market_id != market.id or item.product_id not in expected_product_ids or item.product is None or item.product.market_id != market.id for item in campaign.items):
+        raise DemoOperationError("Demo verification failed: campaign item ordering or tenant ownership is invalid.")
     images = list((await session.scalars(select(ProductImage).join(Product).where(Product.market_id == market.id, Product.barcode.like("LP-DEMO-%")))).all())
     for image in images:
         if not image.storage_key or "example.com" in (image.url or ""):
@@ -247,13 +317,15 @@ async def verify_demo(session: AsyncSession) -> dict[str, int | str]:
         if not path.is_file() or path.stat().st_size <= 0:
             raise DemoOperationError("Demo verification failed: local demo asset is missing.")
     jobs = list((await session.scalars(select(ExportJob).where(ExportJob.market_id == market.id, ExportJob.campaign_id == campaign.id, ExportJob.status == "completed"))).all())
-    if not jobs:
+    if len(jobs) != 1 or jobs[0].result_file_ids is None or len(jobs[0].result_file_ids) != 2:
         raise DemoOperationError("Demo verification failed: no completed export job.")
     files = list((await session.scalars(select(CampaignFile).where(CampaignFile.market_id == market.id, CampaignFile.campaign_id == campaign.id, CampaignFile.status == "ready"))).all())
     formats = {file.format for file in files}
-    if not {"pdf", "png"}.issubset(formats):
+    if formats != {"pdf", "png"} or len(files) != 2 or {str(file.id) for file in files} != set(jobs[0].result_file_ids):
         raise DemoOperationError("Demo verification failed: PDF and PNG files are required.")
     for file in files:
+        if not file.storage_key or not file.storage_key.startswith(f"markets/{market.id}/") or file.market_id != market.id or file.campaign_id != campaign.id:
+            raise DemoOperationError("Demo verification failed: export file crosses the demo tenant boundary.")
         path = storage_path_for_key(file.storage_key or "")
         validate_rendered_file(path, file.format or "")
     return {"market_id": str(market.id), "owner_email": owner.email, "products": product_count, "campaign_items": len(campaign.items), "exports": len(files), "status": "ready"}

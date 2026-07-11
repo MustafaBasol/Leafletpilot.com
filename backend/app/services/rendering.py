@@ -226,6 +226,9 @@ def validate_rendered_file(output_path: Path, file_format: str) -> None:
         raise RuntimeError(f"Export renderer did not create {file_format.upper()} file.")
     if output_path.stat().st_size <= 0:
         raise RuntimeError(f"Export renderer created an empty {file_format.upper()} file.")
+    expected = b"%PDF-" if file_format == "pdf" else b"\x89PNG\r\n\x1a\n"
+    if not output_path.read_bytes()[:8].startswith(expected):
+        raise RuntimeError(f"Export renderer created an invalid {file_format.upper()} signature.")
 
 
 def render_error_message(exc: Exception) -> str:
