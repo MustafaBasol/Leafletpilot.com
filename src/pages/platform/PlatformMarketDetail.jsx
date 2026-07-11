@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Button, Card, Table } from "../../components/ui/index.js";
-import { hasEffectiveOwnerInvitation, normalizeApiError } from "./platformOps.js";
+import {
+  hasEffectiveOwnerInvitation,
+  needsManualInvitationDelivery,
+  normalizeApiError,
+  normalizeManualLinkError,
+  ownerInvitationStatusLabel,
+} from "./platformOps.js";
 import { blockerLabel, countRows, deriveReadiness, statusLabel, t } from "./platformI18n.js";
 
 function formatDate(value) {
   return value ? new Date(value).toLocaleString("tr-TR") : "-";
-}
-
-function ownerInvitationLabel(invitation) {
-  if (!invitation) return t("none");
-  return `${statusLabel(invitation.status)} · ${statusLabel(invitation.delivery_status)}`;
 }
 
 export function PlatformMarketDetail({ id }) {
@@ -19,6 +20,7 @@ export function PlatformMarketDetail({ id }) {
   const [action, setAction] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [manualLinkMessage, setManualLinkMessage] = useState("");
+  const [manualLinkCopied, setManualLinkCopied] = useState(false);
 
   async function load() {
     setError("");
@@ -89,14 +91,16 @@ export function PlatformMarketDetail({ id }) {
   async function copyManualLink() {
     setAction("manual-link");
     setManualLinkMessage("");
+    setManualLinkCopied(false);
     setError("");
     try {
       const response = await platformApi.createManualOwnerInvitationLink(id);
       await navigator.clipboard.writeText(response.accept_url);
       setManualLinkMessage(t("manualLinkCopied"));
+      setManualLinkCopied(true);
       await load();
     } catch (err) {
-      setError(normalizeApiError(err));
+      setError(normalizeManualLinkError(err));
       setManualLinkMessage("");
     } finally {
       setAction("");
@@ -156,7 +160,7 @@ export function PlatformMarketDetail({ id }) {
           <Card title={t("ownerInvitation")} className="span-6">
             <dl className="detail-list">
               <div><dt>{t("email")}</dt><dd>{market.owner_invitation?.email || market.contact_email || "-"}</dd></div>
-              <div><dt>{t("status")}</dt><dd>{ownerInvitationLabel(market.owner_invitation)}</dd></div>
+              <div><dt>{t("status")}</dt><dd>{ownerInvitationStatusLabel(market.owner_invitation)}</dd></div>
               <div><dt>{t("expires")}</dt><dd>{formatDate(market.owner_invitation?.expires_at)}</dd></div>
               <div><dt>{t("lastSent")}</dt><dd>{formatDate(market.owner_invitation?.last_sent_at)}</dd></div>
               <div><dt>{t("sendCount")}</dt><dd>{market.owner_invitation?.send_count ?? 0}</dd></div>
@@ -173,11 +177,15 @@ export function PlatformMarketDetail({ id }) {
               <Button disabled={Boolean(action) || hasEffectiveOwnerInvitation(market)} onClick={() => runInvitation("create")}>{t("createInvitation")}</Button>
               <Button disabled={Boolean(action)} onClick={() => runInvitation("rotate")}>{t("rotateInvitation")}</Button>
               <Button variant="danger" disabled={Boolean(action) || !hasEffectiveOwnerInvitation(market)} onClick={revokeInvitation}>{t("revokeInvitation")}</Button>
-              {market.owner_invitation?.delivery_status === "manual_delivery_required" ? (
-                <Button disabled={Boolean(action)} onClick={copyManualLink}>{t("copyInvitationLink")}</Button>
+              {needsManualInvitationDelivery(market.owner_invitation) ? (
+                <Button disabled={Boolean(action)} onClick={copyManualLink}>
+                  {manualLinkCopied ? t("copyInvitationLink") : t("createInvitationLink")}
+                </Button>
               ) : null}
             </div>
-            <p className="inline-result">{t("invitationEmailNotice")}</p>
+            <p className="inline-result">
+              {needsManualInvitationDelivery(market.owner_invitation) ? t("manualDeliveryNotice") : t("invitationEmailNotice")}
+            </p>
             {manualLinkMessage ? <p className="inline-result">{manualLinkMessage}</p> : null}
           </Card>
           <Card title={t("profile")} className="span-6">
