@@ -78,3 +78,7 @@ def test_demo_storage_deletion_rejects_symlink_escape_when_supported(tmp_path, m
         pytest.skip("symlink creation is not supported by this test environment")
     with pytest.raises(DemoOperationError):
         safe_demo_storage_path(f"markets/{market_id}/demo-assets/escape/file.png", market_id)
+
+def test_empty_demo_market_id_is_normalized_to_none():
+    config = Settings(DEMO_MARKET_ID="")
+    assert config.demo_market_id is None
