@@ -18,6 +18,11 @@ const emptyProduct = {
   barcode: "",
   packageSize: "",
   packageType: "",
+  regularPrice: "",
+  promoPrice: "",
+  currency: "EUR",
+  badgeText: "",
+  sortOrder: 0,
   alternativeNamesText: "",
   status: "Aktif",
 };
@@ -124,6 +129,21 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
         </Field>
         <Field label="Paket tipi">
           <input value={form.packageType || ""} onChange={(event) => update("packageType", event.target.value)} />
+        </Field>
+        <Field label="Normal fiyat">
+          <input type="number" min="0" step="0.01" value={form.regularPrice ?? ""} onChange={(event) => update("regularPrice", event.target.value)} />
+        </Field>
+        <Field label="Promosyon fiyatı">
+          <input type="number" min="0" step="0.01" value={form.promoPrice ?? ""} onChange={(event) => update("promoPrice", event.target.value)} required />
+        </Field>
+        <Field label="Para birimi">
+          <input maxLength="3" value={form.currency || "EUR"} onChange={(event) => update("currency", event.target.value.toUpperCase())} required />
+        </Field>
+        <Field label="Kampanya rozeti">
+          <input placeholder="TOP DEAL" value={form.badgeText || ""} onChange={(event) => update("badgeText", event.target.value)} />
+        </Field>
+        <Field label="Sıralama">
+          <input type="number" min="0" step="1" value={form.sortOrder ?? 0} onChange={(event) => update("sortOrder", event.target.value)} />
         </Field>
         <Field label="Alternatif isimler">
           <input value={form.alternativeNamesText || ""} onChange={(event) => update("alternativeNamesText", event.target.value)} />

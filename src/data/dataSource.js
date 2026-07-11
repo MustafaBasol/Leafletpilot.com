@@ -214,6 +214,11 @@ function mapProduct(product, { brandsById = new Map(), categoriesById = new Map(
     barcode: product.barcode || "-",
     packageSize: product.package_size || "",
     packageType: product.package_type || "",
+    regularPrice: product.regular_price ?? "",
+    promoPrice: product.promo_price ?? "",
+    currency: product.currency || "EUR",
+    badgeText: product.badge_text || "",
+    sortOrder: product.sort_order ?? 0,
     alternativeNames: (product.aliases || []).map((alias) => (typeof alias === "string" ? alias : alias.alias)).filter(Boolean),
     alternativeNameItems: (product.aliases || []).filter((alias) => typeof alias !== "string"),
     status: product.is_active ? "Aktif" : "Pasif",
@@ -504,6 +509,11 @@ function buildProductPayload(form, { includeAliases = false } = {}) {
     category_id: cleanOptionalId(form.categoryId),
     package_size: cleanText(form.packageSize),
     package_type: cleanText(form.packageType),
+    regular_price: form.regularPrice === "" || form.regularPrice === null ? null : Number(form.regularPrice),
+    promo_price: form.promoPrice === "" || form.promoPrice === null ? null : Number(form.promoPrice),
+    currency: cleanText(form.currency || "EUR")?.toUpperCase(),
+    badge_text: cleanText(form.badgeText),
+    sort_order: Number(form.sortOrder || 0),
     is_active: form.status ? form.status === "Aktif" : undefined,
   };
 

@@ -34,6 +34,9 @@ def render_campaign_preview_html(
         cards = '<div class="empty-state">Bu kampanyada henüz ürün bulunmuyor.</div>'
 
     generated_date = _format_date(generated_at)
+    promo_title = str(config.get("promo_title") or campaign.title)
+    validity_text = str(config.get("validity_text") or generated_date)
+    market_name = campaign.market.name if campaign.market is not None else "LeafletPilot"
     footer_note = str(config.get("footer_note") or "Stoklarla sınırlıdır. Görseller temsilidir.")
 
     return f"""<!doctype html>
@@ -56,7 +59,7 @@ def render_campaign_preview_html(
       --soft-line: #f1f5f9;
     }}
     * {{ box-sizing: border-box; }}
-    body {{
+    html, body {{
       margin: 0;
       background: var(--paper);
       color: var(--ink);
@@ -81,6 +84,20 @@ def render_campaign_preview_html(
       border-radius: 8px;
       background: linear-gradient(135deg, var(--accent), var(--accent-dark));
       color: #ffffff;
+    }}
+    .market-logo {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      margin-bottom: 12px;
+      padding: 5px 10px;
+      border: 1px solid rgba(255,255,255,.55);
+      border-radius: 999px;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .06em;
+      text-transform: uppercase;
     }}
     .eyebrow {{
       margin: 0 0 8px;
@@ -173,7 +190,7 @@ def render_campaign_preview_html(
       display: flex;
       flex-wrap: nowrap;
       align-items: baseline;
-      gap: 10px;
+      gap: 6px;
       margin-top: auto;
       padding-top: 14px;
     }}
@@ -186,7 +203,7 @@ def render_campaign_preview_html(
     }}
     .old-price {{
       color: var(--muted);
-      font-size: 15px;
+      font-size: 13px;
       text-decoration: line-through;
       white-space: nowrap;
     }}
@@ -216,12 +233,13 @@ def render_campaign_preview_html(
   <main class="preview-document preview-{_attr(slug)}">
     <header class="hero">
       <div>
+        <div class="market-logo" aria-label="Market logo">{_text(market_name)}</div>
         <p class="eyebrow">{_text(template_name)}</p>
-        <h1>{_text(campaign.title)}</h1>
+        <h1>{_text(promo_title)}</h1>
       </div>
       <div class="meta">
         <div>Haftalık Fırsatlar</div>
-        <div>{_text(generated_date)}</div>
+        <div>{_text(validity_text)}</div>
       </div>
     </header>
     <div class="section-title">
@@ -295,6 +313,7 @@ def _style_config(slug: str, config: dict[str, Any]) -> dict[str, str]:
     accent_soft = str(config.get("accent_soft_color") or ("#ccfbf1" if slug == "compact-weekly" else "#fff1f2"))
     accent_fallback = "#0f766e" if slug == "compact-weekly" else "#c1121f"
     accent_dark = "#115e59" if slug == "compact-weekly" else "#003049"
+    dense = columns >= 4
     return {
         "accent": _safe_css_color(accent, accent_fallback),
         "accent_dark": accent_dark,
@@ -303,13 +322,13 @@ def _style_config(slug: str, config: dict[str, Any]) -> dict[str, str]:
         "padding": "34px" if slug == "compact-weekly" else "42px",
         "gap": "12px" if slug == "compact-weekly" else "18px",
         "card_min_height": "128px" if slug == "compact-weekly" else "235px",
-        "card_padding": "14px" if slug == "compact-weekly" else "18px",
-        "image_min_height": "62px" if slug == "compact-weekly" else "132px",
+        "card_padding": "10px" if dense else ("14px" if slug == "compact-weekly" else "18px"),
+        "image_min_height": "76px" if dense else ("62px" if slug == "compact-weekly" else "132px"),
         "title_size": "34px" if slug == "compact-weekly" else "44px",
         "section_title_size": "18px" if slug == "compact-weekly" else "22px",
-        "product_title_size": "16px" if slug == "compact-weekly" else "18px",
-        "product_title_min_height": "38px" if slug == "compact-weekly" else "44px",
-        "price_size": "24px" if slug == "compact-weekly" else "36px",
+        "product_title_size": "14px" if dense else ("16px" if slug == "compact-weekly" else "18px"),
+        "product_title_min_height": "34px" if dense else ("38px" if slug == "compact-weekly" else "44px"),
+        "price_size": "24px" if dense or slug == "compact-weekly" else "36px",
     }
 
 
