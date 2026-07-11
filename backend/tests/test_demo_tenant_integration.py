@@ -70,9 +70,6 @@ async def test_demo_tenant_postgres_idempotency_isolation_and_chromium_export_wh
             assert [(brand.name, brand.slug) for brand in demo_brands] == [("LeafletPilot Demo", "demo-generic")]
             assert all(len(brand.name) > 1 for brand in demo_brands)
             assert len({brand.slug for brand in brands}) == len(brands)
-            counts = await demo_tenant.verify_demo(session)
-            assert counts["products"] == 16
-
             second = await demo_tenant.seed_demo(session)
             assert second["products"] == 16
             assert await session.scalar(select(Brand.id).where(Brand.id == demo_tenant.stable_id("brand", "generic"))) == demo_tenant.stable_id("brand", "generic")
@@ -87,6 +84,8 @@ async def test_demo_tenant_postgres_idempotency_isolation_and_chromium_export_wh
 
             exported = await demo_tenant.generate_exports(session)
             assert exported["status"] == "completed"
+            counts = await demo_tenant.verify_demo(session)
+            assert counts["products"] == 16
             campaign = await session.scalar(select(Campaign).where(Campaign.id == demo_tenant.stable_id("campaign", demo_tenant.DEMO_CAMPAIGN_SLUG)))
             assert campaign is not None
             files = list((await session.scalars(select(CampaignFile).where(CampaignFile.campaign_id == campaign.id))).all())
