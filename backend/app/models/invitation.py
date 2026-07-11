@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-INVITATION_STATUSES = ("pending", "sent", "accepted", "revoked", "expired", "failed")
+INVITATION_STATUSES = ("pending", "sent", "manual_delivery_required", "accepted", "revoked", "expired", "failed")
 
 
 class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -27,7 +27,7 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_market_invitations_role",
         ),
         CheckConstraint(
-            "status in ('pending', 'sent', 'accepted', 'revoked', 'expired', 'failed')",
+            "status in ('pending', 'sent', 'manual_delivery_required', 'accepted', 'revoked', 'expired', 'failed')",
             name="ck_market_invitations_status",
         ),
         Index(
@@ -35,7 +35,7 @@ class MarketInvitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "market_id",
             "email",
             unique=True,
-            postgresql_where=text("status in ('pending', 'sent', 'failed')"),
+            postgresql_where=text("status in ('pending', 'sent', 'manual_delivery_required', 'failed')"),
         ),
         Index("ix_market_invitations_market_id", "market_id"),
         Index("ix_market_invitations_token_hash", "token_hash"),

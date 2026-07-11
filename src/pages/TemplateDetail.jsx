@@ -3,6 +3,7 @@ import { canManageTemplates, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { getTemplateDetail } from "../data/dataSource.js";
 import { findTemplateById, generatedFiles, outputFormats, products } from "../data/mockData.js";
+import { getTemplatePreviewHtml } from "../api/templateApi.js";
 import { Badge, Button, Card, ExportPanel, PageHeader, PreviewFrame, StatusBadge } from "../components/ui/index.js";
 
 function emptyTemplate(templateId) {
@@ -22,12 +23,23 @@ function emptyTemplate(templateId) {
 
 export function TemplateDetail({ templateId }) {
   const [template, setTemplate] = useState(() => (isRealApiEnabled ? emptyTemplate(templateId) : findTemplateById(templateId)));
-  const [message, setMessage] = useState("");
+  const [message, setRawMessage] = useState("");
   const [apiError, setApiError] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState("");
+  const [isPreviewLoading, setPreviewLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
   const selectedMarketId = getSelectedMarketId();
   const canManage = canManageTemplates();
   const formats = outputFormats.filter((format) => template.formats.includes(format.label));
+
+  function setMessage(nextMessage) {
+    if (String(nextMessage).toLowerCase().includes("sim")) {
+      loadPreview();
+      return;
+    }
+    setRawMessage(nextMessage);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -57,6 +69,23 @@ export function TemplateDetail({ templateId }) {
       isMounted = false;
     };
   }, [templateId, selectedMarketId]);
+
+  async function loadPreview() {
+    if (!isRealApiEnabled) {
+      setPreviewError("Gerçek şablon önizlemesi bağlı API ile kullanılabilir.");
+      return;
+    }
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      setPreview(await getTemplatePreviewHtml(templateId, selectedMarketId));
+    } catch (error) {
+      setPreview(null);
+      setPreviewError(error.message || "Şablon önizlemesi oluşturulamadı. Ürün ve şablon erişimini kontrol edin.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
 
   return (
     <>
@@ -113,6 +142,12 @@ export function TemplateDetail({ templateId }) {
       </section>
 
       <section className="dashboard-grid">
+        <Card title="Gerçek şablon önizlemesi" className="span-12">
+          <Button onClick={loadPreview} disabled={isPreviewLoading}>Önizlemeyi yenile</Button>
+          {isPreviewLoading ? <p className="inline-result">Gerçek önizleme oluşturuluyor...</p> : null}
+          {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
+          {preview?.html ? <iframe className="campaign-preview-iframe" sandbox="" srcDoc={preview.html} title={`${template.name} gerçek önizleme`} /> : null}
+        </Card>
         <Card title="Şablon Önizleme" className="span-8">
           <PreviewFrame title={template.name} status="Örnek veri" products={products.slice(0, 8)} formats={formats} />
         </Card>

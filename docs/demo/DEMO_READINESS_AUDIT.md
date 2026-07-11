@@ -1,5 +1,19 @@
 # LeafletPilot Demo Readiness Audit
 
+## Phase 20D-2 disposition
+
+The remaining activation blockers are addressed in the external-demo-readiness implementation:
+
+| Area | Result |
+|---|---|
+| Disabled invitation delivery | Persisted as `manual_delivery_required`; SMTP failures remain `failed`. Existing token lifecycle is unchanged. |
+| Manual invitation delivery | Platform Admin-only one-time rotation endpoint; no token in list responses, logs, or audit metadata. |
+| Public throttling | Signup, invitation preview, and invitation acceptance counters are purpose-namespaced and remain per-IP/per-email protected. |
+| Template preview | Detail preview calls the existing renderer using deterministic tenant products and local image storage. No fake export/history rows are created. |
+| Pilot surfaces | Market, Files, Reports, Settings, and Bot Connections are hidden from customer navigation and blocked by the centralized pilot capability guard. |
+
+Known limitations: the curated template pack and full settings/reporting/bot administration remain deferred; preview is HTML-only at template detail and uses the existing campaign renderer contract.
+
 ## Executive verdict
 
 **Audited baseline:** `origin/main` at `4e7c20c` (`Merge pull request #14 from MustafaBasol/feature/pilot-customer-activation`).

@@ -1,5 +1,15 @@
 # LeafletPilot Demo Remediation Roadmap
 
+## Phase 20D-2 completed scope
+
+- Delivery state correction and secure manual delivery are implemented without storing plaintext invitation tokens.
+- Throttle namespaces are separated for `signup`, `invitation_preview`, and `invitation_accept`.
+- Template detail preview is renderer-backed, deterministic, tenant-scoped, and preview-only.
+- Pilot navigation is centralized around demo-ready capabilities; placeholder surfaces are hidden and guarded.
+- Migration `20260711_0011_external_demo_readiness` updates the invitation status constraint and active-invitation index.
+
+External demo checklist: apply migrations, confirm invitation delivery mode, verify the operator can copy a manual link only from Platform Admin, render a template preview in the isolated demo tenant, confirm no export/history row is added, and rehearse the visible Dashboard → Products → Templates → Campaigns → Preview → Export → History flow.
+
 ## Prioritization baseline
 
 - **P0 (3):** deterministic demo/reset, real product assets, credible template pack/preview.

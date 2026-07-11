@@ -1,13 +1,17 @@
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Template
+from app.models import Campaign, CampaignItem, Market, Product, Template
 from app.schemas.template import TemplateCreate, TemplateUpdate
+from app.services.preview_renderer import render_campaign_preview_html
 from app.services.catalog import resolve_market_scope, slugify
 
 
@@ -62,6 +66,58 @@ async def get_template(session: AsyncSession, template_id: UUID, market_id: UUID
     if template is None:
         raise _not_found()
     return template
+
+
+async def render_template_preview(session: AsyncSession, template_id: UUID, market_id: UUID | None) -> dict[str, Any]:
+    if market_id is None:
+        raise _not_found()
+    template = await get_template(session, template_id, market_id)
+    market = await session.get(Market, market_id)
+    if market is None:
+        raise _not_found()
+    products = list(
+        (
+            await session.scalars(
+                select(Product)
+                .options(selectinload(Product.images))
+                .where(Product.market_id == market_id, Product.is_active.is_(True))
+                .order_by(Product.name)
+                .limit(8)
+            )
+        ).all()
+    )
+    generated_at = datetime.now(UTC)
+    campaign = Campaign(
+        id=uuid4(),
+        market_id=market_id,
+        title="Demo template preview",
+        language=market.language,
+        currency=market.currency,
+        items=[],
+    )
+    campaign.items = [
+        CampaignItem(
+            id=uuid4(),
+            campaign_id=campaign.id,
+            market_id=market_id,
+            product_id=product.id,
+            product=product,
+            raw_line=product.name,
+            incoming_name=product.name,
+            display_name=product.name,
+            price=Decimal("0.00"),
+            currency=market.currency,
+            sort_order=index,
+            match_status="matched",
+            created_at=generated_at,
+        )
+        for index, product in enumerate(products)
+    ]
+    return {
+        "html": render_campaign_preview_html(campaign, template, generated_at=generated_at),
+        "template_name": template.name,
+        "generated_at": generated_at,
+    }
 
 
 async def update_template(

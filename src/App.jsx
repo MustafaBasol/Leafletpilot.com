@@ -24,6 +24,7 @@ import { PlatformOverview } from "./pages/platform/PlatformOverview.jsx";
 import { SignupRequestDetail } from "./pages/platform/SignupRequestDetail.jsx";
 import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
+import { canAccessPilotPath } from "./routes/capabilities.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
 import { clearAuthSession, hasStoredAuthSession, saveAuthSession, selectedMarketNeedsOnboarding } from "./api/authSession.js";
 import { isRealApiEnabled } from "./api/config.js";
@@ -50,6 +51,7 @@ function useHashPath() {
 
 function Page({ path, sessionVersion }) {
   void sessionVersion;
+  if (!canAccessPilotPath(path)) return <Dashboard />;
   if (path === "/dashboard") return <Dashboard />;
   if (path === "/campaigns") return <Campaigns />;
   if (path === "/campaigns/new") return <NewCampaign />;

@@ -2,6 +2,7 @@ import { canManageTeam, canMutateCampaigns, getSelectedMarket, getStoredMarkets,
 import { isRealApiEnabled } from "../../api/config.js";
 import { market } from "../../data/mockData.js";
 import { navGroups } from "../../routes/routes.js";
+import { canAccessPilotPath } from "../../routes/capabilities.js";
 import { Badge, Icon } from "../ui/index.js";
 
 const roleLabels = {
@@ -28,6 +29,7 @@ export function Sidebar({ currentPath, sessionVersion }) {
     items: group.items.filter((item) => {
       if (item.adminOnly && !canManageTeam()) return false;
       if (item.mutationOnly && !canMutateCampaigns()) return false;
+      if (!canAccessPilotPath(item.path)) return false;
       return true;
     }),
   }));

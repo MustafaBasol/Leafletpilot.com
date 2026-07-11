@@ -18,6 +18,7 @@ export function PlatformMarketDetail({ id }) {
   const [error, setError] = useState("");
   const [action, setAction] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
+  const [manualLinkMessage, setManualLinkMessage] = useState("");
 
   async function load() {
     setError("");
@@ -80,6 +81,23 @@ export function PlatformMarketDetail({ id }) {
       await load();
     } catch (err) {
       setError(normalizeApiError(err));
+    } finally {
+      setAction("");
+    }
+  }
+
+  async function copyManualLink() {
+    setAction("manual-link");
+    setManualLinkMessage("");
+    setError("");
+    try {
+      const response = await platformApi.createManualOwnerInvitationLink(id);
+      await navigator.clipboard.writeText(response.accept_url);
+      setManualLinkMessage(t("manualLinkCopied"));
+      await load();
+    } catch (err) {
+      setError(normalizeApiError(err));
+      setManualLinkMessage("");
     } finally {
       setAction("");
     }
@@ -155,8 +173,12 @@ export function PlatformMarketDetail({ id }) {
               <Button disabled={Boolean(action) || hasEffectiveOwnerInvitation(market)} onClick={() => runInvitation("create")}>{t("createInvitation")}</Button>
               <Button disabled={Boolean(action)} onClick={() => runInvitation("rotate")}>{t("rotateInvitation")}</Button>
               <Button variant="danger" disabled={Boolean(action) || !hasEffectiveOwnerInvitation(market)} onClick={revokeInvitation}>{t("revokeInvitation")}</Button>
+              {market.owner_invitation?.delivery_status === "manual_delivery_required" ? (
+                <Button disabled={Boolean(action)} onClick={copyManualLink}>{t("copyInvitationLink")}</Button>
+              ) : null}
             </div>
             <p className="inline-result">{t("invitationEmailNotice")}</p>
+            {manualLinkMessage ? <p className="inline-result">{manualLinkMessage}</p> : null}
           </Card>
           <Card title={t("profile")} className="span-6">
             <dl className="detail-list">
