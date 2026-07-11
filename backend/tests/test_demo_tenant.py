@@ -2,6 +2,7 @@ import pytest
 
 from app.core.config import Settings
 from app.scripts.demo_tenant import (
+    DEMO_BRANDS,
     DEMO_PRODUCTS,
     DemoOperationError,
     asset_source,
@@ -25,6 +26,15 @@ def test_stable_ids_and_dataset_are_deterministic():
         "apple", "banana", "tomato", "lettuce", "milk", "bread", "coffee", "pasta",
         "rice", "olive-oil", "cereal", "yogurt", "dish-soap", "detergent", "paper-towels", "beans",
     ]
+
+
+def test_demo_brand_fixtures_are_exact_and_unambiguous():
+    assert len(DEMO_BRANDS) == 1
+    assert DEMO_BRANDS == (
+        {"key": "generic", "name": "LeafletPilot Demo", "slug": "demo-generic"},
+    )
+    assert all(len(fixture["name"]) > 1 for fixture in DEMO_BRANDS)
+    assert len({fixture["slug"] for fixture in DEMO_BRANDS}) == len(DEMO_BRANDS)
 
 
 def test_all_local_demo_assets_exist_and_are_pngs():

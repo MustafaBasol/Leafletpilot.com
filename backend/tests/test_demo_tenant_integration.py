@@ -64,11 +64,21 @@ async def test_demo_tenant_postgres_idempotency_isolation_and_chromium_export_wh
             first = await demo_tenant.seed_demo(session)
             assert first["products"] == 16
             assert first["campaign_items"] == 10
+            brands = list((await session.scalars(select(Brand).where(Brand.market_id == market_id))).all())
+            assert len([brand for brand in brands if brand.id in {demo_tenant.stable_id("brand", fixture["key"]) for fixture in demo_tenant.DEMO_BRANDS}]) == len(demo_tenant.DEMO_BRANDS)
+            demo_brands = [brand for brand in brands if brand.id in {demo_tenant.stable_id("brand", fixture["key"]) for fixture in demo_tenant.DEMO_BRANDS}]
+            assert [(brand.name, brand.slug) for brand in demo_brands] == [("LeafletPilot Demo", "demo-generic")]
+            assert all(len(brand.name) > 1 for brand in demo_brands)
+            assert len({brand.slug for brand in brands}) == len(brands)
             counts = await demo_tenant.verify_demo(session)
             assert counts["products"] == 16
 
             second = await demo_tenant.seed_demo(session)
             assert second["products"] == 16
+            assert await session.scalar(select(Brand.id).where(Brand.id == demo_tenant.stable_id("brand", "generic"))) == demo_tenant.stable_id("brand", "generic")
+            assert await session.scalar(select(Brand.name).where(Brand.id == demo_tenant.stable_id("brand", "generic"))) == "LeafletPilot Demo"
+            assert await session.scalar(select(Brand.slug).where(Brand.id == demo_tenant.stable_id("brand", "generic"))) == "demo-generic"
+            assert await session.scalar(select(Brand.id).where(Brand.market_id == market_id, Brand.slug == "demo-generic")) == demo_tenant.stable_id("brand", "generic")
             assert await session.scalar(select(Category.id).where(Category.id == unrelated_category.id)) == unrelated_category.id
             assert await session.scalar(select(Brand.id).where(Brand.id == unrelated_brand.id)) == unrelated_brand.id
             assert await session.scalar(select(Campaign.id).where(Campaign.id == unrelated_campaign.id)) == unrelated_campaign.id
@@ -88,8 +98,13 @@ async def test_demo_tenant_postgres_idempotency_isolation_and_chromium_export_wh
                 assert signature.startswith(b"%PDF-") if file.format == "pdf" else signature == b"\x89PNG\r\n\x1a\n"
 
             await demo_tenant.reset_demo(session)
+            assert await session.scalar(select(Brand.id).where(Brand.id == demo_tenant.stable_id("brand", "generic"))) is None
+            assert await session.scalar(select(Brand.id).where(Brand.id == unrelated_brand.id)) == unrelated_brand.id
             await demo_tenant.reset_demo(session)
-            assert (await demo_tenant.seed_demo(session))["products"] == 16
+            reseeded = await demo_tenant.seed_demo(session)
+            assert reseeded["products"] == 16
+            recreated_brands = list((await session.scalars(select(Brand).where(Brand.market_id == market_id, Brand.slug == "demo-generic"))).all())
+            assert [(brand.name, brand.slug) for brand in recreated_brands] == [("LeafletPilot Demo", "demo-generic")]
             assert (await demo_tenant.verify_demo(session))["status"] == "ready"
             assert await session.scalar(select(Campaign.id).where(Campaign.id == unrelated_campaign.id)) == unrelated_campaign.id
             assert await session.scalar(select(CampaignFile.id).where(CampaignFile.id == unrelated_file.id)) == unrelated_file.id

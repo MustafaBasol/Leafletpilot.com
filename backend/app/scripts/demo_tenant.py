@@ -69,6 +69,14 @@ DEMO_PRODUCTS = (
     ("beans", "Kırmızı Fasulye", "Konserve", "400 g", "LP-DEMO-BEANS", "1.59", "2.09"),
 )
 
+DEMO_BRANDS = (
+    {
+        "key": "generic",
+        "name": "LeafletPilot Demo",
+        "slug": "demo-generic",
+    },
+)
+
 
 class DemoOperationError(RuntimeError):
     pass
@@ -208,7 +216,12 @@ async def reset_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[st
         await session.execute(delete(ProductImage).where(ProductImage.product_id.in_(product_ids)))
         await session.execute(delete(Product).where(Product.id.in_(product_ids), Product.market_id == market.id))
     await session.execute(delete(Category).where(Category.id.in_([stable_id("category", name) for name in {row[2] for row in DEMO_PRODUCTS}])))
-    await session.execute(delete(Brand).where(Brand.id == stable_id("brand", "LeafletPilot Demo"), Brand.market_id == market.id))
+    await session.execute(
+        delete(Brand).where(
+            Brand.id.in_([stable_id("brand", fixture["key"]) for fixture in DEMO_BRANDS]),
+            Brand.market_id == market.id,
+        )
+    )
     await session.execute(delete(Template).where(Template.id.in_([stable_id("template", slug) for slug in ("demo-premium", "demo-compact")]), Template.market_id == market.id))
     await session.flush()
     await session.commit()
@@ -248,15 +261,22 @@ async def seed_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[str
         category = Category(id=stable_id("category", name), market_id=market.id, name=name, slug=f"demo-{index}-{name.lower().replace(' ', '-')}", sort_order=index * 10, is_global=False, is_active=True)
         session.add(category)
         categories[name] = category
-    for name in ("LeafletPilot Demo"):
-        brand = Brand(id=stable_id("brand", name), market_id=market.id, name=name, slug="demo-generic", is_global=False, is_active=True)
+    for fixture in DEMO_BRANDS:
+        brand = Brand(
+            id=stable_id("brand", fixture["key"]),
+            market_id=market.id,
+            name=fixture["name"],
+            slug=fixture["slug"],
+            is_global=False,
+            is_active=True,
+        )
         session.add(brand)
-        brands[name] = brand
+        brands[fixture["key"]] = brand
     await session.flush()
     products: list[Product] = []
     for slug, name, category_name, unit, barcode, price, old_price in DEMO_PRODUCTS:
         key, size = copy_asset(market.id, slug)
-        product = Product(id=stable_id("product", barcode), market_id=market.id, brand_id=brands["LeafletPilot Demo"].id, category_id=categories[category_name].id, name=name, short_name=name, barcode=barcode, package_size=unit, is_global=False, is_active=True, quality_score=100)
+        product = Product(id=stable_id("product", barcode), market_id=market.id, brand_id=brands["generic"].id, category_id=categories[category_name].id, name=name, short_name=name, barcode=barcode, package_size=unit, is_global=False, is_active=True, quality_score=100)
         product.images = [ProductImage(id=stable_id("image", barcode), storage_key=key, mime_type="image/png", size_bytes=size, width=420, height=420, quality_status="excellent", is_primary=True)]
         product.aliases = [ProductAlias(id=stable_id("alias", barcode), alias=name, normalized_alias=normalize_alias(name), source="demo_seed")]
         session.add(product)
@@ -299,13 +319,15 @@ async def verify_demo(session: AsyncSession) -> dict[str, int | str]:
     expected_category_ids = {stable_id("category", row[2]) for row in DEMO_PRODUCTS}
     expected_product_ids = {stable_id("product", row[4]) for row in DEMO_PRODUCTS}
     expected_template_ids = {stable_id("template", slug) for slug in ("demo-premium", "demo-compact")}
+    expected_brand_ids = {stable_id("brand", fixture["key"]) for fixture in DEMO_BRANDS}
     category_ids = set((await session.scalars(select(Category.id).where(Category.market_id == market.id, Category.id.in_(expected_category_ids)))).all())
-    brand_ids = set((await session.scalars(select(Brand.id).where(Brand.market_id == market.id, Brand.id == stable_id("brand", "LeafletPilot Demo")))).all())
+    brands = list((await session.scalars(select(Brand).where(Brand.market_id == market.id, Brand.id.in_(expected_brand_ids)))).all())
+    brand_ids = {brand.id for brand in brands}
     product_ids = set((await session.scalars(select(Product.id).where(Product.market_id == market.id, Product.id.in_(expected_product_ids)))).all())
     template_ids = set((await session.scalars(select(Template.id).where(Template.market_id == market.id, Template.id.in_(expected_template_ids)))).all())
     membership_count = await session.scalar(select(func.count(MarketUser.id)).where(MarketUser.market_id == market.id, MarketUser.user_id == owner.id, MarketUser.role == "market_admin", MarketUser.is_active.is_(True)))
     campaign = await session.scalar(select(Campaign).options(selectinload(Campaign.items).selectinload(CampaignItem.product), selectinload(Campaign.template)).where(Campaign.market_id == market.id, Campaign.slug == DEMO_CAMPAIGN_SLUG))
-    if product_count != 16 or product_ids != expected_product_ids or category_ids != expected_category_ids or brand_ids != {stable_id("brand", "LeafletPilot Demo")} or template_ids != expected_template_ids or membership_count != 1 or campaign is None or campaign.id != stable_id("campaign", DEMO_CAMPAIGN_SLUG) or len(campaign.items) != 10 or campaign.template is None or campaign.template.market_id != market.id:
+    if product_count != 16 or product_ids != expected_product_ids or category_ids != expected_category_ids or brand_ids != expected_brand_ids or len(brands) != len(DEMO_BRANDS) or {(brand.name, brand.slug) for brand in brands} != {(fixture["name"], fixture["slug"]) for fixture in DEMO_BRANDS} or len({brand.slug for brand in brands}) != len(brands) or template_ids != expected_template_ids or membership_count != 1 or campaign is None or campaign.id != stable_id("campaign", DEMO_CAMPAIGN_SLUG) or len(campaign.items) != 10 or campaign.template is None or campaign.template.market_id != market.id:
         raise DemoOperationError("Demo verification failed: market, product, campaign, or template invariant is missing.")
     if [item.id for item in sorted(campaign.items, key=lambda item: item.sort_order)] != [stable_id("item", str(index)) for index in range(10)] or any(item.market_id != market.id or item.product_id not in expected_product_ids or item.product is None or item.product.market_id != market.id for item in campaign.items):
         raise DemoOperationError("Demo verification failed: campaign item ordering or tenant ownership is invalid.")
