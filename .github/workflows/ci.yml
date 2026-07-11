@@ -39,9 +39,15 @@ jobs:
         run: |
           python -m pip install -U pip
           python -m pip install -e .[dev]
+          python -m playwright install --with-deps chromium
       - name: Run backend tests
         working-directory: backend
-        run: python -m pytest -q
+        run: |
+          python -m alembic upgrade head
+          python -m pytest -q
+      - name: Run PostgreSQL demo tenant and Chromium export integration
+        working-directory: backend
+        run: python -m pytest -q tests/test_demo_tenant_integration.py
       - name: Check Alembic heads
         working-directory: backend
         run: |

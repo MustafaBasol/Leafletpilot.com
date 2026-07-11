@@ -131,3 +131,20 @@ docker compose --env-file C:\tmp\leafletpilot-audit.env `
 ## Production comparison and remaining smoke
 
 Repository inspection verified production settings validation, private PostgreSQL, persistent export storage, migration profile, non-root images, health checks, and production seed refusal. No production runtime was accessed. After remediation and normal deployment, a separately authorized read-only smoke must verify health, login, existing demo records, preview/export history visibility, and static asset availability without creating, resetting, inviting, exporting, or mutating any production data.
+
+## Deterministic tenant operations
+
+Demo operations are disabled by default and require `DEMO_OPERATIONS_ENABLED=true`, an immutable `DEMO_MARKET_ID`, exact `DEMO_MARKET_SLUG`, and exact `DEMO_OWNER_EMAIL`. Never leave these enabled in a customer or production database.
+
+From the backend container or backend virtual environment:
+
+```powershell
+python -m app.scripts.demo_tenant inspect
+python -m app.scripts.demo_tenant reset --dry-run
+python -m app.scripts.demo_tenant reset --confirm
+python -m app.scripts.demo_tenant seed
+python -m app.scripts.demo_tenant generate-exports
+python -m app.scripts.demo_tenant verify
+```
+
+`seed` resets only the configured golden campaign, `LP-DEMO-*` products, market-owned demo templates, demo assets, and demo activity records. The market, owner, memberships, invitations, signup requests, platform admins, and other tenants are preserved. Reset removes database records before deleting only `markets/<configured-id>/...` storage. If rendering fails, the export job remains failed and verification cannot pass.

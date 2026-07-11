@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob
+from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, Product
 from app.services.preview_renderer import (
     render_campaign_preview_html,
 )
@@ -226,6 +226,9 @@ def validate_rendered_file(output_path: Path, file_format: str) -> None:
         raise RuntimeError(f"Export renderer did not create {file_format.upper()} file.")
     if output_path.stat().st_size <= 0:
         raise RuntimeError(f"Export renderer created an empty {file_format.upper()} file.")
+    expected = b"%PDF-" if file_format == "pdf" else b"\x89PNG\r\n\x1a\n"
+    if not output_path.read_bytes()[:8].startswith(expected):
+        raise RuntimeError(f"Export renderer created an invalid {file_format.upper()} signature.")
 
 
 def render_error_message(exc: Exception) -> str:
@@ -250,6 +253,7 @@ async def _get_campaign_for_render(session: AsyncSession, campaign_id: UUID, mar
         select(Campaign)
         .options(
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
+            selectinload(Campaign.items).selectinload(CampaignItem.product).selectinload(Product.images),
             selectinload(Campaign.template),
         )
         .where(Campaign.id == campaign_id, Campaign.market_id == market_id)

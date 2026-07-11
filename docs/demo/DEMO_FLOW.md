@@ -42,6 +42,10 @@ Only show this when the audience cares about onboarding operations.
 - Do not switch to another tenant unless both tenants contain synthetic data.
 - If an operation fails, show the persisted status or fallback artifact; do not repeatedly click or refresh.
 
+## Reset and rehearsal commands
+
+Use an isolated database and storage directory with the four `DEMO_*` allow-list variables configured. Run `python -m app.scripts.demo_tenant inspect`, then `reset --confirm`, `seed`, `generate-exports`, and `verify`. Repeat `seed` and `verify` before the demo. A non-zero verification result is a stop condition.
+
 ## Acceptance rehearsal
 
 The flow is accepted only when a fresh reset can complete login → products → templates → campaign → preview → PDF/PNG export → history/download twice consecutively without manual database edits. The second run must not create duplicate seed records or expose data from another market.
