@@ -254,7 +254,9 @@ async def _get_campaign_for_render(session: AsyncSession, campaign_id: UUID, mar
         .options(
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
             selectinload(Campaign.items).selectinload(CampaignItem.product).selectinload(Product.images),
+            selectinload(Campaign.items).selectinload(CampaignItem.product).selectinload(Product.brand),
             selectinload(Campaign.template),
+            selectinload(Campaign.market),
         )
         .where(Campaign.id == campaign_id, Campaign.market_id == market_id)
     )

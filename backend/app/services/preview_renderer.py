@@ -19,7 +19,9 @@ def render_campaign_preview_html(
     *,
     generated_at: datetime,
 ) -> str:
-    config = template.config_json if template and isinstance(template.config_json, dict) else {}
+    config = dict(template.config_json) if template and isinstance(template.config_json, dict) else {}
+    if campaign.market is not None and isinstance(campaign.market.promo_profile_json, dict):
+        config = {**campaign.market.promo_profile_json, **config}
     slug = str(config.get("layout") or template.slug if template else DEFAULT_TEMPLATE_SLUG)
     if slug not in {"premium-market", "compact-weekly"}:
         slug = "compact-weekly" if config.get("columns") == 2 else DEFAULT_TEMPLATE_SLUG
@@ -27,7 +29,7 @@ def render_campaign_preview_html(
     template_name = template.name if template else DEFAULT_TEMPLATE_NAME
     items = sorted(campaign.items, key=lambda item: (item.sort_order, item.created_at or generated_at, str(item.id)))
     styles = _style_config(slug, config)
-    cards = "\n".join(_render_item_card(item, config) for item in items)
+    cards = "\n".join(_render_item_card(item, config) for item in items[:_slot_count(config)] if item.match_status != "excluded")
     if not cards:
         cards = '<div class="empty-state">Bu kampanyada henüz ürün bulunmuyor.</div>'
 
@@ -164,6 +166,9 @@ def render_campaign_preview_html(
       line-height: 1.18;
       min-height: {styles["product_title_min_height"]};
     }}
+    .product-brand {{ margin: 10px 0 0; color: var(--accent); font-size: 12px; font-weight: 800; text-transform: uppercase; }}
+    .product-unit {{ margin: 4px 0 0; color: var(--muted); font-size: 12px; }}
+    .promo-badge {{ padding: 4px 7px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10px; font-weight: 800; }}
     .price-row {{
       display: flex;
       flex-wrap: nowrap;
@@ -237,6 +242,10 @@ def render_campaign_preview_html(
 
 def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
     display_name = item.display_name or item.incoming_name
+    product = item.product
+    brand_name = product.brand.name if product is not None and product.brand is not None else None
+    unit = item.quantity_label or item.unit_label or (product.package_size if product is not None else None)
+    badge = product.badge_text if product is not None else None
     currency = item.currency or "EUR"
     old_price = ""
     if config.get("show_old_price", True) and item.old_price is not None:
@@ -245,8 +254,11 @@ def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
     return f"""<article class="product-card">
   {_render_product_image(item)}
   <div>
+    {f'<p class="product-brand">{_text(brand_name)}</p>' if brand_name else ''}
     <h2>{_text(display_name)}</h2>
+    {f'<p class="product-unit">{_text(unit)}</p>' if unit else ''}
     <div class="price-row">
+      {f'<span class="promo-badge">{_text(badge)}</span>' if badge else ''}
       <span class="price">{_text(_format_money(item.price, currency))}</span>
       {old_price}
     </div>
@@ -299,6 +311,13 @@ def _style_config(slug: str, config: dict[str, Any]) -> dict[str, str]:
         "product_title_min_height": "38px" if slug == "compact-weekly" else "44px",
         "price_size": "24px" if slug == "compact-weekly" else "36px",
     }
+
+
+def _slot_count(config: dict[str, Any]) -> int:
+    try:
+        return min(max(int(config.get("slot_count") or 999), 1), 64)
+    except (TypeError, ValueError):
+        return 64
 
 
 def _format_money(value: Decimal | None, currency: str) -> str:

@@ -3,6 +3,7 @@ import { AppLayout } from "./components/layout/AppLayout.jsx";
 import { BotConnections } from "./pages/BotConnections.jsx";
 import { AcceptInvitation } from "./pages/AcceptInvitation.jsx";
 import { CampaignDetail } from "./pages/CampaignDetail.jsx";
+import { Categories } from "./pages/Categories.jsx";
 import { Campaigns } from "./pages/Campaigns.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
 import { Landing } from "./pages/Landing.jsx";
@@ -57,6 +58,7 @@ function Page({ path, sessionVersion }) {
   if (path === "/campaigns/new") return <NewCampaign />;
   if (path.startsWith("/campaigns/")) return <CampaignDetail campaignId={path.replace("/campaigns/", "")} />;
   if (path === "/products") return <ProductCatalog />;
+  if (path === "/categories") return <Categories />;
   if (path === "/templates") return <Templates />;
   if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
   if (path === "/bot-connections") return <BotConnections />;

@@ -220,7 +220,7 @@ async def list_products(
     if has_image is not None:
         statement = statement.where(Product.images.any() if has_image else ~Product.images.any())
 
-    return await _list(session, statement.order_by(Product.name), limit, offset)
+    return await _list(session, statement.order_by(Product.sort_order, Product.name), limit, offset)
 
 
 async def create_product(

@@ -104,7 +104,8 @@ async def create_campaign(
     scoped_market_id = require_market_id(market_id)
     data = payload.model_dump(exclude={"items"})
     if data.get("template_id") is not None:
-        await validate_visible_template(session, data["template_id"], scoped_market_id)
+        template = await validate_visible_template(session, data["template_id"], scoped_market_id)
+        _validate_template_slots(template, len(payload.items))
     campaign = Campaign(**data, market_id=scoped_market_id, status="draft")
     campaign.items = [
         _build_campaign_item(item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
@@ -506,6 +507,19 @@ async def validate_visible_template(session: AsyncSession, template_id: UUID, ma
             detail="template_id must reference an active template visible to the current market.",
         )
     return template
+
+
+def _validate_template_slots(template: Template, item_count: int) -> None:
+    config = template.config_json if isinstance(template.config_json, dict) else {}
+    slot_count = config.get("slot_count")
+    if slot_count is None:
+        return
+    try:
+        slots = int(slot_count)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Template slot_count must be an integer.") from exc
+    if item_count > slots:
+        raise HTTPException(status_code=422, detail=f"Template requires at most {slots} products.")
 
 
 async def _get_default_template(session: AsyncSession, market_id: UUID) -> Template | None:
