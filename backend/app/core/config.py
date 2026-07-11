@@ -91,6 +91,15 @@ class Settings(BaseSettings):
     demo_market_id: UUID | None = Field(default=None, alias="DEMO_MARKET_ID")
     demo_market_slug: str = Field(default="", alias="DEMO_MARKET_SLUG")
     demo_owner_email: str = Field(default="", alias="DEMO_OWNER_EMAIL")
+
+    @field_validator("demo_market_id", mode="before")
+    @classmethod
+    def empty_demo_market_id_to_none(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
     demo_owner_initial_password: SecretStr | None = Field(default=None, alias="DEMO_OWNER_INITIAL_PASSWORD")
 
     @property
