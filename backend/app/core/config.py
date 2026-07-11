@@ -2,6 +2,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -86,6 +87,10 @@ class Settings(BaseSettings):
     telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
     telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
     telegram_http_max_attempts: int = Field(default=1, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
+    demo_operations_enabled: bool = Field(default=False, alias="DEMO_OPERATIONS_ENABLED")
+    demo_market_id: UUID | None = Field(default=None, alias="DEMO_MARKET_ID")
+    demo_market_slug: str = Field(default="", alias="DEMO_MARKET_SLUG")
+    demo_owner_email: str = Field(default="", alias="DEMO_OWNER_EMAIL")
 
     @property
     def is_production(self) -> bool:
@@ -146,6 +151,16 @@ class Settings(BaseSettings):
             self._validate_enabled_telegram_settings()
         if self.platform_admin_enabled:
             self._validate_platform_settings()
+
+        if self.demo_operations_enabled:
+            if self.demo_market_id is None:
+                raise ValueError("DEMO_MARKET_ID is required when DEMO_OPERATIONS_ENABLED=true.")
+            if not self.demo_market_slug.strip() or not self.demo_owner_email.strip():
+                raise ValueError(
+                    "DEMO_MARKET_SLUG and DEMO_OWNER_EMAIL are required when demo operations are enabled."
+                )
+            if "@" not in self.demo_owner_email or self.demo_market_slug.strip() != self.demo_market_slug:
+                raise ValueError("DEMO_MARKET_SLUG and DEMO_OWNER_EMAIL must be well-formed.")
 
         if "*" in self.backend_cors_origins:
             raise ValueError("BACKEND_CORS_ORIGINS cannot include '*' while CORS credentials are enabled.")

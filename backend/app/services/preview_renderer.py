@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from decimal import Decimal
 from html import escape
@@ -148,6 +149,15 @@ def render_campaign_preview_html(
       font-weight: 700;
       text-align: center;
     }}
+    .product-image {{
+      display: block;
+      width: 100%;
+      min-height: {styles["image_min_height"]};
+      max-height: 190px;
+      object-fit: contain;
+      border-radius: 6px;
+      background: #fff;
+    }}
     .product-card h2 {{
       margin: 16px 0 0;
       font-size: {styles["product_title_size"]};
@@ -233,7 +243,7 @@ def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
         old_price = f'<span class="old-price">{_text(_format_money(item.old_price, currency))}</span>'
 
     return f"""<article class="product-card">
-  <div class="image-placeholder">Ürün görseli</div>
+  {_render_product_image(item)}
   <div>
     <h2>{_text(display_name)}</h2>
     <div class="price-row">
@@ -242,6 +252,25 @@ def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
     </div>
   </div>
 </article>"""
+
+
+def _render_product_image(item: CampaignItem) -> str:
+    images = list(item.product.images) if item.product is not None else []
+    image = next((candidate for candidate in images if candidate.is_primary), None)
+    image = image or (images[0] if images else None)
+    if image is not None and image.storage_key:
+        try:
+            from app.services.rendering import storage_path_for_key
+
+            path = storage_path_for_key(image.storage_key)
+            if path.is_file() and path.stat().st_size > 0:
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                mime_type = escape(image.mime_type or "image/png")
+                alt = _attr(item.display_name or item.incoming_name)
+                return f'<img class="product-image" src="data:{mime_type};base64,{encoded}" alt="{alt}">'
+        except (OSError, ValueError):
+            pass
+    return '<div class="image-placeholder">Ürün görseli</div>'
 
 
 def _style_config(slug: str, config: dict[str, Any]) -> dict[str, str]:

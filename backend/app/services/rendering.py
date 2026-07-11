@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob
+from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, Product
 from app.services.preview_renderer import (
     render_campaign_preview_html,
 )
@@ -250,6 +250,7 @@ async def _get_campaign_for_render(session: AsyncSession, campaign_id: UUID, mar
         select(Campaign)
         .options(
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
+            selectinload(Campaign.items).selectinload(CampaignItem.product).selectinload(Product.images),
             selectinload(Campaign.template),
         )
         .where(Campaign.id == campaign_id, Campaign.market_id == market_id)

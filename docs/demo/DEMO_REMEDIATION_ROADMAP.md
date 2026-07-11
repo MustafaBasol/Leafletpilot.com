@@ -140,3 +140,7 @@ git diff --check
 ```
 
 Do not merge or deploy from this audit roadmap.
+
+## Phase 20D-1 operator contract
+
+The deterministic demo tenant is operated only through `app.scripts.demo_tenant`; there is no customer-facing reset endpoint. Configure `DEMO_OPERATIONS_ENABLED=false` by default. In an isolated rehearsal environment, set `DEMO_MARKET_ID`, `DEMO_MARKET_SLUG`, and `DEMO_OWNER_EMAIL` together, then run `inspect`, `reset --dry-run`, `reset --confirm`, `seed`, `generate-exports`, and `verify`. The command refuses missing or mismatched market identity, never selects a first/latest/all market, and never logs credentials. Keep production disabled and do not run these commands against customer data.
