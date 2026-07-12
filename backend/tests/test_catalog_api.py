@@ -63,7 +63,7 @@ def test_alias_normalization_works() -> None:
 
 
 @pytest.mark.asyncio
-async def test_global_brand_api_crud_runs_when_test_database_url_is_configured() -> None:
+async def test_market_brand_api_crud_and_global_mutation_guard_run_when_test_database_url_is_configured() -> None:
     if not settings.test_database_url:
         pytest.skip("TEST_DATABASE_URL is not configured; DB-backed catalog CRUD tests skipped.")
 
@@ -99,15 +99,22 @@ async def test_global_brand_api_crud_runs_when_test_database_url_is_configured()
             base_url="http://testserver",
         ) as async_client:
             headers = {"X-Market-Id": str(market_id)}
-            create_response = await async_client.post(
+            rejected_global_response = await async_client.post(
                 "/api/catalog/brands",
                 headers=headers,
                 json={"name": unique_name, "is_global": True},
             )
+            assert rejected_global_response.status_code == 403
+
+            create_response = await async_client.post(
+                "/api/catalog/brands",
+                headers=headers,
+                json={"name": unique_name, "is_global": False},
+            )
             assert create_response.status_code == 201
             brand = create_response.json()
             assert brand["name"] == unique_name
-            assert brand["is_global"] is True
+            assert brand["is_global"] is False
 
             list_response = await async_client.get(
                 "/api/catalog/brands",

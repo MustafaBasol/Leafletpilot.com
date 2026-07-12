@@ -223,20 +223,36 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 - New model/service surface: `MarketProduct`, `MarketProductRead`, adoption/private-create schemas, `services.entitlements`, global search, adoption, private creation, effective-product resolution, and global mutation guards.
 - Compatibility: existing `Product`, `ProductImage`, `ProductAlias`, `CampaignItem.product_id`, `Template.id`, and campaign template references remain unchanged. Existing market-scoped product rows are preserved and retain their storage/image relationships.
 - Authorization: market catalog and template services now reject global mutations; new adoption/private endpoints require authenticated market mutation roles and entitlement checks.
-- Focused tests: `12 passed, 2 skipped, 2 warnings` (`tests/test_shared_catalog_foundation.py` plus catalog API tests).
-- Full backend tests: `117 passed, 30 skipped, 5 warnings`.
+- Focused tests before PostgreSQL rehearsal: `12 passed, 2 skipped, 2 warnings` (`tests/test_shared_catalog_foundation.py` plus catalog API tests).
+- Full backend tests before PostgreSQL rehearsal: `117 passed, 30 skipped, 5 warnings`.
 - Compile verification: source compilation passed via a no-write compile check (`compile-source-ok`). The literal `python -m compileall app` remains affected by permission-protected existing `__pycache__` paths on this workstation.
 - Alembic one-head check: passed; `20260712_0013 (head)`.
 - `git diff --check`: passed.
-- Isolated PostgreSQL upgrade: not run because Docker is unavailable in this environment and no reachable test PostgreSQL service is configured; all database-backed tests remain skipped for that reason.
+- Isolated PostgreSQL upgrade: completed after the dedicated rehearsal below.
 - Deviations: image upload/signature validation was not implemented because no product-image upload endpoint exists in the current repository; Phase B only preserves existing metadata/storage keys and defines safe override fields.
 - Risks discovered: the migration backfill currently copies legacy product presentation values into associations but intentionally leaves canonical matching/relinking to the later compatibility-read phase; ambiguous identity matches must not be auto-merged.
 - Unresolved: database-backed migration row-count verification and adoption API integration tests require isolated PostgreSQL; platform global catalog routes remain Phase C.
+
+## Phase B PostgreSQL 16 migration and preservation rehearsal
+
+- Status: passed on a disposable local PostgreSQL `16.14` container bound only to `127.0.0.1:55432`. It used the synthetic `leafletpilot_rehearsal` database; no production service or customer data was accessed.
+- Commands: `alembic upgrade 20260711_0012`; seed fixed synthetic legacy rows; `alembic upgrade 20260712_0013`; `alembic current`; `alembic heads`; `alembic downgrade 20260711_0012`; `alembic upgrade 20260712_0013`. Each Alembic command used a local `DATABASE_URL` for the disposable database.
+- Initial finding and fix: the first PostgreSQL execution exposed an extra closing parenthesis in the idempotent `market_products` backfill SQL. PostgreSQL rolled the transaction back cleanly (no `market_products` table and Alembic remained at `20260711_0012`). The migration was corrected before the successful rerun.
+- Seed before upgrade: 2 markets, 2 brands, 2 categories, 4 products (2 global and 2 market-scoped), 2 `ProductImage` rows with storage keys, 2 aliases, 2 templates, 2 campaigns, and 3 campaign items. All IDs were fixed UUIDs for exact comparison.
+- Pre/post preserved counts: markets 2/2; brands 2/2; categories 2/2; products 4/4; product images 2/2; aliases 2/2; templates 2/2; campaigns 2/2; campaign items 3/3. The upgrade added 2 legacy `MarketProduct` rows; exercising adoption added one further association, for 3 total.
+- Preserved foreign keys: all four legacy `Product.id` values remained unchanged; image IDs/storage keys `...0501`/`products/global-espresso.webp` and `...0502`/`products/market-one-juice.webp` remained unchanged; alias IDs `...0601` and `...0602` remained unchanged; template IDs `...0701` and `...0702` remained unchanged; campaign item IDs `...0901`, `...0902`, and `...0903` retained product IDs `...0401`, `...0403`, and `...0402`, respectively.
+- Backfill result: legacy product `...0403` became a Market 1 association with name `Market One Legacy Juice`, price `2.99`, promo `1.99`, and its category override; legacy product `...0404` became the equivalent Market 2 association with price `1.49`. Both legacy product rows themselves remained readable.
+- Constraints and isolation: a first global-product adoption stored isolated Market 1 price/promo `5.49/4.49`; the duplicate adoption returned HTTP 409; an attempt by Market 2 to adopt Market 1's non-global legacy product returned HTTP 404. The unassigned-plan resolver returned global catalog read access, zero private products, and no image override.
+- DB-backed focused tests: `14 passed, 2 warnings` with `TEST_DATABASE_URL` set to the disposable PostgreSQL database.
+- DB-backed full backend tests: `146 passed, 1 skipped, 5 warnings` with the same configured `TEST_DATABASE_URL`.
+- Downgrade/re-upgrade: `20260712_0013 -> 20260711_0012` succeeded and retained 4 products, 2 images, 2 aliases, 2 templates, 2 campaigns, and 3 campaign items. It intentionally drops the additive `market_products` table and its post-upgrade association data, so it is a structural/schema rollback only. Re-upgrade restored the two deterministic legacy backfill rows and again passed all preservation, duplicate-adoption, cross-market, and entitlement checks.
+- Alembic: `current` and `heads` both reported the sole head `20260712_0013 (head)` after re-upgrade.
+- Risk: do not use the destructive Alembic downgrade as an operational rollback once markets have created new associations; operational rollback remains feature-disable/read fallback plus a backup/restore decision. This behavior is now demonstrated, not merely assumed.
+- Phase C gate: safe to begin. The migration and legacy-data compatibility gate is now passed; Phase C must still preserve the described rollback boundary.
 
 ## Exact next steps
 
 1. Commit the Phase B backend foundation and this documentation update separately from Phase A.
 2. Push the feature branch and create a draft PR targeting `main`.
-3. In an isolated PostgreSQL environment, run the migration and verify row counts, IDs, storage keys, aliases, campaign items, and template references.
-4. Resolve any migration or DB-backed test findings before Phase C.
-5. Implement Phase C platform global catalog management; do not mark ready, merge, or deploy.
+3. Implement Phase C platform global catalog management on this branch; retain the migration's structural-rollback limitation in its operator guidance.
+4. Keep the PR draft; do not mark ready, merge, or deploy.

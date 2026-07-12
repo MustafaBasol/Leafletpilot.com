@@ -92,7 +92,6 @@ def upgrade() -> None:
                 WHERE NOT EXISTS (
                     SELECT 1 FROM market_products WHERE legacy_product_id = :legacy_product_id
                 )
-                )
                 """
             ),
             {
