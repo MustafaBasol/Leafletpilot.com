@@ -54,6 +54,8 @@ async def list_categories(search: str | None = None, is_active: bool | None = No
 
 @router.post("/categories", response_model=PlatformCategoryRead, status_code=201)
 async def create_category(payload: PlatformCategoryCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    if await session.scalar(select(Category).where(Category.is_global.is_(True), func.lower(Category.name) == payload.name.lower())):
+        raise _conflict("A global category with this name already exists.")
     data = payload.model_dump(); data["slug"] = payload.slug or slugify(payload.name)
     row = Category(**data, is_global=True, market_id=None)
     session.add(row)
@@ -125,9 +127,50 @@ async def deactivate_brand(brand_id: UUID, _: PlatformAdmin = admin, session: As
 
 
 def _product_read(row):
-    result = PlatformProductRead.model_validate(row, from_attributes=True)
-    result.images = [{**image, "preview_url": f"/api/platform/catalog/products/{row.id}/images/{image['id']}/content"} for image in result.images]
-    return result
+    return PlatformProductRead(
+        id=row.id,
+        market_id=row.market_id,
+        brand_id=row.brand_id,
+        category_id=row.category_id,
+        name=row.name,
+        short_name=row.short_name,
+        barcode=row.barcode,
+        package_size=row.package_size,
+        package_type=row.package_type,
+        sort_order=row.sort_order,
+        is_global=row.is_global,
+        is_active=row.is_active,
+        quality_score=row.quality_score,
+        usage_count=row.usage_count or 0,
+        aliases=[
+            {
+                "id": alias.id,
+                "product_id": alias.product_id,
+                "alias": alias.alias,
+                "normalized_alias": alias.normalized_alias,
+                "source": alias.source,
+                "created_at": alias.created_at,
+            }
+            for alias in row.aliases
+        ],
+        images=[
+            {
+                "id": image.id,
+                "product_id": image.product_id,
+                "image_type": image.image_type,
+                "mime_type": image.mime_type,
+                "size_bytes": image.size_bytes,
+                "width": image.width,
+                "height": image.height,
+                "has_transparent_background": image.has_transparent_background,
+                "quality_status": image.quality_status,
+                "is_primary": image.is_primary,
+                "created_at": image.created_at,
+                "preview_url": f"/api/platform/catalog/products/{row.id}/images/{image.id}/content",
+            }
+            for image in row.images
+        ],
+    )
 
 
 @router.get("/products", response_model=ListResponse[PlatformProductRead])
@@ -148,25 +191,36 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
 @router.post("/products", response_model=PlatformProductRead, status_code=201)
 async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
+    if await session.scalar(select(Product).where(Product.is_global.is_(True), func.lower(Product.name) == payload.name.lower())): raise _conflict("A global product with this name already exists.")
     data = payload.model_dump(exclude={"aliases"}); row = Product(**data, is_global=True, market_id=None)
     row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
-    session.add(row); await session.commit(); await session.refresh(row); return _product_read(row)
+    session.add(row); await session.commit()
+    row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == row.id))
+    return _product_read(row)
 
 
 @router.patch("/products/{product_id}", response_model=PlatformProductRead)
 async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
-    row = await _global(session, Product, product_id)
+    await _global(session, Product, product_id)
+    row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == product_id))
     data = payload.model_dump(exclude_unset=True, exclude={"aliases"})
     if "barcode" in data and data["barcode"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), Product.barcode == data["barcode"])): raise _conflict("A global product with this barcode already exists.")
+    if "name" in data and data["name"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), func.lower(Product.name) == data["name"].lower())): raise _conflict("A global product with this name already exists.")
     for key, value in data.items(): setattr(row, key, value)
     if payload.aliases is not None:
         row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
-    await session.commit(); await session.refresh(row); return _product_read(row)
+    await session.commit()
+    row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == row.id))
+    return _product_read(row)
 
 
 @router.delete("/products/{product_id}", response_model=PlatformProductRead)
 async def deactivate_product(product_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
-    row = await _global(session, Product, product_id); row.is_active = False; await session.commit(); return row
+    await _global(session, Product, product_id)
+    row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == product_id))
+    row.is_active = False
+    await session.commit()
+    return _product_read(row)
 
 
 @router.post("/products/{product_id}/images", response_model=dict, status_code=201)
@@ -185,7 +239,7 @@ async def upload_image(product_id: UUID, request: Request, primary: bool = False
     if primary: await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == row.id).values(is_primary=False))
     image = ProductImage(product_id=row.id, storage_key=key, mime_type=mime_type, size_bytes=len(content), quality_status="needs_review", is_primary=primary)
     session.add(image); await session.commit(); await session.refresh(image)
-    return {"id": image.id, "product_id": row.id, "storage_key": image.storage_key, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": image.is_primary}
+    return {"id": image.id, "product_id": row.id, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": image.is_primary}
 
 
 @router.patch("/products/{product_id}/images/{image_id}/primary", response_model=dict)
@@ -197,7 +251,7 @@ async def set_primary_image(product_id: UUID, image_id: UUID, _: PlatformAdmin =
     await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == product_id).values(is_primary=False))
     image.is_primary = True
     await session.commit()
-    return {"id": image.id, "product_id": product_id, "storage_key": image.storage_key, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": True}
+    return {"id": image.id, "product_id": product_id, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": True}
 
 
 @router.get("/products/{product_id}/images/{image_id}/content", include_in_schema=False)
