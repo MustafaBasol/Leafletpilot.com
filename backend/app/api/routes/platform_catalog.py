@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -65,7 +66,10 @@ async def create_category(payload: PlatformCategoryCreate, _: PlatformAdmin = ad
 @router.patch("/categories/{category_id}", response_model=PlatformCategoryRead)
 async def update_category(category_id: UUID, payload: PlatformCategoryUpdate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     row = await _global(session, Category, category_id)
-    for key, value in payload.model_dump(exclude_unset=True).items(): setattr(row, key, value)
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and await session.scalar(select(Category).where(Category.id != category_id, Category.is_global.is_(True), func.lower(Category.name) == data["name"].lower())):
+        raise _conflict("A global category with this name already exists.")
+    for key, value in data.items(): setattr(row, key, value)
     await session.commit(); return row
 
 
@@ -98,7 +102,12 @@ async def create_brand(payload: PlatformBrandCreate, _: PlatformAdmin = admin, s
     if duplicate: raise _conflict("A global brand with this name already exists.")
     data = payload.model_dump(); data["slug"] = payload.slug or slugify(payload.name)
     row = Brand(**data, is_global=True, market_id=None)
-    session.add(row); await session.commit(); return row
+    session.add(row)
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback(); raise _conflict() from exc
+    return row
 
 
 @router.patch("/brands/{brand_id}", response_model=PlatformBrandRead)
@@ -116,7 +125,9 @@ async def deactivate_brand(brand_id: UUID, _: PlatformAdmin = admin, session: As
 
 
 def _product_read(row):
-    return PlatformProductRead.model_validate(row, from_attributes=True)
+    result = PlatformProductRead.model_validate(row, from_attributes=True)
+    result.images = [{**image, "preview_url": f"/api/platform/catalog/products/{row.id}/images/{image['id']}/content"} for image in result.images]
+    return result
 
 
 @router.get("/products", response_model=ListResponse[PlatformProductRead])
@@ -131,7 +142,7 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
     rows = list((await session.scalars(statement.limit(limit).offset(offset))).unique().all())
     total = await session.scalar(select(func.count()).select_from(Product).where(*conditions)) or 0
     for row in rows: row.usage_count = await session.scalar(select(func.count(MarketProduct.id)).where(MarketProduct.product_id == row.id)) or 0
-    return ListResponse(items=rows, total=total, limit=limit, offset=offset)
+    return ListResponse(items=[_product_read(row) for row in rows], total=total, limit=limit, offset=offset)
 
 
 @router.post("/products", response_model=PlatformProductRead, status_code=201)
@@ -139,7 +150,7 @@ async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admi
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
     data = payload.model_dump(exclude={"aliases"}); row = Product(**data, is_global=True, market_id=None)
     row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
-    session.add(row); await session.commit(); await session.refresh(row); return row
+    session.add(row); await session.commit(); await session.refresh(row); return _product_read(row)
 
 
 @router.patch("/products/{product_id}", response_model=PlatformProductRead)
@@ -150,7 +161,7 @@ async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: Pl
     for key, value in data.items(): setattr(row, key, value)
     if payload.aliases is not None:
         row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
-    await session.commit(); await session.refresh(row); return row
+    await session.commit(); await session.refresh(row); return _product_read(row)
 
 
 @router.delete("/products/{product_id}", response_model=PlatformProductRead)
@@ -166,13 +177,39 @@ async def upload_image(product_id: UUID, request: Request, primary: bool = False
     if mime_type not in allowed: raise HTTPException(415, "Only PNG, JPEG, and WebP images are allowed.")
     content = await request.body()
     signatures = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
-    if len(content) > 10 * 1024 * 1024 or not content.startswith(signatures[mime_type]): raise HTTPException(422, "Invalid or oversized image.")
+    if len(content) > 10 * 1024 * 1024: raise HTTPException(413, "Image must be 10 MiB or smaller.")
+    if not content.startswith(signatures[mime_type]) or (mime_type == "image/webp" and content[8:12] != b"WEBP"):
+        raise HTTPException(422, "Image signature does not match the declared MIME type.")
     key = f"global/catalog/{row.id}/{uuid4()}{allowed[mime_type]}"
     path = storage_path_for_key(key); path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
     if primary: await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == row.id).values(is_primary=False))
     image = ProductImage(product_id=row.id, storage_key=key, mime_type=mime_type, size_bytes=len(content), quality_status="needs_review", is_primary=primary)
     session.add(image); await session.commit(); await session.refresh(image)
     return {"id": image.id, "product_id": row.id, "storage_key": image.storage_key, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": image.is_primary}
+
+
+@router.patch("/products/{product_id}/images/{image_id}/primary", response_model=dict)
+async def set_primary_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    await _global(session, Product, product_id)
+    image = await session.scalar(select(ProductImage).where(ProductImage.id == image_id, ProductImage.product_id == product_id))
+    if image is None:
+        raise HTTPException(404, "Image not found.")
+    await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == product_id).values(is_primary=False))
+    image.is_primary = True
+    await session.commit()
+    return {"id": image.id, "product_id": product_id, "storage_key": image.storage_key, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": True}
+
+
+@router.get("/products/{product_id}/images/{image_id}/content", include_in_schema=False)
+async def image_content(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    await _global(session, Product, product_id)
+    image = await session.scalar(select(ProductImage).where(ProductImage.id == image_id, ProductImage.product_id == product_id))
+    if image is None or not image.storage_key:
+        raise HTTPException(404, "Image not found.")
+    path = storage_path_for_key(image.storage_key)
+    if not path.is_file():
+        raise HTTPException(404, "Image file not found.")
+    return FileResponse(path, media_type=image.mime_type or "application/octet-stream")
 
 
 @router.delete("/products/{product_id}/images/{image_id}", status_code=204)
