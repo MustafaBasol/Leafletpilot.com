@@ -310,7 +310,9 @@ async def market_image_content(market_product_id: UUID, market_id: UUID = Depend
     row = await catalog_service.get_market_product(session, market_product_id, market_id)
     if not row.image_storage_key:
         raise HTTPException(status_code=404, detail="Image not found.")
-    path = catalog_service.storage_path_for_key(row.image_storage_key)
+    from app.services.rendering import storage_path_for_key
+
+    path = storage_path_for_key(row.image_storage_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found.")
     return FileResponse(path, media_type=row.image_mime_type or "application/octet-stream")
