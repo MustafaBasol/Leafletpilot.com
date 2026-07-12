@@ -29,6 +29,7 @@ from app.services.rendering import (
     storage_path_for_key,
 )
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
+from app.services.campaign_rendering import campaign_render_load_options
 from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
@@ -179,8 +180,8 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
     statement = (
         select(Campaign)
         .options(
+            *campaign_render_load_options(),
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
-            selectinload(Campaign.template),
             selectinload(Campaign.files),
             selectinload(Campaign.export_jobs),
             selectinload(Campaign.matching_suggestions),

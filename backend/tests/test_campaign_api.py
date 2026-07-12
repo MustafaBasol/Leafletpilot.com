@@ -12,7 +12,7 @@ from app.api.deps import get_catalog_session, get_current_user
 from app.core.config import settings
 from app.core.database import Base
 from app.main import app
-from app.models import Campaign, CampaignItem, Market, MarketUser, Template, User
+from app.models import Brand, Campaign, CampaignItem, Market, MarketUser, Product, ProductImage, Template, User
 from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign import recalculate_campaign_counts
@@ -305,7 +305,12 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
     app.dependency_overrides[get_current_user] = _override_user(user_id)
     try:
         async with session_factory() as session:
-            market = Market(id=market_id, name=f"Campaign Preview Market {market_id}", slug=f"p-{market_id}")
+            market = Market(
+                id=market_id,
+                name=f"Campaign Preview Market {market_id}",
+                slug=f"p-{market_id}",
+                promo_profile_json={"promo_title": "Market Weekend Deals"},
+            )
             user = User(id=user_id, email=f"campaign-{user_id}@example.com", is_active=True)
             membership = MarketUser(market_id=market_id, user_id=user_id, role="market_admin", is_active=True)
             template = Template(
@@ -316,6 +321,15 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
                 is_active=True,
                 config_json={"layout": "premium-market", "columns": 3},
             )
+            brand = Brand(name="Coca Cola", slug=f"coca-{market_id}", market_id=market_id)
+            product = Product(
+                name="Coca Cola 2L",
+                market_id=market_id,
+                brand=brand,
+                package_size="2L",
+                badge_text="Hafta Fırsatı",
+                images=[ProductImage(storage_key="missing-test-image.png", is_primary=True, mime_type="image/png")],
+            )
             campaign = Campaign(title="Preview <Campaign>", market_id=market_id, template=template)
             campaign.items = [
                 CampaignItem(
@@ -325,11 +339,12 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
                     price=Decimal("1.59"),
                     old_price=Decimal("1.99"),
                     currency="EUR",
+                    product=product,
                     market_id=market_id,
                     match_status="not_found",
                 )
             ]
-            session.add_all([market, user, membership, template, campaign])
+            session.add_all([market, user, membership, template, brand, product, campaign])
             await session.commit()
             campaign_id = campaign.id
             template_id = template.id
@@ -349,6 +364,10 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
             assert body["template_id"] == str(template_id)
             assert body["template_name"] == f"Premium Market {market_id}"
             assert "Preview &lt;Campaign&gt;" in body["html"]
+            assert "Market Weekend Deals" in body["html"]
+            assert 'class="product-brand">Coca Cola' in body["html"]
+            assert 'class="product-unit">2L' in body["html"]
+            assert 'class="promo-badge">Hafta Fırsatı' in body["html"]
             assert "Coca Cola 2L" in body["html"]
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)

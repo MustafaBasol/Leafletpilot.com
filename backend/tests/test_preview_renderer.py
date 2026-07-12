@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from app.models import Campaign, CampaignItem, Template
+from app.models import Brand, Campaign, CampaignItem, Market, Product, ProductImage, Template
 from app.services.preview_renderer import render_campaign_preview_html
 
 
@@ -118,6 +118,56 @@ def test_preview_renderer_renders_compact_weekly_without_errors() -> None:
     assert "Compact Weekly" in html
     assert "Kontrol gerekli" not in html
     assert "0,89€" in html
+
+
+def test_preview_renderer_renders_hydrated_market_product_graph_without_io() -> None:
+    market = Market(
+        name="Hydrated Market",
+        slug="hydrated-market",
+        promo_profile_json={"promo_title": "Market Deals"},
+    )
+    brand = Brand(name="Fresh Brand", slug="fresh-brand")
+    product = Product(
+        name="Fresh Product",
+        package_size="500g",
+        badge_text="New",
+        brand=brand,
+        images=[ProductImage(storage_key="not-present.png", is_primary=True)],
+    )
+    campaign = Campaign(
+        title="Hydrated Campaign",
+        market=market,
+        items=[
+            CampaignItem(
+                incoming_name="Fresh Product",
+                display_name="Fresh Product",
+                price=Decimal("2.49"),
+                quantity_label="2 x 500g",
+                currency="EUR",
+                match_status="matched",
+                product=product,
+            )
+        ],
+    )
+    template = Template(
+        name="Premium Market",
+        slug="premium-market",
+        template_type="premium",
+        config_json={"layout": "premium-market"},
+    )
+
+    html = render_campaign_preview_html(
+        campaign,
+        template,
+        generated_at=datetime(2026, 7, 5, 10, 0, tzinfo=UTC),
+    )
+
+    assert "Market Deals" in html
+    assert 'class="product-brand">Fresh Brand' in html
+    assert 'class="product-unit">2 x 500g' in html
+    assert 'class="promo-badge">New' in html
+    assert "Fresh Product" in html
+    assert "not-present.png" not in html
 
 
 def _campaign_with_items(title: str, match_status: str) -> Campaign:
