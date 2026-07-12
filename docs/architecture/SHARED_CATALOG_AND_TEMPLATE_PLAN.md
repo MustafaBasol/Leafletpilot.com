@@ -314,7 +314,7 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 
 ## Phase C final verification pass 3 (2026-07-12)
 
-- Final pushed HEAD: `8ae462d5833881a7cb2f8265521de15fd820417e`.
-- Current GitHub Actions Validation run `29191891923`: backend, frontend, and Docker all passed.
+- Final pushed HEAD: `ca9023b23c161e2964b61118b4a914feb4c24069` (documentation-only follow-up to the tested acceptance commit `8ae462d`).
+- Current GitHub Actions Validation run `29191970773` for the tested acceptance commit: backend, frontend, and Docker all passed.
 - Review-thread certification: GraphQL reports `reviews.totalCount: 0`, `reviewThreads.totalCount: 0`, unresolved threads `0`, and `reviewDecision: null`.
 - Final decision: Phase C remains incomplete solely because authenticated seeded browser catalog acceptance/screenshots and production Compose validation were not completed; Phase D is not safe to begin.
