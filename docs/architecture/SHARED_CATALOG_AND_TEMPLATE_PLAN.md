@@ -280,3 +280,11 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 - Acceptance evidence: no production access, deployment, merge, or customer data. No browser screenshot evidence or isolated PostgreSQL seed evidence is claimed yet. Existing ignored `artifacts/` remains preserved.
 - Deviations/known limitations: raw-body image upload remains intentional because the current environment lacks multipart support; image decoding/dimensions remain deferred. Full backend pytest, frontend validate/platform/smoke, Docker checks, and CI completion still need to run.
 - Phase D entry criteria: CI green; full route/image tests plus isolated PostgreSQL API seed pass; isolated UI/browser evidence passes with no console errors; market-user denial and market global-mutation denial are proven; docs and PR body reflect those results; no unresolved blocking review feedback.
+
+## Phase C verification update
+
+- GitHub Actions run `29190597011`: backend, frontend, and Docker checks all passed.
+- Disposable PostgreSQL 16.14 on `127.0.0.1:55433`: focused platform/catalog suite `32 passed, 1 warning`; container removed after the run. The full backend run against this database did not finish within the run window and is not counted as passed.
+- Frontend: `npm.cmd run validate` passed; `npm.cmd run test:platform` passed (`15 passed`); `npm.cmd run build` passed; `npm.cmd run smoke` passed.
+- Infrastructure: `python -m compileall app` passed; Alembic sole head is `20260712_0013 (head)`; `git diff --check` passed. Production Compose config validation was attempted read-only with placeholder local values but stopped on additional required environment variables; no services were started.
+- Completion decision: Phase C remains incomplete. Missing evidence is browser/UI acceptance with screenshots and no-console proof, a completed full backend run against configured `TEST_DATABASE_URL`, and a complete DB-backed mutation/image route matrix beyond the focused security/contract suite. Phase D is not safe to begin.
