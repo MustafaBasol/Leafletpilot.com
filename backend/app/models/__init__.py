@@ -1,6 +1,6 @@
 from app.models.activity import ActivityLog
 from app.models.campaign import Campaign, CampaignItem, MatchingSuggestion
-from app.models.catalog import Brand, Category, Product, ProductAlias, ProductImage
+from app.models.catalog import Brand, Category, MarketProduct, Product, ProductAlias, ProductImage
 from app.models.export import CampaignFile, ExportJob
 from app.models.invitation import INVITATION_STATUSES, MarketInvitation
 from app.models.market import MARKET_USER_ROLES, Market, MarketUser
@@ -24,6 +24,7 @@ __all__ = [
     "INVITATION_STATUSES",
     "MARKET_USER_ROLES",
     "Market",
+    "MarketProduct",
     "MarketInvitation",
     "MarketUser",
     "MatchingSuggestion",

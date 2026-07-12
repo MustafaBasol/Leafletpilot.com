@@ -55,6 +55,8 @@ async def list_templates(
 
 
 async def create_template(session: AsyncSession, payload: TemplateCreate, market_id: UUID | None) -> Template:
+    if payload.is_global:
+        raise _global_mutation_forbidden()
     data = payload.model_dump()
     data["slug"] = data["slug"] or slugify(data["name"])
     data["market_id"] = resolve_market_scope(data["is_global"], market_id)
@@ -72,6 +74,8 @@ async def render_template_preview(session: AsyncSession, template_id: UUID, mark
     if market_id is None:
         raise _not_found()
     template = await get_template(session, template_id, market_id)
+    if template.is_global:
+        raise _global_mutation_forbidden()
     market = await session.get(Market, market_id)
     if market is None:
         raise _not_found()
@@ -165,3 +169,7 @@ async def _persist(session: AsyncSession, template: Template) -> Template:
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found.")
+
+
+def _global_mutation_forbidden() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Global templates are platform-managed.")

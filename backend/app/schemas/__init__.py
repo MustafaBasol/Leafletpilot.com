@@ -29,6 +29,7 @@ from app.schemas.product import (
     ProductRead,
     ProductUpdate,
 )
+from app.schemas.market_product import MarketProductAdoptCreate, MarketProductRead, PrivateMarketProductCreate
 from app.schemas.template import TemplateCreate, TemplateRead, TemplateUpdate
 
 __all__ = [
@@ -66,6 +67,9 @@ __all__ = [
     "ProductImageRead",
     "ProductRead",
     "ProductUpdate",
+    "MarketProductAdoptCreate",
+    "MarketProductRead",
+    "PrivateMarketProductCreate",
     "TemplateCreate",
     "TemplateRead",
     "TemplateUpdate",

@@ -1,6 +1,6 @@
 # Shared Catalog and Template Architecture Plan
 
-Status: Phase A complete; Phase B ready to implement.
+Status: Phase B complete; safe to continue to Phase C after review.
 
 This is a living architecture and implementation record for the shared global catalog and template library. Work is limited to synthetic or isolated test data. Production access, deployment, merge, and destructive data changes are out of scope.
 
@@ -215,10 +215,28 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 - Template plan visibility and version publication need API shape validation during Phase E.
 - The provisional limits require later product/billing confirmation; they are documented defaults, not billing commitments.
 
+## Phase B record
+
+- Status: complete.
+- Objective: deliver the additive backend shared-catalog foundation without changing campaign or template foreign keys.
+- Migration: `20260712_0013_shared_catalog_foundation.py`; adds nullable `markets.subscription_plan`, creates `market_products`, and backfills existing market-scoped products as legacy-compatible private associations.
+- New model/service surface: `MarketProduct`, `MarketProductRead`, adoption/private-create schemas, `services.entitlements`, global search, adoption, private creation, effective-product resolution, and global mutation guards.
+- Compatibility: existing `Product`, `ProductImage`, `ProductAlias`, `CampaignItem.product_id`, `Template.id`, and campaign template references remain unchanged. Existing market-scoped product rows are preserved and retain their storage/image relationships.
+- Authorization: market catalog and template services now reject global mutations; new adoption/private endpoints require authenticated market mutation roles and entitlement checks.
+- Focused tests: `12 passed, 2 skipped, 2 warnings` (`tests/test_shared_catalog_foundation.py` plus catalog API tests).
+- Full backend tests: `117 passed, 30 skipped, 5 warnings`.
+- Compile verification: source compilation passed via a no-write compile check (`compile-source-ok`). The literal `python -m compileall app` remains affected by permission-protected existing `__pycache__` paths on this workstation.
+- Alembic one-head check: passed; `20260712_0013 (head)`.
+- `git diff --check`: passed.
+- Isolated PostgreSQL upgrade: not run because Docker is unavailable in this environment and no reachable test PostgreSQL service is configured; all database-backed tests remain skipped for that reason.
+- Deviations: image upload/signature validation was not implemented because no product-image upload endpoint exists in the current repository; Phase B only preserves existing metadata/storage keys and defines safe override fields.
+- Risks discovered: the migration backfill currently copies legacy product presentation values into associations but intentionally leaves canonical matching/relinking to the later compatibility-read phase; ambiguous identity matches must not be auto-merged.
+- Unresolved: database-backed migration row-count verification and adoption API integration tests require isolated PostgreSQL; platform global catalog routes remain Phase C.
+
 ## Exact next steps
 
-1. Commit this Phase A document separately as `docs: define shared catalog and template architecture`.
-2. Implement the additive Phase B migration and model/service foundation.
-3. Run focused tests, full backend pytest, compileall with a writable cache prefix, isolated PostgreSQL upgrade, one-head check, and `git diff --check`.
-4. Update this document with Phase B evidence and limitations.
-5. Push the feature branch and create a draft PR targeting `main`; do not mark ready, merge, or deploy.
+1. Commit the Phase B backend foundation and this documentation update separately from Phase A.
+2. Push the feature branch and create a draft PR targeting `main`.
+3. In an isolated PostgreSQL environment, run the migration and verify row counts, IDs, storage keys, aliases, campaign items, and template references.
+4. Resolve any migration or DB-backed test findings before Phase C.
+5. Implement Phase C platform global catalog management; do not mark ready, merge, or deploy.

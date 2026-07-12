@@ -8,6 +8,7 @@ from app.core.roles import MARKET_MUTATION_ROLES
 from app.schemas.brand import BrandCreate, BrandRead, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
 from app.schemas.common import ListResponse
+from app.schemas.market_product import MarketProductAdoptCreate, MarketProductRead, PrivateMarketProductCreate
 from app.schemas.product import ProductAliasCreate, ProductAliasRead, ProductCreate, ProductRead, ProductUpdate
 from app.services import catalog as catalog_service
 
@@ -170,6 +171,25 @@ async def list_products(
     return ListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
+@router.get("/products/global-search", response_model=ListResponse[ProductRead])
+async def search_global_products(
+    search: str | None = None,
+    barcode: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    market_id: UUID = Depends(get_current_market_id),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> ListResponse[ProductRead]:
+    items, total = await catalog_service.search_global_products(
+        session,
+        search=search,
+        barcode=barcode,
+        limit=limit,
+        offset=offset,
+    )
+    return ListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
 @router.post("/products", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
 async def create_product(
     payload: ProductCreate,
@@ -177,6 +197,38 @@ async def create_product(
     session: AsyncSession = Depends(get_catalog_session),
 ) -> ProductRead:
     return await catalog_service.create_product(session, payload, market_id)
+
+
+@router.post("/market-products/adopt", response_model=MarketProductRead, status_code=status.HTTP_201_CREATED)
+async def adopt_global_product(
+    payload: MarketProductAdoptCreate,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> MarketProductRead:
+    return await catalog_service.adopt_global_product(
+        session,
+        market_id=market_id,
+        product_id=payload.product_id,
+        regular_price=payload.regular_price,
+        promo_price=payload.promo_price,
+        currency=payload.currency,
+    )
+
+
+@router.post("/market-products/private", response_model=MarketProductRead, status_code=status.HTTP_201_CREATED)
+async def create_private_market_product(
+    payload: PrivateMarketProductCreate,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> MarketProductRead:
+    return await catalog_service.create_private_market_product(
+        session,
+        market_id=market_id,
+        private_name=payload.private_name,
+        regular_price=payload.regular_price,
+        promo_price=payload.promo_price,
+        currency=payload.currency,
+    )
 
 
 @router.get("/products/{product_id}", response_model=ProductRead)
