@@ -265,7 +265,13 @@ def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
     market_product = getattr(item, "_market_product", None)
     effective = resolve_effective_product(product, market_product)
     brand_name = market_product.private_brand_text if market_product and market_product.private_brand_text else (product.brand.name if product is not None and product.brand is not None else None)
-    unit = item.quantity_label or item.unit_label or effective.name
+    unit = (
+        item.quantity_label
+        or item.unit_label
+        or (market_product.private_package_size if market_product else None)
+        or (product.package_size if product is not None else None)
+        or effective.name
+    )
     badge = market_product.badge_text if market_product and market_product.badge_text else (product.badge_text if product is not None else None)
     currency = item.currency or (market_product.currency if market_product else "EUR")
     old_price = ""
