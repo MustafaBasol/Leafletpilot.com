@@ -38,3 +38,6 @@ node_modules/
 dist/
 
 .env.production.local
+
+# Phase acceptance evidence is local-only and must never be committed.
+artifacts/
