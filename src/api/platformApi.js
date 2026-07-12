@@ -27,18 +27,22 @@ export function redirectToPlatformLoginIfNeeded() {
   }
 }
 
-async function request(path, { method = "GET", params, body, skipAuth = false } = {}) {
+async function request(path, { method = "GET", params, body, headers: extraHeaders, skipAuth = false } = {}) {
   const url = new URL(`${apiBaseUrl}${path}`);
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
   });
-  const headers = { Accept: "application/json" };
+  const headers = { Accept: "application/json", ...(extraHeaders || {}) };
   const token = skipAuth ? "" : getPlatformAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const options = { method, headers };
   if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
+    if (body instanceof Blob || body instanceof ArrayBuffer) {
+      options.body = body;
+    } else {
+      headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
   }
   const response = await fetch(url.toString(), options);
   const text = await response.text();
@@ -53,6 +57,13 @@ async function request(path, { method = "GET", params, body, skipAuth = false } 
     });
   }
   return responseBody;
+}
+
+async function requestImage(path) {
+  const headers = { Authorization: `Bearer ${getPlatformAccessToken()}` };
+  const response = await fetch(`${apiBaseUrl}${path}`, { headers });
+  if (!response.ok) throw new ApiError(`Image request failed (${response.status})`, { status: response.status });
+  return URL.createObjectURL(await response.blob());
 }
 
 export const platformApi = {
@@ -73,11 +84,18 @@ export const platformApi = {
   createManualOwnerInvitationLink: (id) => request(`/platform/markets/${id}/owner-invitation/manual-link`, { method: "POST" }),
   listGlobalCategories: (params) => request("/platform/catalog/categories", { params }),
   createGlobalCategory: (body) => request("/platform/catalog/categories", { method: "POST", body }),
+  updateGlobalCategory: (id, body) => request(`/platform/catalog/categories/${id}`, { method: "PATCH", body }),
   deactivateGlobalCategory: (id) => request(`/platform/catalog/categories/${id}`, { method: "DELETE" }),
   listGlobalBrands: (params) => request("/platform/catalog/brands", { params }),
   createGlobalBrand: (body) => request("/platform/catalog/brands", { method: "POST", body }),
+  updateGlobalBrand: (id, body) => request(`/platform/catalog/brands/${id}`, { method: "PATCH", body }),
   deactivateGlobalBrand: (id) => request(`/platform/catalog/brands/${id}`, { method: "DELETE" }),
   listGlobalProducts: (params) => request("/platform/catalog/products", { params }),
   createGlobalProduct: (body) => request("/platform/catalog/products", { method: "POST", body }),
+  updateGlobalProduct: (id, body) => request(`/platform/catalog/products/${id}`, { method: "PATCH", body }),
   deactivateGlobalProduct: (id) => request(`/platform/catalog/products/${id}`, { method: "DELETE" }),
+  uploadGlobalProductImage: (id, blob, { mimeType, primary = false } = {}) => request(`/platform/catalog/products/${id}/images`, { method: "POST", params: { primary }, body: blob, headers: { "Content-Type": mimeType } }),
+  setGlobalProductPrimaryImage: (productId, imageId) => request(`/platform/catalog/products/${productId}/images/${imageId}/primary`, { method: "PATCH" }),
+  removeGlobalProductImage: (productId, imageId) => request(`/platform/catalog/products/${productId}/images/${imageId}`, { method: "DELETE" }),
+  getGlobalProductImageUrl: (productId, imageId) => requestImage(`/platform/catalog/products/${productId}/images/${imageId}/content`),
 };
