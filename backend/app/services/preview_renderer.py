@@ -7,6 +7,7 @@ from html import escape
 from typing import Any
 
 from app.models import Campaign, CampaignItem, Template
+from app.services.catalog import resolve_effective_product
 
 
 DEFAULT_TEMPLATE_SLUG = "premium-market"
@@ -261,16 +262,18 @@ def render_campaign_preview_html(
 def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
     display_name = item.display_name or item.incoming_name
     product = item.product
-    brand_name = product.brand.name if product is not None and product.brand is not None else None
-    unit = item.quantity_label or item.unit_label or (product.package_size if product is not None else None)
-    badge = product.badge_text if product is not None else None
-    currency = item.currency or "EUR"
+    market_product = getattr(item, "_market_product", None)
+    effective = resolve_effective_product(product, market_product)
+    brand_name = market_product.private_brand_text if market_product and market_product.private_brand_text else (product.brand.name if product is not None and product.brand is not None else None)
+    unit = item.quantity_label or item.unit_label or effective.name
+    badge = market_product.badge_text if market_product and market_product.badge_text else (product.badge_text if product is not None else None)
+    currency = item.currency or (market_product.currency if market_product else "EUR")
     old_price = ""
     if config.get("show_old_price", True) and item.old_price is not None:
         old_price = f'<span class="old-price">{_text(_format_money(item.old_price, currency))}</span>'
 
     return f"""<article class="product-card">
-  {_render_product_image(item)}
+  {_render_product_image(item, effective)}
   <div>
     {f'<p class="product-brand">{_text(brand_name)}</p>' if brand_name else ''}
     <h2>{_text(display_name)}</h2>
@@ -284,7 +287,19 @@ def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
 </article>"""
 
 
-def _render_product_image(item: CampaignItem) -> str:
+def _render_product_image(item: CampaignItem, effective=None) -> str:
+    if effective is None:
+        effective = resolve_effective_product(item.product, getattr(item, "_market_product", None))
+    if effective.image_storage_key:
+        try:
+            from app.services.rendering import storage_path_for_key
+            path = storage_path_for_key(effective.image_storage_key)
+            if path.is_file() and path.stat().st_size > 0:
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                mime_type = escape(getattr(getattr(item, "_market_product", None), "image_mime_type", None) or "image/png")
+                return f'<img class="product-image" src="data:{mime_type};base64,{encoded}" alt="{_attr(item.display_name or item.incoming_name)}">'
+        except (OSError, ValueError):
+            pass
     images = list(item.product.images) if item.product is not None else []
     image = next((candidate for candidate in images if candidate.is_primary), None)
     image = image or (images[0] if images else None)

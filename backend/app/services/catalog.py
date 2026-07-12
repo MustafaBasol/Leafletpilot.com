@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Brand, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
 from app.schemas.brand import BrandCreate, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryUpdate
+from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
 
@@ -405,9 +406,7 @@ async def search_global_products(
     limit: int,
     offset: int,
 ) -> tuple[list[Product], int]:
-    statement = select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(
-        Product.is_global.is_(True), Product.is_active.is_(True)
-    )
+    statement = select(Product).options(selectinload(Product.aliases), selectinload(Product.images), selectinload(Product.brand), selectinload(Product.category)).where(Product.is_global.is_(True))
     if search:
         normalized = normalize_alias(search)
         statement = statement.where(
@@ -416,6 +415,8 @@ async def search_global_products(
                 Product.short_name.ilike(f"%{search}%"),
                 Product.barcode.ilike(f"%{search}%"),
                 Product.aliases.any(ProductAlias.normalized_alias.ilike(f"%{normalized}%")),
+                Product.brand.has(Brand.name.ilike(f"%{search}%")),
+                Product.category.has(Category.name.ilike(f"%{search}%")),
             )
         )
     if barcode:
@@ -431,6 +432,7 @@ async def adopt_global_product(
     regular_price: Any = None,
     promo_price: Any = None,
     currency: str = "EUR",
+    **values: Any,
 ) -> MarketProduct:
     market = await session.get(Market, market_id)
     product = await session.scalar(
@@ -450,6 +452,7 @@ async def adopt_global_product(
         regular_price=regular_price,
         promo_price=promo_price,
         currency=currency,
+        **{key: value for key, value in values.items() if value is not None},
     )
     session.add(association)
     return await _persist(session, association)
@@ -463,6 +466,7 @@ async def create_private_market_product(
     regular_price: Any = None,
     promo_price: Any = None,
     currency: str = "EUR",
+    **values: Any,
 ) -> MarketProduct:
     market = await session.get(Market, market_id)
     if market is None:
@@ -473,15 +477,127 @@ async def create_private_market_product(
     )
     if not has_capacity(current_count or 0, capabilities.private_products_limit):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Private product limit reached for this plan.")
+    duplicate_conditions = [MarketProduct.market_id == market_id]
+    if values.get("private_barcode"):
+        duplicate_conditions.append(MarketProduct.private_barcode == values["private_barcode"])
+    if values.get("private_sku"):
+        duplicate_conditions.append(MarketProduct.private_sku == values["private_sku"])
+    if len(duplicate_conditions) > 1 and await session.scalar(select(MarketProduct).where(*duplicate_conditions, MarketProduct.product_id.is_(None))):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Barcode or SKU is already used by a custom product in this market.")
     association = MarketProduct(
         market_id=market_id,
         private_name=private_name,
         regular_price=regular_price,
         promo_price=promo_price,
         currency=currency,
+        **{key: value for key, value in values.items() if value is not None},
     )
     session.add(association)
     return await _persist(session, association)
+
+
+async def list_my_market_products(session: AsyncSession, market_id: UUID) -> list[MarketProduct]:
+    result = await session.scalars(
+        select(MarketProduct)
+        .options(
+            selectinload(MarketProduct.product).selectinload(Product.brand),
+            selectinload(MarketProduct.product).selectinload(Product.category),
+            selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.category_override),
+        )
+        .where(MarketProduct.market_id == market_id)
+        .order_by(MarketProduct.sort_order, MarketProduct.created_at)
+    )
+    return list(result.unique().all())
+
+
+async def get_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> MarketProduct:
+    row = await session.scalar(
+        select(MarketProduct)
+        .options(
+            selectinload(MarketProduct.product).selectinload(Product.brand),
+            selectinload(MarketProduct.product).selectinload(Product.category),
+            selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.category_override),
+        )
+        .where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id)
+    )
+    if row is None:
+        raise _not_found("Market product")
+    return row
+
+
+async def update_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID, payload: MarketProductUpdate) -> MarketProduct:
+    row = await get_market_product(session, market_product_id, market_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(row, key, value)
+    return await _persist(session, row)
+
+
+def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
+    product = row.product
+    effective = resolve_effective_product(product, row)
+    global_brand = product.brand.name if product and product.brand else None
+    global_category = product.category.name if product and product.category else None
+    image_url = effective.image_url
+    if effective.image_storage_key and not image_url:
+        image_url = f"/api/catalog/my-products/{row.id}/image/content"
+    return {
+        "id": row.id, "market_id": row.market_id, "product_id": row.product_id or row.legacy_product_id,
+        "name": effective.name, "brand": row.private_brand_text or global_brand,
+        "category": row.category_override.name if row.category_override else global_category,
+        "package_size": row.private_package_size or (product.package_size if product else None),
+        "package_type": row.private_package_type or (product.package_type if product else None),
+        "regular_price": row.regular_price if row.regular_price is not None else (product.regular_price if product else None),
+        "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
+        "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),
+        "stock_note": row.stock_note, "sort_order": row.sort_order, "is_active": row.is_active,
+        "source_type": "Shared product" if row.product_id else "Custom product", "image_url": image_url,
+        "image_override_active": bool(row.image_storage_key),
+        "promo_active": row.promo_price is not None,
+    }
+
+
+async def upload_market_product_image(session: AsyncSession, market_product_id: UUID, market_id: UUID, content: bytes, mime_type: str) -> MarketProduct:
+    from app.services.rendering import storage_path_for_key
+    row = await get_market_product(session, market_product_id, market_id)
+    market = await session.get(Market, market_id)
+    require_capability(market, "product_image_override")
+    allowed = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+    signatures = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
+    if mime_type not in allowed:
+        raise HTTPException(status_code=415, detail="Only PNG, JPEG, and WebP images are allowed.")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be 10 MiB or smaller.")
+    if not content.startswith(signatures[mime_type]) or (mime_type == "image/webp" and content[8:12] != b"WEBP"):
+        raise HTTPException(status_code=422, detail="Image signature does not match the declared MIME type.")
+    key = f"markets/{market_id}/catalog/{row.id}/{__import__('uuid').uuid4()}{allowed[mime_type]}"
+    path = storage_path_for_key(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    old_key = row.image_storage_key
+    row.image_storage_key, row.image_mime_type, row.image_quality_status = key, mime_type, "needs_review"
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        path.unlink(missing_ok=True)
+        raise
+    if old_key:
+        storage_path_for_key(old_key).unlink(missing_ok=True)
+    return await get_market_product(session, market_product_id, market_id)
+
+
+async def remove_market_product_image(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> None:
+    from app.services.rendering import storage_path_for_key
+    row = await get_market_product(session, market_product_id, market_id)
+    market = await session.get(Market, market_id)
+    require_capability(market, "product_image_override")
+    old_key = row.image_storage_key
+    row.image_storage_key = row.image_url = row.image_mime_type = row.image_quality_status = None
+    await session.commit()
+    if old_key:
+        storage_path_for_key(old_key).unlink(missing_ok=True)
 
 
 def _global_mutation_forbidden() -> HTTPException:
