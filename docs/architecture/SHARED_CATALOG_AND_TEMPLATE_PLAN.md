@@ -311,3 +311,10 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 - Permission evidence: unauthenticated and normal market bearer tokens received HTTP 401 on platform category/product routes and market tokens could not mutate platform products/brands. Cross-market association isolation and expired-token transcript remain unrecorded.
 - Review state and CI: review decision and unresolved thread count must be read from GitHub thread-level data before completion; no merge/deploy/production action occurred. Production Compose validation remains blocked by missing complete local environment values, with no services started.
 - Completion decision: Phase C remains incomplete because authenticated browser acceptance, complete review-thread certification, production Compose validation, and a broader market-route no-global-mutation transcript remain outstanding. Phase D is not safe to begin.
+
+## Phase C final verification pass 3 (2026-07-12)
+
+- Final pushed HEAD: `8ae462d5833881a7cb2f8265521de15fd820417e`.
+- Current GitHub Actions Validation run `29191891923`: backend, frontend, and Docker all passed.
+- Review-thread certification: GraphQL reports `reviews.totalCount: 0`, `reviewThreads.totalCount: 0`, unresolved threads `0`, and `reviewDecision: null`.
+- Final decision: Phase C remains incomplete solely because authenticated seeded browser catalog acceptance/screenshots and production Compose validation were not completed; Phase D is not safe to begin.
