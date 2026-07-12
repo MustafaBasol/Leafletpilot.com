@@ -71,4 +71,13 @@ export const platformApi = {
   rotateOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation/rotate`, { method: "POST", body }),
   revokeOwnerInvitation: (id) => request(`/platform/markets/${id}/owner-invitation/revoke`, { method: "POST" }),
   createManualOwnerInvitationLink: (id) => request(`/platform/markets/${id}/owner-invitation/manual-link`, { method: "POST" }),
+  listGlobalCategories: (params) => request("/platform/catalog/categories", { params }),
+  createGlobalCategory: (body) => request("/platform/catalog/categories", { method: "POST", body }),
+  deactivateGlobalCategory: (id) => request(`/platform/catalog/categories/${id}`, { method: "DELETE" }),
+  listGlobalBrands: (params) => request("/platform/catalog/brands", { params }),
+  createGlobalBrand: (body) => request("/platform/catalog/brands", { method: "POST", body }),
+  deactivateGlobalBrand: (id) => request(`/platform/catalog/brands/${id}`, { method: "DELETE" }),
+  listGlobalProducts: (params) => request("/platform/catalog/products", { params }),
+  createGlobalProduct: (body) => request("/platform/catalog/products", { method: "POST", body }),
+  deactivateGlobalProduct: (id) => request(`/platform/catalog/products/${id}`, { method: "DELETE" }),
 };

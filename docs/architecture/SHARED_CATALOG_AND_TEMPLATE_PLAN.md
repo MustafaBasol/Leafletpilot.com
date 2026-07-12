@@ -256,3 +256,16 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 2. Push the feature branch and create a draft PR targeting `main`.
 3. Implement Phase C platform global catalog management on this branch; retain the migration's structural-rollback limitation in its operator guidance.
 4. Keep the PR draft; do not mark ready, merge, or deploy.
+
+## Phase C — platform admin global catalog management
+
+- Status: implementation complete for the first platform-admin management slice; isolated acceptance and full CI rehearsal remain required before Phase D.
+- API design: dedicated authenticated routes under `/platform/catalog/categories`, `/platform/catalog/brands`, `/platform/catalog/products`, and `/platform/catalog/products/{id}/images`. These routes use `get_current_platform_admin` and do not depend on market membership.
+- UI design: Platform Admin navigation now exposes Global catalog with category, brand, and product list/search/create/deactivate flows and loading, empty, and error states.
+- Storage design: uploaded bytes are accepted only as PNG, JPEG, or WebP with MIME, signature, and 10 MiB checks. Keys are generated under `global/catalog/{product_id}/`; raw filesystem paths are never returned. Primary designation clears other primary images.
+- Permission boundaries: existing `/catalog` market routes retain their global-mutation denial. Platform catalog routes require a platform-admin bearer token; market tokens do not satisfy that dependency.
+- Files changed: `backend/app/api/routes/platform_catalog.py`, `backend/app/schemas/platform_catalog.py`, `backend/app/api/router.py`, `src/api/platformApi.js`, `src/pages/platform/PlatformAdminLayout.jsx`, `src/pages/platform/PlatformCatalog.jsx`, and `src/App.jsx`.
+- Migration: none; existing global catalog tables and image metadata are sufficient, preserving Product, ProductImage, ProductAlias, and CampaignItem IDs.
+- Tests/evidence: source syntax check passed, frontend production build passed, existing focused catalog/foundation tests passed (`12 passed, 2 skipped`). Full backend and isolated PostgreSQL acceptance are pending in this workstation pass.
+- Deviations/known limitations: image transport is a raw image request (`Content-Type` plus request body) to avoid adding a multipart dependency; image dimensions/decoding are deferred. The first UI slice exposes create/deactivate and search; edit forms, previews, replace/remove controls, and complete localized copy remain follow-up work within Phase C.
+- Exact Phase D next steps: complete edit/image-management UI, add dedicated platform route tests and isolated PostgreSQL seed/acceptance evidence, update PR metadata, then review unresolved threads before considering Phase D.
