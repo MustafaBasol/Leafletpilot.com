@@ -79,7 +79,7 @@ async def render_template_preview(session: AsyncSession, template_id: UUID, mark
         (
             await session.scalars(
                 select(Product)
-                .options(selectinload(Product.images))
+                .options(selectinload(Product.brand), selectinload(Product.images))
                 .where(Product.market_id == market_id, Product.is_active.is_(True))
                 .order_by(Product.name)
                 .limit(8)
@@ -95,6 +95,7 @@ async def render_template_preview(session: AsyncSession, template_id: UUID, mark
         currency=market.currency,
         items=[],
     )
+    campaign.market = market
     campaign.items = [
         CampaignItem(
             id=uuid4(),

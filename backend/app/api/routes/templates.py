@@ -8,8 +8,15 @@ from app.core.roles import MarketRole
 from app.schemas.common import ListResponse
 from app.schemas.template import TemplateCreate, TemplatePreviewResponse, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
+from app.services.template_presets import FLYER_PRESETS
 
 router = APIRouter(prefix="/templates", tags=["templates"])
+
+
+@router.get("/presets")
+async def list_flyer_presets() -> dict:
+    """Return the supported slot-count presets for the constrained flyer builder."""
+    return {"items": list(FLYER_PRESETS.values())}
 
 
 @router.get("", response_model=ListResponse[TemplateRead])

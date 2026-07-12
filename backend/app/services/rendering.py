@@ -8,15 +8,12 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, Product
-from app.services.preview_renderer import (
-    render_campaign_preview_html,
-)
+from app.models import Campaign, CampaignFile, ExportJob
+from app.services.campaign_rendering import get_campaign_for_render
+from app.services.preview_renderer import render_campaign_preview_html
 
 logger = logging.getLogger(__name__)
 
@@ -249,16 +246,7 @@ def is_missing_chromium_error(message: str) -> bool:
 
 
 async def _get_campaign_for_render(session: AsyncSession, campaign_id: UUID, market_id: UUID) -> Campaign:
-    statement = (
-        select(Campaign)
-        .options(
-            selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
-            selectinload(Campaign.items).selectinload(CampaignItem.product).selectinload(Product.images),
-            selectinload(Campaign.template),
-        )
-        .where(Campaign.id == campaign_id, Campaign.market_id == market_id)
-    )
-    campaign = await session.scalar(statement)
+    campaign = await get_campaign_for_render(session, campaign_id, market_id)
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found.")
     return campaign

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     text,
@@ -119,6 +121,11 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     barcode: Mapped[str | None] = mapped_column(String(64))
     package_size: Mapped[str | None] = mapped_column(String(64))
     package_type: Mapped[str | None] = mapped_column(String(64))
+    regular_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    promo_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    badge_text: Mapped[str | None] = mapped_column(String(64))
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     quality_score: Mapped[int | None] = mapped_column(Integer)

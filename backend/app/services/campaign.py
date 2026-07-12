@@ -29,6 +29,7 @@ from app.services.rendering import (
     storage_path_for_key,
 )
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
+from app.services.campaign_rendering import campaign_render_load_options
 from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
@@ -104,7 +105,8 @@ async def create_campaign(
     scoped_market_id = require_market_id(market_id)
     data = payload.model_dump(exclude={"items"})
     if data.get("template_id") is not None:
-        await validate_visible_template(session, data["template_id"], scoped_market_id)
+        template = await validate_visible_template(session, data["template_id"], scoped_market_id)
+        _validate_template_slots(template, len(payload.items))
     campaign = Campaign(**data, market_id=scoped_market_id, status="draft")
     campaign.items = [
         _build_campaign_item(item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
@@ -178,8 +180,8 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
     statement = (
         select(Campaign)
         .options(
+            *campaign_render_load_options(),
             selectinload(Campaign.items).selectinload(CampaignItem.matching_suggestions),
-            selectinload(Campaign.template),
             selectinload(Campaign.files),
             selectinload(Campaign.export_jobs),
             selectinload(Campaign.matching_suggestions),
@@ -506,6 +508,19 @@ async def validate_visible_template(session: AsyncSession, template_id: UUID, ma
             detail="template_id must reference an active template visible to the current market.",
         )
     return template
+
+
+def _validate_template_slots(template: Template, item_count: int) -> None:
+    config = template.config_json if isinstance(template.config_json, dict) else {}
+    slot_count = config.get("slot_count")
+    if slot_count is None:
+        return
+    try:
+        slots = int(slot_count)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Template slot_count must be an integer.") from exc
+    if item_count > slots:
+        raise HTTPException(status_code=422, detail=f"Template requires at most {slots} products.")
 
 
 async def _get_default_template(session: AsyncSession, market_id: UUID) -> Template | None:

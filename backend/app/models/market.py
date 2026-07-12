@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -28,6 +29,7 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     logo_url: Mapped[str | None] = mapped_column(String(1000))
     primary_color: Mapped[str | None] = mapped_column(String(32))
     secondary_color: Mapped[str | None] = mapped_column(String(32))
+    promo_profile_json: Mapped[dict | None] = mapped_column(JSONB)
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
     language: Mapped[str] = mapped_column(String(16), default="tr", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)
