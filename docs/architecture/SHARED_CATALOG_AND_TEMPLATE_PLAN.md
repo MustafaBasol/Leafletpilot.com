@@ -446,3 +446,26 @@ Backend compile and full local suite passed: `138 passed, 31 skipped`. Frontend 
 - Frontend acceptance: `npm.cmd run validate` passed, platform tests passed (`19 passed`), production build passed with `--configLoader runner`, and `npm.cmd run smoke` passed after making the smoke harness use the same writable config-loader mode.
 - CI/review state before final harness refinement: remote CI was initially blocked by a test-only asyncpg pool/event-loop issue; the fix is `3f77354`. PR #24 was created as a draft. Final CI/review state is recorded below after the corrected push.
 - Final formal acceptance: the corrected branch was pushed to PR #24; the final pushed HEAD passed backend, frontend, and Docker CI. Thread-aware review fetch returned zero reviews, zero conversation comments, and zero review threads. Phase E is complete; Phase F is safe only after the normal product/release review decision, and no Phase F work was started.
+
+## Phase F — campaign builder template integration
+
+- Status: implementation slice complete on `feature/campaign-builder-template-integration`; no merge, deployment, or production access occurred.
+- Migration: `20260713_0016_campaign_builder_integration` is additive after `20260713_0015`. It adds campaign `builder_config_json`, `snapshot_json`, `frozen_at`, and `finalized_at`, plus nullable `campaign_items.market_product_id`. Existing `CampaignItem.product_id` remains compatible. Downgrade removes only these additive columns and the new foreign key/index; frozen data created by the migration is not recoverable after downgrade without backup restore.
+
+### Workflow and resolution rules
+
+The builder now exposes `GET /api/campaigns/builder/options` with eligible published templates, active market products, and export limits. The market flow is details, template selection, market-product selection/order, content configuration, preview, and save/finalize. Draft and archived templates are excluded; template selection is validated again by the backend for ownership, publication, visibility, and plan eligibility.
+
+Global, adopted, and custom templates continue to reference the exact `Template.id`; the row is the immutable version reference and there is no latest-version lookup at render time. A selected market product is validated against the current market and active state. Resolution keeps market overrides ahead of canonical values, with canonical image/name/category fallbacks and placeholder behavior; canonical `Product` rows are never mutated. Private products use `market_product_id` while legacy/global campaigns continue using `product_id`.
+
+### Freeze and preview/export parity
+
+Drafts resolve live. `POST /api/campaigns/{id}/finalize` validates the selected template and slot count, records the exact template version, ordered product identities, campaign values, locale/currency, and builder configuration in `snapshot_json`, then marks the campaign approved/frozen. Frozen campaigns reject destructive detail/item edits; a later revision should be a duplicate. Preview and export already share `render_campaign_preview_html`; `build_campaign_render_payload` is the single contract used to form the version-safe snapshot.
+
+### Tests and acceptance
+
+Relevant regression tests passed locally: `16 passed, 4 skipped` across campaign API, preview renderer, rendering, and Phase E template acceptance. Frontend production build passed. PostgreSQL 16 rehearsal and the deterministic Phase F browser harness/screenshots are not yet run in this implementation slice; no Phase F acceptance artifacts or CI/review certification are claimed.
+
+### Phase G entry criteria
+
+Run the isolated PostgreSQL seed and migration rehearsal, add end-to-end freeze/re-export and preview/export parity assertions, execute the 14-capture browser harness, certify CI and review threads, and verify Telegram regression coverage before declaring Phase G safe.
