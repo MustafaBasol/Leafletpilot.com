@@ -4,7 +4,7 @@ import { isRealApiEnabled } from "../api/config.js";
 import { outputFormats, templates as mockTemplates } from "../data/mockData.js";
 import { getTemplates, updateTemplateStatus } from "../data/dataSource.js";
 import { adoptTemplate, createCustomTemplate, getMyTemplates, getSharedTemplates } from "../api/templateApi.js";
-import { ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
+import { Button, ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
 
 export function Templates() {
   const [items, setItems] = useState(() => (isRealApiEnabled ? [] : mockTemplates));
