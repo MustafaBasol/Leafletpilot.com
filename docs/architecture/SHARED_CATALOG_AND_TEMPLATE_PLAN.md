@@ -466,7 +466,7 @@ Drafts resolve live. `POST /api/campaigns/{id}/finalize` validates the selected 
 
 The isolated PostgreSQL 16 rehearsal passed: upgrade `0015 -> 0016`, downgrade, re-upgrade, `alembic current`, and `alembic heads` all completed with `20260713_0016` as the sole head. Focused PostgreSQL-backed campaign/template/rendering acceptance passed with `20 passed, 3 warnings`; the concurrent Telegram export regression also passed after preserving legacy campaigns without a template. The full CI run for final HEAD `369c65d` passed backend, frontend, and Docker validation. The local default Vite loader remains blocked by an existing Windows permission-protected `.vite-temp` path, while CI's clean build passes.
 
-The deterministic Phase F browser harness and authenticated screenshots have not been run. PR #25 remains draft; review submissions and inline review threads are currently zero. No Phase F acceptance artifacts or formal completion are claimed.
+The deterministic Phase F seed and fixed-port Playwright harness are now present at `backend/scripts/seed_phase_f.py` and `scripts/phase_f_playwright.py`; the harness owns a disposable PostgreSQL 16 container, runs migrations, probes backend/auth/frontend readiness, captures process/browser diagnostics, and targets `8200`/`4273`. The local run reached seed execution but remains blocked by required-field fixture defects still being corrected; no authenticated browser acceptance result or screenshots are claimed yet. PR #25 remains draft; review submissions and inline review threads are currently zero. Phase F is not complete.
 
 ### Phase G entry criteria
 
