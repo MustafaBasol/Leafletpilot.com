@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -35,8 +36,8 @@ ADMIN_EMAIL = "phase-f-platform-admin@example.test"
 USER_EMAILS = ("phase-f-user-a@example.test", "phase-f-user-b@example.test")
 
 
-async def one(session, model, **values):
-    row = await session.scalar(select(model).filter_by(**values))
+async def one(session, model, *, lookup=None, **values):
+    row = await session.scalar(select(model).filter_by(**(lookup or values)))
     if row is None:
         row = model(**values)
         session.add(row)
@@ -50,7 +51,7 @@ async def main() -> None:
     async with AsyncSessionLocal() as session:
         await seed_dev_data(session)
 
-        admin = await one(session, PlatformAdmin, email=ADMIN_EMAIL, full_name="Phase F Platform Admin", password_hash=hash_password(PASSWORD))
+        admin = await one(session, PlatformAdmin, lookup={"email": ADMIN_EMAIL}, email=ADMIN_EMAIL, full_name="Phase F Platform Admin", password_hash=hash_password(PASSWORD))
         admin.full_name = "Phase F Platform Admin"
         admin.password_hash = hash_password(PASSWORD)
         admin.is_active = True
@@ -71,7 +72,7 @@ async def main() -> None:
 
         users = []
         for index, email in enumerate(USER_EMAILS, start=1):
-            user = await one(session, User, email=email, full_name=f"Phase F Market User {index}", password_hash=hash_password(PASSWORD))
+            user = await one(session, User, lookup={"email": email}, email=email, full_name=f"Phase F Market User {index}", password_hash=hash_password(PASSWORD))
             user.full_name = f"Phase F Market User {index}"
             user.password_hash = hash_password(PASSWORD)
             user.is_active = True
@@ -90,9 +91,9 @@ async def main() -> None:
         for key, value in template("phase-f-global-v1", "Phase F Global v1").items(): setattr(v1, key, value)
         v2 = await one(session, Template, slug="phase-f-global-v2", market_id=None, name="Phase F Global v2", template_type="flyer")
         for key, value in template("phase-f-global-v2", "Phase F Global v2", version=2, source_template_id=v1.id).items(): setattr(v2, key, value)
-        adopted = await one(session, Template, slug="phase-f-adopted", market_id=markets["phase-f-growth"].id, name="Phase F Adopted Template", template_type="flyer")
+        adopted = await one(session, Template, slug="phase-f-adopted", market_id=markets["phase-f-growth"].id, name="Phase F Adopted Template", template_type="flyer", is_global=False)
         for key, value in template("phase-f-adopted", "Phase F Adopted Template", market_id=markets["phase-f-growth"].id, source_template_id=v2.id).items(): setattr(adopted, key, value)
-        custom = await one(session, Template, slug="phase-f-custom", market_id=markets["phase-f-growth"].id, name="Phase F Custom Template", template_type="flyer")
+        custom = await one(session, Template, slug="phase-f-custom", market_id=markets["phase-f-growth"].id, name="Phase F Custom Template", template_type="flyer", is_global=False)
         for key, value in template("phase-f-custom", "Phase F Custom Template", market_id=markets["phase-f-growth"].id).items(): setattr(custom, key, value)
         for slug, status, active in (("phase-f-draft", "draft", True), ("phase-f-archived", "archived", False)):
             row = await one(session, Template, slug=slug, market_id=None, name=f"Phase F {status.title()} Template", template_type="flyer")
@@ -148,7 +149,33 @@ async def main() -> None:
             await one(session, ExportJob, campaign_id=frozen.id, market_id=frozen.market_id, job_type=job_type)
 
         await session.commit()
-        print("Phase F seed complete: repeatable synthetic data for 3 plans, 2 users, templates, products, campaigns, and export fixtures.")
+        phase_markets = select(Market.id).where(Market.slug.like("phase-f-%")).scalar_subquery()
+        phase_campaigns = select(Campaign.id).where(Campaign.slug.like("phase-f-%")).scalar_subquery()
+        counts = {
+            "markets": await session.scalar(select(func.count()).select_from(Market).where(Market.slug.like("phase-f-%"))),
+            "users": await session.scalar(select(func.count()).select_from(User).where(User.email.like("phase-f-%"))),
+            "templates": await session.scalar(select(func.count()).select_from(Template).where(Template.slug.like("phase-f-%"))),
+            "products": await session.scalar(select(func.count()).select_from(Product).where(Product.barcode == "PHASE-F-001")),
+            "market_products": await session.scalar(select(func.count()).select_from(MarketProduct).where(MarketProduct.market_id.in_(phase_markets))),
+            "campaigns": await session.scalar(select(func.count()).select_from(Campaign).where(Campaign.slug.like("phase-f-%"))),
+            "campaign_items": await session.scalar(select(func.count()).select_from(CampaignItem).where(CampaignItem.campaign_id.in_(phase_campaigns))),
+            "export_jobs": await session.scalar(select(func.count()).select_from(ExportJob).where(ExportJob.campaign_id.in_(phase_campaigns))),
+        }
+        admin_ready = await session.scalar(select(func.count()).select_from(PlatformAdmin).where(PlatformAdmin.email == ADMIN_EMAIL, PlatformAdmin.is_active.is_(True))) == 1
+        market_users_ready = await session.scalar(select(func.count()).select_from(User).where(User.email.in_(USER_EMAILS), User.is_active.is_(True))) == len(USER_EMAILS)
+        summary = {
+            "platform_admin_ready": admin_ready,
+            "market_users_ready": market_users_ready,
+            "templates_ready": counts["templates"] == 6,
+            "products_ready": counts["products"] == 1 and counts["market_products"] == 3,
+            "campaigns_ready": counts["campaigns"] == 3 and counts["campaign_items"] == 3,
+            "exports_ready": counts["export_jobs"] == 2,
+            "fixture_version": "phase-f-v1",
+            "counts": counts,
+        }
+        if not all(summary[key] for key in ("platform_admin_ready", "market_users_ready", "templates_ready", "products_ready", "campaigns_ready", "exports_ready")):
+            raise RuntimeError(f"Phase F seed self-check failed: {summary}")
+        print(json.dumps(summary, sort_keys=True))
     if engine is not None:
         await engine.dispose()
 
