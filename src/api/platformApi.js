@@ -48,21 +48,23 @@ async function request(path, { method = "GET", params, body, headers: extraHeade
   const text = await response.text();
   const responseBody = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    if (isInvalidPlatformSession(response, responseBody)) {
-      redirectToPlatformLoginIfNeeded();
-    }
-    throw new ApiError(readPlatformErrorMessage(response, responseBody), {
-      status: response.status,
-      body: responseBody,
-    });
+    throwPlatformErrorIfNeeded(response, responseBody);
   }
   return responseBody;
+}
+
+function throwPlatformErrorIfNeeded(response, responseBody) {
+  if (isInvalidPlatformSession(response, responseBody)) redirectToPlatformLoginIfNeeded();
+  throw new ApiError(readPlatformErrorMessage(response, responseBody), { status: response.status, body: responseBody });
 }
 
 async function requestImage(path) {
   const headers = { Authorization: `Bearer ${getPlatformAccessToken()}` };
   const response = await fetch(`${apiBaseUrl}${path}`, { headers });
-  if (!response.ok) throw new ApiError(`Image request failed (${response.status})`, { status: response.status });
+  if (!response.ok) {
+    const responseBody = await response.clone().json().catch(() => null);
+    throwPlatformErrorIfNeeded(response, responseBody);
+  }
   return URL.createObjectURL(await response.blob());
 }
 
