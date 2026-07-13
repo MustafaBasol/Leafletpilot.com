@@ -398,3 +398,14 @@ fixed sleeps, and actionable timeout messages. Browser evidence is written to
 Final CI for harness HEAD `d9b0a2a`: run `29234644031` passed backend,
 frontend, and Docker validation. The local browser gate is still pending an
 isolated PostgreSQL 16 service; no production access was used.
+
+## Phase D final acceptance (2026-07-13)
+
+- Status: Phase D acceptance passed locally. The deterministic authenticated browser harness completed against disposable PostgreSQL; the database container was removed after the run. No merge, deployment, production access, or production data access occurred.
+- Harness probes: frontend `200`; backend health `200`; authentication endpoint `405` (reachable and method-protected); anonymous shared-catalog request `401` (expected).
+- Browser evidence: all 12 expected screenshots are present under `artifacts/phase-d-browser-acceptance/`; the harness recorded zero browser errors. The captures include the intended login, platform catalog, product/image, market catalog, campaign preview, and market-navigation checkpoints; some checkpoints intentionally capture loading or transitional UI state.
+- Harness correction: `BACKEND_CORS_ORIGINS` and `TRUSTED_HOSTS` are JSON-serialized before subprocess environment injection, fixing the acceptance harness configuration bug.
+- API evidence: seeded search, adoption and duplicate-adoption `409`, private-product limits and duplicate-barcode `409`, cross-market isolation, image upload/replace/content/remove/fallback, no-orphan-file protection, and campaign rendering all passed. Evidence: `artifacts/phase-d-api-acceptance.json`.
+- CI: Validation run `29244597255` is green for HEAD `83d0f6e` (backend, frontend, and Docker).
+- Review: unresolved review threads `0`; all previously tracked Copilot threads are resolved.
+- Readiness: Phase D is ready for the next repository review decision. Phase E is safe to begin as a follow-on phase, but no Phase E implementation, merge, or deployment was performed in this task.
