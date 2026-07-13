@@ -394,3 +394,7 @@ command also inherited a `Start-Process` environment collision. The harness
 uses `subprocess.Popen`, fixed loopback ports, readiness polling rather than
 fixed sleeps, and actionable timeout messages. Browser evidence is written to
 `artifacts/phase-d-browser-acceptance/` and remains ignored/uncommitted.
+
+Final CI for harness HEAD `d9b0a2a`: run `29234644031` passed backend,
+frontend, and Docker validation. The local browser gate is still pending an
+isolated PostgreSQL 16 service; no production access was used.
