@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +43,16 @@ class Template(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     template_type: Mapped[str] = mapped_column(String(64), nullable=False)
     is_global: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    visibility: Mapped[str] = mapped_column(String(32), default="shared", nullable=False)
+    minimum_plan: Mapped[str] = mapped_column(String(32), default="starter", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(120))
+    thumbnail_key: Mapped[str | None] = mapped_column(String(1000))
+    source_template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
+    source_version: Mapped[int | None] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     config_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     market: Mapped[Market | None] = relationship(foreign_keys=[market_id])

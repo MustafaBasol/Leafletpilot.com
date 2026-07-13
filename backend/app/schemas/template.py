@@ -13,6 +13,8 @@ class TemplateBase(BaseModel):
     is_global: bool = True
     is_active: bool = True
     config_json: dict[str, Any] | None = None
+    category: str | None = Field(default=None, max_length=120)
+    minimum_plan: str = Field(default="starter", pattern="^(starter|growth|pro)$")
 
 
 class TemplateCreate(TemplateBase):
@@ -27,6 +29,8 @@ class TemplateUpdate(BaseModel):
     is_global: bool | None = None
     is_active: bool | None = None
     config_json: dict[str, Any] | None = None
+    category: str | None = Field(default=None, max_length=120)
+    minimum_plan: str | None = Field(default=None, pattern="^(starter|growth|pro)$")
 
 
 class TemplateRead(BaseModel):
@@ -41,6 +45,16 @@ class TemplateRead(BaseModel):
     is_global: bool
     is_active: bool
     config_json: dict[str, Any] | None
+    status: str
+    visibility: str
+    minimum_plan: str
+    category: str | None
+    thumbnail_key: str | None
+    source_template_id: UUID | None
+    source_version: int | None
+    version: int
+    published_at: datetime | None
+    archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -49,3 +63,7 @@ class TemplatePreviewResponse(BaseModel):
     html: str
     template_name: str
     generated_at: datetime
+
+
+class TemplateAdoptResponse(TemplateRead):
+    pass

@@ -498,7 +498,7 @@ async def validate_visible_template(session: AsyncSession, template_id: UUID, ma
             Template.is_active.is_(True),
             or_(
                 Template.market_id == market_id,
-                and_(Template.is_global.is_(True), Template.market_id.is_(None)),
+                and_(Template.is_global.is_(True), Template.market_id.is_(None), Template.status == "published"),
             ),
         )
     )
@@ -531,7 +531,7 @@ async def _get_default_template(session: AsyncSession, market_id: UUID) -> Templ
             Template.is_active.is_(True),
             or_(
                 Template.market_id == market_id,
-                and_(Template.is_global.is_(True), Template.market_id.is_(None)),
+                and_(Template.is_global.is_(True), Template.market_id.is_(None), Template.status == "published"),
             ),
         )
         .order_by(Template.market_id.is_(None).desc())

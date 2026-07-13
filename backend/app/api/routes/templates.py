@@ -9,6 +9,8 @@ from app.schemas.common import ListResponse
 from app.schemas.template import TemplateCreate, TemplatePreviewResponse, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
 from app.services.template_presets import FLYER_PRESETS
+from app.services.entitlements import resolve_plan_code
+from app.models import Market
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
@@ -17,6 +19,32 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 async def list_flyer_presets() -> dict:
     """Return the supported slot-count presets for the constrained flyer builder."""
     return {"items": list(FLYER_PRESETS.values())}
+
+
+@router.get("/shared", response_model=ListResponse[TemplateRead])
+async def shared_templates(market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)):
+    items, total = await template_service.list_templates(session, market_id=market_id, include_global=True, search=None, is_active=True, is_global=True, limit=100, offset=0)
+    market = await session.get(Market, market_id)
+    ranks = {"starter": 0, "growth": 1, "pro": 2}
+    rank = ranks.get(resolve_plan_code(market), 0)
+    items = [item for item in items if ranks.get(item.minimum_plan, 0) <= rank]
+    return ListResponse(items=items, total=total, limit=100, offset=0)
+
+
+@router.post("/shared/{template_id}/adopt", response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
+async def adopt_template(template_id: UUID, market_id: UUID = Depends(require_market_role(MarketRole.MARKET_ADMIN)), session: AsyncSession = Depends(get_catalog_session)):
+    return await template_service.adopt_global_template(session, template_id, market_id)
+
+
+@router.get("/my-templates", response_model=ListResponse[TemplateRead])
+async def my_templates(market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)):
+    items, total = await template_service.list_templates(session, market_id=market_id, include_global=False, search=None, is_active=None, is_global=False, limit=100, offset=0)
+    return ListResponse(items=items, total=total, limit=100, offset=0)
+
+
+@router.post("/custom", response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
+async def custom_template(payload: TemplateCreate, market_id: UUID = Depends(require_market_role(MarketRole.MARKET_ADMIN)), session: AsyncSession = Depends(get_catalog_session)):
+    return await template_service.create_custom_template(session, payload, market_id)
 
 
 @router.get("", response_model=ListResponse[TemplateRead])
