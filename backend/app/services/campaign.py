@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product, Template
+from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product, Template, MarketProduct, Market
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignCreateFromTextRequest,
@@ -19,6 +19,8 @@ from app.schemas.campaign import (
     CampaignItemUpdate,
     CampaignPreviewHtml,
     CampaignUpdate,
+    CampaignBuilderOptions,
+    CampaignFinalizeResponse,
     MatchingSuggestionCreate,
 )
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
@@ -31,6 +33,9 @@ from app.services.rendering import (
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.campaign_rendering import campaign_render_load_options
 from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
+from app.services.catalog import list_my_market_products, resolved_market_product
+from app.services.templates import list_templates
+from app.services.entitlements import resolve_capabilities
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
@@ -103,10 +108,14 @@ async def create_campaign(
     commit: bool = True,
 ) -> Campaign:
     scoped_market_id = require_market_id(market_id)
-    data = payload.model_dump(exclude={"items"})
+    data = payload.model_dump(exclude={"items", "builder_config"})
+    data["builder_config_json"] = payload.builder_config or {}
     if data.get("template_id") is not None:
         template = await validate_visible_template(session, data["template_id"], scoped_market_id)
         _validate_template_slots(template, len(payload.items))
+    for item in payload.items:
+        if item.market_product_id is not None:
+            await validate_visible_market_product(session, item.market_product_id, scoped_market_id)
     campaign = Campaign(**data, market_id=scoped_market_id, status="draft")
     campaign.items = [
         _build_campaign_item(item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
@@ -211,6 +220,8 @@ async def get_campaign_preview_html(
         template_name=template.name if template else DEFAULT_TEMPLATE_NAME,
         html=render_campaign_preview_html(campaign, template, generated_at=generated_at),
         generated_at=generated_at,
+        template_version=template.version if template else None,
+        page_count=1,
     )
 
 
@@ -221,7 +232,11 @@ async def update_campaign(
     market_id: UUID | None,
 ) -> Campaign:
     campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
     updates = payload.model_dump(exclude_unset=True)
+    if "builder_config" in updates:
+        updates["builder_config_json"] = updates.pop("builder_config") or {}
     if updates.get("template_id") is not None:
         await validate_visible_template(session, updates["template_id"], campaign.market_id)
     for key, value in updates.items():
@@ -276,16 +291,33 @@ async def update_campaign_item(
     market_id: UUID | None,
 ) -> CampaignItem:
     campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
     item = _find_item(campaign, item_id)
     updates = payload.model_dump(exclude_unset=True)
     product_id = updates.get("product_id")
     if product_id is not None:
         await validate_visible_product(session, product_id, campaign.market_id)
+    if updates.get("market_product_id") is not None:
+        await validate_visible_market_product(session, updates["market_product_id"], campaign.market_id)
     for key, value in updates.items():
         setattr(item, key, value)
     recalculate_campaign_counts(campaign)
     await _persist(session, campaign)
     return item
+
+
+async def reorder_campaign_items(session: AsyncSession, campaign_id: UUID, item_ids: list[UUID], market_id: UUID | None) -> Campaign:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    current = {item.id: item for item in campaign.items}
+    if set(current) != set(item_ids) or len(item_ids) != len(current):
+        raise HTTPException(status_code=422, detail="item_ids must contain each campaign item exactly once.")
+    for index, item_id in enumerate(item_ids):
+        current[item_id].sort_order = index
+    await _persist(session, campaign)
+    return await get_campaign(session, campaign.id, campaign.market_id)
 
 
 async def resolve_campaign_item_match(
@@ -396,6 +428,20 @@ async def create_export_job(
 ) -> ExportJob:
     campaign = await get_campaign(session, campaign_id, market_id)
     formats = normalize_requested_formats(payload.requested_formats)
+    if payload.job_type == "final_export" and campaign.frozen_at is None:
+        await finalize_campaign(session, campaign.id, campaign.market_id)
+        campaign = await get_campaign(session, campaign_id, market_id)
+    existing = await session.scalar(
+        select(ExportJob).where(
+            ExportJob.campaign_id == campaign.id,
+            ExportJob.market_id == campaign.market_id,
+            ExportJob.job_type == (payload.job_type or "final_export"),
+            ExportJob.status.in_(["queued", "running", "completed"]),
+            ExportJob.requested_formats == formats,
+        ).order_by(ExportJob.created_at.desc())
+    )
+    if existing is not None:
+        return existing
     export_job = ExportJob(
         **payload.model_dump(exclude={"requested_formats", "status"}),
         campaign_id=campaign.id,
@@ -489,6 +535,57 @@ async def validate_visible_product(session: AsyncSession, product_id: UUID, mark
             detail="product_id must reference an active product visible to the current market.",
         )
     return product
+
+
+async def validate_visible_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> MarketProduct:
+    row = await session.scalar(
+        select(MarketProduct).where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id, MarketProduct.is_active.is_(True))
+    )
+    if row is None:
+        raise HTTPException(status_code=400, detail="market_product_id must reference an active product owned by the current market.")
+    return row
+
+
+async def get_builder_options(session: AsyncSession, market_id: UUID) -> CampaignBuilderOptions:
+    templates, _ = await list_templates(session, market_id=market_id, include_global=True, search=None, is_active=True, is_global=None, limit=200, offset=0)
+    products = await list_my_market_products(session, market_id)
+    market = await session.get(Market, market_id)
+    capabilities = resolve_capabilities(market) if market else None
+    market_plan = (market.subscription_plan if market else "starter")
+    ranks = {"starter": 0, "growth": 1, "pro": 2}
+    rank = ranks.get(market_plan, 0)
+    eligible_templates = [template for template in templates if template.status not in {"draft", "archived"} and ranks.get(template.minimum_plan, 0) <= rank]
+    return CampaignBuilderOptions(
+        templates=[{
+            "id": template.id, "name": template.name, "slug": template.slug,
+            "template_type": template.template_type, "config_json": template.config_json,
+            "is_global": template.is_global, "market_id": template.market_id,
+            "status": template.status, "visibility": template.visibility,
+            "minimum_plan": template.minimum_plan, "version": template.version,
+            "thumbnail_key": template.thumbnail_key,
+        } for template in eligible_templates],
+        products=[resolved_market_product(row) for row in products if row.is_active],
+        limits={"max_products": getattr(capabilities, "max_products_per_campaign", None) if capabilities else None, "export_formats": ["pdf", "png"]},
+    )
+
+
+async def finalize_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID) -> CampaignFinalizeResponse:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.frozen_at is not None:
+        return CampaignFinalizeResponse(campaign=campaign, frozen_at=campaign.frozen_at, snapshot=campaign.snapshot_json or {})
+    template = campaign.template or await _get_default_template(session, campaign.market_id)
+    if template is None:
+        raise HTTPException(status_code=422, detail="A published template is required before finalization.")
+    _validate_template_slots(template, len([item for item in campaign.items if item.match_status != "excluded"]))
+    from app.services.campaign_rendering import build_campaign_render_payload
+    now = datetime.now(UTC).replace(microsecond=0)
+    campaign.snapshot_json = build_campaign_render_payload(campaign, template)
+    campaign.frozen_at = now
+    campaign.finalized_at = now
+    campaign.status = "approved"
+    campaign.approved_at = campaign.approved_at or now
+    await _persist(session, campaign)
+    return CampaignFinalizeResponse(campaign=await get_campaign(session, campaign.id, market_id), frozen_at=now, snapshot=campaign.snapshot_json)
 
 
 async def validate_visible_template(session: AsyncSession, template_id: UUID, market_id: UUID) -> Template:

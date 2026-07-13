@@ -55,6 +55,7 @@ class CampaignItemCreate(BaseModel):
     sort_order: int = 0
     is_hero: bool = False
     parsed_payload: dict[str, Any] | None = None
+    market_product_id: UUID | None = None
 
 
 class CampaignItemUpdate(BaseModel):
@@ -69,6 +70,11 @@ class CampaignItemUpdate(BaseModel):
     match_status: CampaignItemMatchStatus | None = None
     match_confidence: Decimal | None = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
     matching_notes: str | None = None
+    market_product_id: UUID | None = None
+
+
+class CampaignItemOrderUpdate(BaseModel):
+    item_ids: list[UUID] = Field(min_length=1)
 
 
 class CampaignItemResolveMatch(BaseModel):
@@ -85,6 +91,7 @@ class CampaignItemRead(BaseModel):
     campaign_id: UUID
     market_id: UUID
     product_id: UUID | None
+    market_product_id: UUID | None = None
     raw_line: str
     incoming_name: str
     normalized_name: str | None
@@ -216,6 +223,7 @@ class CampaignCreate(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     language: str = Field(default="tr", min_length=2, max_length=16)
     items: list[CampaignItemCreate] = Field(default_factory=list)
+    builder_config: dict[str, Any] | None = None
 
 
 class CampaignUpdate(BaseModel):
@@ -230,6 +238,7 @@ class CampaignUpdate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     language: str | None = Field(default=None, min_length=2, max_length=16)
     failure_reason: str | None = None
+    builder_config: dict[str, Any] | None = None
 
 
 class CampaignListItem(BaseModel):
@@ -251,6 +260,8 @@ class CampaignListItem(BaseModel):
     campaign_end_date: date | None
     currency: str
     language: str
+    frozen_at: datetime | None = None
+    finalized_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -266,6 +277,8 @@ class CampaignDetail(CampaignListItem):
     files: list["CampaignFileRead"] = Field(default_factory=list)
     export_jobs: list["ExportJobRead"] = Field(default_factory=list)
     matching_suggestions: list[MatchingSuggestionRead] = Field(default_factory=list)
+    snapshot_json: dict[str, Any] | None = None
+    builder_config_json: dict[str, Any] | None = None
 
 
 class CampaignPreviewHtml(BaseModel):
@@ -274,6 +287,20 @@ class CampaignPreviewHtml(BaseModel):
     template_name: str
     html: str
     generated_at: datetime
+    template_version: int | None = None
+    page_count: int = 1
+
+
+class CampaignBuilderOptions(BaseModel):
+    templates: list[Any] = Field(default_factory=list)
+    products: list[Any] = Field(default_factory=list)
+    limits: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignFinalizeResponse(BaseModel):
+    campaign: CampaignDetail
+    frozen_at: datetime
+    snapshot: dict[str, Any]
 
 
 from app.schemas.export import CampaignFileRead, ExportJobRead  # noqa: E402

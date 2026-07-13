@@ -14,6 +14,7 @@ from app.models.base import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.catalog import Product
+    from app.models.catalog import MarketProduct
     from app.models.export import CampaignFile, ExportJob
     from app.models.market import Market
     from app.models.messaging import Conversation
@@ -85,6 +86,12 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_type: Mapped[str | None] = mapped_column(String(32))
     raw_input_text: Mapped[str | None] = mapped_column(Text)
     template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
+    # Exact template row is the immutable version reference.  These fields are
+    # additive so existing campaigns continue to use template_id/product_id.
+    snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    builder_config_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     campaign_start_date: Mapped[date | None]
     campaign_end_date: Mapped[date | None]
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
@@ -144,6 +151,7 @@ class CampaignItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
     market_id: Mapped[UUID] = mapped_column(ForeignKey("markets.id"), nullable=False)
     product_id: Mapped[UUID | None] = mapped_column(ForeignKey("products.id"))
+    market_product_id: Mapped[UUID | None] = mapped_column(ForeignKey("market_products.id"))
     raw_line: Mapped[str] = mapped_column(Text, nullable=False)
     incoming_name: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_name: Mapped[str | None] = mapped_column(String(255))
@@ -164,6 +172,7 @@ class CampaignItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     campaign: Mapped[Campaign] = relationship(back_populates="items")
     market: Mapped[Market] = relationship()
     product: Mapped[Product | None] = relationship()
+    market_product: Mapped[MarketProduct | None] = relationship()
     matching_suggestions: Mapped[list[MatchingSuggestion]] = relationship(
         back_populates="campaign_item",
         cascade="all, delete-orphan",
