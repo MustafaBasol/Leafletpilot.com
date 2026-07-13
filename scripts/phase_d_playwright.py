@@ -140,7 +140,31 @@ def main() -> int:
     assert_port_free(frontend_host, frontend_port, "Frontend")
     assert_port_free(backend_host, backend_port, "Backend")
     env = os.environ.copy()
-    env.update({"DATABASE_URL": database_url, "TEST_DATABASE_URL": database_url, "ENVIRONMENT": "test", "PLATFORM_ADMIN_ENABLED": "true", "PLATFORM_JWT_SECRET": "phase-d-platform-secret-at-least-32-characters", "JWT_SECRET_KEY": "phase-d-market-secret-at-least-32-characters", "BACKEND_CORS_ORIGINS": frontend_url, "TRUSTED_HOSTS": f"{frontend_host},{backend_host}", "LOCAL_STORAGE_DIR": str(ROOT / ".phase-d-storage"), "VITE_API_BASE_URL": f"{backend_url}/api"})
+    env.update(
+        {
+            "DATABASE_URL": database_url,
+            "TEST_DATABASE_URL": database_url,
+            "ENVIRONMENT": "test",
+            "PLATFORM_ADMIN_ENABLED": "true",
+            "PLATFORM_JWT_SECRET": "phase-d-platform-secret-at-least-32-characters",
+            "JWT_SECRET_KEY": "phase-d-market-secret-at-least-32-characters",
+            "BACKEND_CORS_ORIGINS": json.dumps(
+                [
+                    frontend_url,
+                    "http://localhost:4173",
+                ]
+            ),
+            "TRUSTED_HOSTS": json.dumps(
+                [
+                    frontend_host,
+                    backend_host,
+                    "localhost",
+                ]
+            ),
+            "LOCAL_STORAGE_DIR": str(ROOT / ".phase-d-storage"),
+            "VITE_API_BASE_URL": f"{backend_url}/api",
+        }
+    )
     python = os.environ.get("PHASE_D_PYTHON", sys.executable)
     logs = ARTIFACTS / "process-logs"
     backend = frontend = None
