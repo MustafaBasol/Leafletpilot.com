@@ -16,7 +16,7 @@ async function findFreePort() {
 }
 
 const port = await findFreePort();
-const child = spawn(process.execPath, [viteCli, "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+const child = spawn(process.execPath, [viteCli, "--configLoader", "runner", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
   stdio: "ignore",
   shell: false,
 });

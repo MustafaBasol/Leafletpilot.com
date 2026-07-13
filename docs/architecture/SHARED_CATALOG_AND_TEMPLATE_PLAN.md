@@ -409,3 +409,40 @@ isolated PostgreSQL 16 service; no production access was used.
 - CI: Validation run `29245178210` is green for HEAD `ca1a6d1` (backend, frontend, and Docker).
 - Review: unresolved review threads `0`; all previously tracked Copilot threads are resolved.
 - Readiness: Phase D is ready for the next repository review decision. Phase E is safe to begin as a follow-on phase, but no Phase E implementation, merge, or deployment was performed in this task.
+
+## Phase E — shared template market workflows
+
+- Status: implementation slice complete on `feature/shared-template-market-workflows`; no merge, deployment, or production access occurred.
+- Migration: `20260713_0015_shared_template_workflows` is additive after `20260712_0014`. It preserves template IDs and campaign foreign keys and adds status, visibility, minimum plan, category, thumbnail key, source lineage, source version, version, and publish/archive timestamps. Structural downgrade removes only the additive metadata; operational rollback is feature-disable/read fallback plus backup/restore, as with earlier phases.
+
+### Final template model and ownership
+
+The existing single `templates` table remains canonical. Global rows have `market_id=NULL`, `is_global=true`, and are platform-admin managed. Market rows have an owning `market_id`, `is_global=false`, and are market-managed. Adopted rows retain `source_template_id` and `source_version`; their `config_json` is a snapshot of the source at adoption, so later global changes never silently alter market templates or campaigns. `status` is `draft`, `published`, or `archived`; `visibility` distinguishes shared global rows from private market rows.
+
+Published global rows are immutable in place. A platform edit of a published row creates a new draft version, and publishing marks that row as the next version. Campaigns continue to reference the exact `Template.id`, which is the version-safe historical rendering strategy for both global and market-owned templates.
+
+### Entitlement matrix and routes
+
+The Phase D static resolver remains authoritative: Starter can view published global templates but cannot clone or create custom templates; Growth can clone and create up to five private templates; Pro can clone and create unlimited private/custom templates. Shared gallery results are filtered by `minimum_plan`, duplicate adoption returns `409`, and all market routes require authenticated market membership and ownership/role checks.
+
+Platform routes: `GET/POST /api/platform/templates`, `PATCH /api/platform/templates/{id}`, `POST /publish`, `POST /duplicate`, `POST /archive`, and `POST /restore`. Market routes: `GET /api/templates/shared`, `POST /api/templates/shared/{id}/adopt`, `GET /api/templates/my-templates`, and `POST /api/templates/custom`; existing preview and campaign template routes remain compatible.
+
+### UI and campaign compatibility
+
+Platform Admin now has a Global templates page for draft creation, search/list foundation, version display, publish, new-version, archive, and minimum-plan visibility. Markets have shared-template and My Templates sections with already-added state and plan-limit/error messaging. Flyer builder visibility and campaign validation now require published global versions; market-owned adopted/custom rows remain available. Existing campaign product precedence and historical campaign rendering remain unchanged because campaign rows retain their original template and product IDs.
+
+### Acceptance evidence and Phase F entry criteria
+
+Backend compile and full local suite passed: `138 passed, 31 skipped`. Frontend validation passed, platform tests passed (`19 passed`), and production build passed using Vite's writable `--configLoader runner` mode; the default loader was blocked by a pre-existing permission-protected `node_modules/.vite-temp` path. Disposable PostgreSQL/API seed acceptance, deterministic Playwright screenshots, thumbnail upload lifecycle, and CI/review-thread certification remain outstanding for a formal Phase E completion decision. Phase F is not yet safe to begin until those acceptance gates are recorded.
+
+## Phase E formal acceptance closure pass
+
+- Migration rehearsal: passed on disposable PostgreSQL `16.14` at a dedicated local port. `upgrade -> 20260713_0015`, `downgrade -> 20260712_0014`, and `re-upgrade -> 20260713_0015` all passed; `alembic current` and `alembic heads` report the sole head `20260713_0015`.
+- Downgrade semantics: structurally reversible only. Existing pre-Phase-E rows and campaign/template foreign keys are preserved, but newly added Phase-E metadata and thumbnail lineage are lossy if the downgrade is used after Phase-E data creation. Operational rollback remains feature-disable/read fallback plus backup/restore.
+- PostgreSQL acceptance: deterministic HTTP acceptance passed for global draft/publish/version/archive boundaries, plan-filtered gallery access, adoption lineage, duplicate adoption `409`, market isolation, custom-template entitlement, authenticated preview, and global/market thumbnail upload/replace/remove/signature/namespace behavior. The full PostgreSQL-backed backend suite passed with `170 passed, 5 warnings, 0 skipped`.
+- Thumbnail lifecycle: implemented with PNG/JPEG/WebP MIME and signature validation, 10 MiB limit, safe generated keys, authenticated content routes, global namespace `global/templates/{template_id}/...`, market namespace `markets/{market_id}/templates/{template_id}/...`, replace/remove orphan cleanup, and placeholder `404` fallback. Adopted templates receive a copied thumbnail snapshot; source global thumbnails are never used as a live mutable dependency.
+- Version safety: published global versions remain immutable; v2 is a new row; adopted templates preserve `source_template_id` and `source_version` and copy current content/thumbnail; campaigns continue to render the exact referenced `Template.id`.
+- Browser acceptance: `scripts/phase_e_playwright.py` owns migration, seed, backend/frontend processes, readiness probes, logs, cleanup, and Playwright execution. It completed with 14 screenshots and zero console/page/request errors. Evidence is under `artifacts/phase-e-browser-acceptance/` and remains ignored/uncommitted.
+- Frontend acceptance: `npm.cmd run validate` passed, platform tests passed (`19 passed`), production build passed with `--configLoader runner`, and `npm.cmd run smoke` passed after making the smoke harness use the same writable config-loader mode.
+- CI/review state before final harness refinement: remote CI was initially blocked by a test-only asyncpg pool/event-loop issue; the fix is `3f77354`. PR #24 was created as a draft. Final CI/review state is recorded below after the corrected push.
+- Final formal acceptance: the corrected branch was pushed to PR #24; the final pushed HEAD passed backend, frontend, and Docker CI. Thread-aware review fetch returned zero reviews, zero conversation comments, and zero review threads. Phase E is complete; Phase F is safe only after the normal product/release review decision, and no Phase F work was started.
