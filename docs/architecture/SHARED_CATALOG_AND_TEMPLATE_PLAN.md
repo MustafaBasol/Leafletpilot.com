@@ -369,3 +369,28 @@ Markets without an assigned plan resolve to the safest default: global catalog r
 - Review disposition: all 10 Copilot threads were replied to with commit/test evidence and resolved after verification. Final unresolved count: `0`.
 - Post-push CI: Validation run `29232347311` passed backend, frontend, and Docker jobs for final HEAD `9828952`.
 - Completion decision: Phase D is not complete in this pass; Phase E is not safe to begin. No merge, deployment, or production access occurred.
+
+### Deterministic browser harness
+
+`python scripts/phase_d_playwright.py` is an opt-in local harness. It requires
+`PHASE_D_DATABASE_URL` to point to an isolated disposable PostgreSQL 16 database,
+starts FastAPI on `127.0.0.1:8100` and Vite on `127.0.0.1:4173`, passes
+`VITE_API_BASE_URL=http://127.0.0.1:8100/api`, and waits for `/api/health`, the
+authentication endpoint, the platform catalog endpoint, and a frontend `200`
+response containing `#app` before launching Playwright. It captures process
+logs under the ignored `artifacts/phase-d-browser-acceptance/process-logs/`
+directory and terminates both child processes in a `finally` block.
+
+Before startup it runs `alembic upgrade head` and the repeatable
+`backend/scripts/seed_phase_d.py` seed. The seed creates the platform admin,
+two market users/markets, shared catalog records and images from the existing
+synthetic seed, market associations, private market products, aliases, and
+campaign-compatible data. It refuses production and requires only the isolated
+database URL supplied to the harness.
+
+The previous `ERR_CONNECTION_REFUSED` came from the earlier ad-hoc browser
+attempt starting before a live frontend process existed; the Windows launch
+command also inherited a `Start-Process` environment collision. The harness
+uses `subprocess.Popen`, fixed loopback ports, readiness polling rather than
+fixed sleeps, and actionable timeout messages. Browser evidence is written to
+`artifacts/phase-d-browser-acceptance/` and remains ignored/uncommitted.

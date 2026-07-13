@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "validate": "node scripts/validate.mjs",
     "test:platform": "node --test src/pages/platform/platformOps.test.mjs src/pages/platform/platformCatalogUtils.test.mjs src/api/platformApi.test.mjs",
+    "test:e2e:phase-d": "python scripts/phase_d_playwright.py",
     "smoke": "node scripts/smoke-vite.mjs"
   },
   "dependencies": {
