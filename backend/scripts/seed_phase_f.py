@@ -117,8 +117,10 @@ async def main() -> None:
         private = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, private_name="Phase F Private Product")
         private.regular_price = Decimal("4.99")
         private.is_active = True
-        inactive = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, private_name="Phase F Inactive Product")
-        inactive.is_active = False
+        third = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, private_name="Phase F Third Product")
+        third.regular_price = Decimal("6.49")
+        third.promo_price = Decimal("5.49")
+        third.is_active = True
 
         async def campaign(slug, title, *, template_id, frozen=False, historical=False):
             row = await one(session, Campaign, market_id=markets["phase-f-growth"].id, slug=slug, title=title)

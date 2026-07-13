@@ -134,6 +134,8 @@ function mapCampaign(campaign) {
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
     templateId: campaign.template_id || "",
     template: campaign.template_name || (campaign.template_id ? "Şablon adı yok" : "Şablon yok"),
+    frozenAt: campaign.frozen_at || null,
+    finalizedAt: campaign.finalized_at || null,
     campaignStartDate: campaign.campaign_start_date || "",
     campaignEndDate: campaign.campaign_end_date || "",
     createdAt: formatDate(campaign.created_at),
@@ -306,6 +308,18 @@ export async function getCampaignPreviewHtml(campaignId) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
   return campaignApi.getCampaignPreviewHtml(campaignId, marketId);
+}
+
+export async function finalizeCampaign(id) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return mapCampaignDetail((await campaignApi.finalizeCampaign(id, marketId)).campaign);
+}
+
+export async function reorderCampaignItems(id, items) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return mapCampaignDetail(await campaignApi.reorderCampaignItems(id, items.map((item) => item.id), marketId));
 }
 
 export async function getProducts() {
