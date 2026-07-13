@@ -406,6 +406,6 @@ isolated PostgreSQL 16 service; no production access was used.
 - Browser evidence: all 12 expected screenshots are present under `artifacts/phase-d-browser-acceptance/`; the harness recorded zero browser errors. The captures include the intended login, platform catalog, product/image, market catalog, campaign preview, and market-navigation checkpoints; some checkpoints intentionally capture loading or transitional UI state.
 - Harness correction: `BACKEND_CORS_ORIGINS` and `TRUSTED_HOSTS` are JSON-serialized before subprocess environment injection, fixing the acceptance harness configuration bug.
 - API evidence: seeded search, adoption and duplicate-adoption `409`, private-product limits and duplicate-barcode `409`, cross-market isolation, image upload/replace/content/remove/fallback, no-orphan-file protection, and campaign rendering all passed. Evidence: `artifacts/phase-d-api-acceptance.json`.
-- CI: Validation run `29244597255` is green for HEAD `83d0f6e` (backend, frontend, and Docker).
+- CI: Validation run `29244993140` is green for HEAD `ced5366` (backend, frontend, and Docker).
 - Review: unresolved review threads `0`; all previously tracked Copilot threads are resolved.
 - Readiness: Phase D is ready for the next repository review decision. Phase E is safe to begin as a follow-on phase, but no Phase E implementation, merge, or deployment was performed in this task.
