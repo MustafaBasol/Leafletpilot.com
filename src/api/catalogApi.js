@@ -35,3 +35,11 @@ export function listCategories(params, marketId) {
 export function createCategory(payload, marketId) {
   return apiClient.post("/catalog/categories", payload, { marketId });
 }
+
+export function listSharedCatalog(params, marketId) { return apiClient.get("/catalog/shared", { params, marketId }); }
+export function listMyProducts(params, marketId) { return apiClient.get("/catalog/my-products", { params, marketId }); }
+export function adoptSharedProduct(productId, payload = {}, marketId) { return apiClient.post(`/catalog/shared/${productId}/adopt`, payload, { marketId }); }
+export function updateMyProduct(productId, payload, marketId) { return apiClient.patch(`/catalog/my-products/${productId}`, payload, { marketId }); }
+export function createPrivateProduct(payload, marketId) { return apiClient.post("/catalog/private-products", payload, { marketId }); }
+export function uploadProductOverride(productId, file, marketId) { return apiClient.post(`/catalog/my-products/${productId}/image`, file, { marketId }); }
+export function removeProductOverride(productId, marketId) { return apiClient.delete(`/catalog/my-products/${productId}/image`, { marketId }); }

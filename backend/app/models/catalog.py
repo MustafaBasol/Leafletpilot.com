@@ -188,3 +188,64 @@ class ProductImage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     product: Mapped[Product] = relationship(back_populates="images")
+
+
+class MarketProduct(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Market-owned presentation of a canonical or private product.
+
+    Existing Product rows remain the compatibility identity used by campaigns,
+    matching, aliases, and global images. This additive layer owns market
+    pricing and presentation without mutating the canonical Product row.
+    """
+
+    __tablename__ = "market_products"
+    __table_args__ = (
+        CheckConstraint(
+            "(product_id is not null) or (private_name is not null and length(trim(private_name)) > 0)",
+            name="ck_market_products_identity",
+        ),
+        Index("ix_market_products_market_id", "market_id"),
+        Index("ix_market_products_product_id", "product_id"),
+        Index("ix_market_products_category_override_id", "category_override_id"),
+        Index(
+            "uq_market_products_market_product",
+            "market_id",
+            "product_id",
+            unique=True,
+            postgresql_where=text("product_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_market_products_legacy_product",
+            "legacy_product_id",
+            unique=True,
+            postgresql_where=text("legacy_product_id IS NOT NULL"),
+        ),
+    )
+
+    market_id: Mapped[UUID] = mapped_column(ForeignKey("markets.id"), nullable=False)
+    product_id: Mapped[UUID | None] = mapped_column(ForeignKey("products.id"))
+    legacy_product_id: Mapped[UUID | None] = mapped_column(ForeignKey("products.id"))
+    private_name: Mapped[str | None] = mapped_column(String(255))
+    private_brand_text: Mapped[str | None] = mapped_column(String(255))
+    private_barcode: Mapped[str | None] = mapped_column(String(64))
+    private_sku: Mapped[str | None] = mapped_column(String(64))
+    private_package_size: Mapped[str | None] = mapped_column(String(64))
+    private_package_type: Mapped[str | None] = mapped_column(String(64))
+    display_name_override: Mapped[str | None] = mapped_column(String(255))
+    category_override_id: Mapped[UUID | None] = mapped_column(ForeignKey("categories.id"))
+    regular_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    promo_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
+    badge_text: Mapped[str | None] = mapped_column(String(64))
+    stock_note: Mapped[str | None] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    image_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_mime_type: Mapped[str | None] = mapped_column(String(100))
+    image_quality_status: Mapped[str | None] = mapped_column(String(32))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    market: Mapped[Market] = relationship()
+    product: Mapped[Product | None] = relationship(foreign_keys=[product_id])
+    legacy_product: Mapped[Product | None] = relationship(foreign_keys=[legacy_product_id])
+    category_override: Mapped[Category | None] = relationship(foreign_keys=[category_override_id])

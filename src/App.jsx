@@ -12,6 +12,7 @@ import { NewCampaign } from "./pages/NewCampaign.jsx";
 import { Onboarding } from "./pages/Onboarding.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
+import { MarketCatalog } from "./pages/MarketCatalog.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { Start } from "./pages/Start.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
@@ -24,6 +25,7 @@ import { PlatformMarketList } from "./pages/platform/PlatformMarketList.jsx";
 import { PlatformOverview } from "./pages/platform/PlatformOverview.jsx";
 import { SignupRequestDetail } from "./pages/platform/SignupRequestDetail.jsx";
 import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
+import { PlatformCatalog } from "./pages/platform/PlatformCatalog.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { canAccessPilotPath } from "./routes/capabilities.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
@@ -57,7 +59,7 @@ function Page({ path, sessionVersion }) {
   if (path === "/campaigns") return <Campaigns />;
   if (path === "/campaigns/new") return <NewCampaign />;
   if (path.startsWith("/campaigns/")) return <CampaignDetail campaignId={path.replace("/campaigns/", "")} />;
-  if (path === "/products") return <ProductCatalog />;
+  if (path === "/products") return <MarketCatalog />;
   if (path === "/categories") return <Categories />;
   if (path === "/templates") return <Templates />;
   if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
@@ -187,6 +189,7 @@ export function App() {
     else if (path === "/platform/signup-requests") platformPage = <SignupRequestList />;
     else if (path.startsWith("/platform/signup-requests/")) platformPage = <SignupRequestDetail id={path.replace("/platform/signup-requests/", "")} />;
     else if (path === "/platform/markets") platformPage = <PlatformMarketList />;
+    else if (path === "/platform/catalog") platformPage = <PlatformCatalog />;
     else if (path.startsWith("/platform/markets/")) platformPage = <PlatformMarketDetail id={path.replace("/platform/markets/", "")} />;
     return <PlatformAdminLayout onLogout={platformLogout}>{platformPage}</PlatformAdminLayout>;
   }

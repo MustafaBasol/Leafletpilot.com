@@ -10,7 +10,7 @@ export const navGroups = [
   {
     label: "Katalog",
     items: [
-      { label: "Ürün Kataloğu", path: "/products", icon: "box" },
+      { label: "Ürünlerim", path: "/products", icon: "box" },
       { label: "Kategoriler", path: "/categories", icon: "file" },
       { label: "Markalar", path: "/brands", icon: "check" },
     ],
@@ -52,9 +52,9 @@ export const pageMeta = {
     actionHref: "#/campaigns/new",
   },
   "/products": {
-    title: "Ürün Kataloğu",
-    description: "Onaylı ürün veritabanı, arama, filtreleme ve ürün görsel yönetimi.",
-    action: "Ürün Ekle",
+    title: "Ürünlerim",
+    description: "Paylaşılan katalogdan ürün ekleyin veya özel ürün oluşturun.",
+    action: "Özel Ürün Oluştur",
     actionHref: "#/products",
   },
   "/categories": {

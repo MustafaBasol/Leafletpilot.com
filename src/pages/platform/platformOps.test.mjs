@@ -24,6 +24,18 @@ import {
   statusLabels,
 } from "./platformI18n.js";
 
+test("frontend regression: React mounts into #app, so diagnostics must not probe #root", async () => {
+  const [indexHtml, mainSource] = await Promise.all([
+    readFile("index.html", "utf8"),
+    readFile("src/main.jsx", "utf8"),
+  ]);
+
+  assert.match(indexHtml, /<div id="app"><\/div>/);
+  assert.doesNotMatch(indexHtml, /id="root"/);
+  assert.match(mainSource, /document\.querySelector\("#app"\)/);
+  assert.doesNotMatch(mainSource, /document\.querySelector\("#root"\)/);
+});
+
 const statusValues = [
   "pending",
   "reviewing",
