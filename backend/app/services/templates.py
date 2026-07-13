@@ -74,8 +74,6 @@ async def render_template_preview(session: AsyncSession, template_id: UUID, mark
     if market_id is None:
         raise _not_found()
     template = await get_template(session, template_id, market_id)
-    if template.is_global:
-        raise _global_mutation_forbidden()
     market = await session.get(Market, market_id)
     if market is None:
         raise _not_found()
@@ -132,7 +130,11 @@ async def update_template(
     market_id: UUID | None,
 ) -> Template:
     template = await get_template(session, template_id, market_id)
+    if template.is_global:
+        raise _global_mutation_forbidden()
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("is_global"):
+        raise _global_mutation_forbidden()
     if "name" in updates and "slug" not in updates:
         updates["slug"] = slugify(updates["name"])
     if "is_global" in updates:
