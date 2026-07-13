@@ -17,7 +17,7 @@ engine = (
     create_async_engine(
         settings.database_url,
         pool_pre_ping=True,
-        poolclass=NullPool if settings.environment.lower() in {"test", "testing"} else None,
+        poolclass=NullPool if settings.environment.lower() in {"test", "testing"} or settings.test_database_url else None,
     )
     if settings.database_url
     else None
