@@ -70,6 +70,9 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     assert (await client.delete(f"/api/platform/catalog/categories/{created_category_id}", headers=platform_headers)).status_code == 200
     assert (await client.patch(f"/api/platform/catalog/categories/{created_category_id}", headers=platform_headers, json={"is_active": True})).status_code == 200
     assert (await client.post("/api/platform/catalog/categories", headers=platform_headers, json={"name": f"{prefix} Edited Category"})).status_code == 409
+    referenced_category = await client.delete(f"/api/platform/catalog/categories/{category.id}", headers=platform_headers)
+    assert referenced_category.status_code == 200
+    assert referenced_category.json()["is_active"] is False
 
     created_brand = await client.post("/api/platform/catalog/brands", headers=platform_headers, json={"name": f"{prefix} Created Brand"})
     assert created_brand.status_code == 201
@@ -103,6 +106,8 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     assert (await client.get("/api/platform/catalog/products", headers=platform_headers, params={"category_id": str(category.id)})).json()["total"] >= 1
     usage = (await client.get("/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]["usage_count"]
     assert usage == 1
+    category_items = (await client.get("/api/platform/catalog/categories", headers=platform_headers)).json()["items"]
+    assert any(item["id"] == str(category.id) and item["usage_count"] >= 1 for item in category_items)
     assert (await client.delete(f"/api/platform/catalog/products/{created_product_id}", headers=platform_headers)).status_code == 200
     assert (await client.patch(f"/api/platform/catalog/products/{created_product_id}", headers=platform_headers, json={"is_active": True})).status_code == 200
 

@@ -1,4 +1,3 @@
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -33,8 +32,18 @@ async def _global(session, model, item_id):
     return item
 
 
-async def _count_products(session, column, item_id):
-    return int(await session.scalar(select(func.count(Product.id)).where(column == item_id)) or 0)
+async def _product_usage_counts(session, column, item_ids):
+    if not item_ids:
+        return {}
+    result = await session.execute(select(column, func.count(Product.id)).where(column.in_(item_ids)).group_by(column))
+    return {item_id: int(count) for item_id, count in result.all()}
+
+
+async def _market_product_usage_counts(session, product_ids):
+    if not product_ids:
+        return {}
+    result = await session.execute(select(MarketProduct.product_id, func.count(MarketProduct.id)).where(MarketProduct.product_id.in_(product_ids)).group_by(MarketProduct.product_id))
+    return {product_id: int(count) for product_id, count in result.all()}
 
 
 @router.get("/categories", response_model=ListResponse[PlatformCategoryRead])
@@ -44,10 +53,11 @@ async def list_categories(search: str | None = None, is_active: bool | None = No
     if is_active is not None: conditions.append(Category.is_active.is_(is_active))
     rows = list((await session.scalars(select(Category).where(*conditions).order_by(Category.sort_order, Category.name).limit(limit).offset(offset))).all())
     total = await session.scalar(select(func.count()).select_from(Category).where(*conditions)) or 0
+    usage_counts = await _product_usage_counts(session, Product.category_id, [row.id for row in rows])
     items = []
     for row in rows:
         item = PlatformCategoryRead.model_validate(row, from_attributes=True).model_dump()
-        item["usage_count"] = await _count_products(session, Product.category_id, row.id)
+        item["usage_count"] = usage_counts.get(row.id, 0)
         items.append(item)
     return ListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -78,8 +88,6 @@ async def update_category(category_id: UUID, payload: PlatformCategoryUpdate, _:
 @router.delete("/categories/{category_id}", response_model=PlatformCategoryRead)
 async def deactivate_category(category_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     row = await _global(session, Category, category_id)
-    if await _count_products(session, Product.category_id, category_id):
-        raise _conflict("Category is referenced by products; deactivate it instead of deleting it.")
     row.is_active = False; await session.commit(); return row
 
 
@@ -90,10 +98,11 @@ async def list_brands(search: str | None = None, is_active: bool | None = None, 
     if is_active is not None: conditions.append(Brand.is_active.is_(is_active))
     rows = list((await session.scalars(select(Brand).where(*conditions).order_by(Brand.name).limit(limit).offset(offset))).all())
     total = await session.scalar(select(func.count()).select_from(Brand).where(*conditions)) or 0
+    usage_counts = await _product_usage_counts(session, Product.brand_id, [row.id for row in rows])
     items = []
     for row in rows:
         item = PlatformBrandRead.model_validate(row, from_attributes=True).model_dump()
-        item["usage_count"] = await _count_products(session, Product.brand_id, row.id)
+        item["usage_count"] = usage_counts.get(row.id, 0)
         items.append(item)
     return ListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -184,7 +193,8 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
     statement = select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(*conditions).order_by(Product.name)
     rows = list((await session.scalars(statement.limit(limit).offset(offset))).unique().all())
     total = await session.scalar(select(func.count()).select_from(Product).where(*conditions)) or 0
-    for row in rows: row.usage_count = await session.scalar(select(func.count(MarketProduct.id)).where(MarketProduct.product_id == row.id)) or 0
+    usage_counts = await _market_product_usage_counts(session, [row.id for row in rows])
+    for row in rows: row.usage_count = usage_counts.get(row.id, 0)
     return ListResponse(items=[_product_read(row) for row in rows], total=total, limit=limit, offset=offset)
 
 
