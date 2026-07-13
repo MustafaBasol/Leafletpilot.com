@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_catalog_session, get_current_platform_admin
@@ -66,3 +67,33 @@ async def restore_platform_template(template_id: UUID, _: PlatformAdmin = Depend
     template = await session.get(Template, template_id)
     if template is None: raise template_service._not_found()
     return await template_service.set_global_archive(session, template, False)
+
+
+@router.post("/{template_id}/thumbnail", response_model=TemplateRead)
+async def upload_platform_thumbnail(template_id: UUID, request: Request, _: PlatformAdmin = Depends(get_current_platform_admin), session: AsyncSession = Depends(get_catalog_session)):
+    template = await session.get(Template, template_id)
+    if template is None or not template.is_global:
+        raise template_service._not_found()
+    if template.status == "published":
+        raise template_service._global_mutation_forbidden()
+    return await template_service.upload_thumbnail(session, template, await request.body(), request.headers.get("content-type", "").split(";", 1)[0].lower())
+
+
+@router.delete("/{template_id}/thumbnail", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_platform_thumbnail(template_id: UUID, _: PlatformAdmin = Depends(get_current_platform_admin), session: AsyncSession = Depends(get_catalog_session)):
+    template = await session.get(Template, template_id)
+    if template is None or not template.is_global:
+        raise template_service._not_found()
+    if template.status == "published":
+        raise template_service._global_mutation_forbidden()
+    await template_service.remove_thumbnail(session, template)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{template_id}/thumbnail", include_in_schema=False)
+async def platform_thumbnail(template_id: UUID, _: PlatformAdmin = Depends(get_current_platform_admin), session: AsyncSession = Depends(get_catalog_session)):
+    template = await session.get(Template, template_id)
+    if template is None or not template.is_global:
+        raise template_service._not_found()
+    path, mime_type = template_service.thumbnail_path(template)
+    return FileResponse(path, media_type=mime_type)

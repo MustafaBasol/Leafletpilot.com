@@ -496,6 +496,8 @@ async def upsert_templates(session: AsyncSession, counts: dict[str, int]) -> dic
             "template_type": seed["template_type"],
             "is_global": True,
             "is_active": True,
+            "status": "published",
+            "visibility": "shared",
             "config_json": seed["config_json"],
         }
         if template is None:
