@@ -100,4 +100,11 @@ export const platformApi = {
   setGlobalProductPrimaryImage: (productId, imageId) => request(`/platform/catalog/products/${productId}/images/${imageId}/primary`, { method: "PATCH" }),
   removeGlobalProductImage: (productId, imageId) => request(`/platform/catalog/products/${productId}/images/${imageId}`, { method: "DELETE" }),
   getGlobalProductImageUrl: (productId, imageId) => requestImage(`/platform/catalog/products/${productId}/images/${imageId}/content`),
+  listTemplates: (params) => request("/platform/templates", { params }),
+  createTemplate: (body) => request("/platform/templates", { method: "POST", body }),
+  updateTemplate: (id, body) => request(`/platform/templates/${id}`, { method: "PATCH", body }),
+  publishTemplate: (id) => request(`/platform/templates/${id}/publish`, { method: "POST" }),
+  duplicateTemplate: (id) => request(`/platform/templates/${id}/duplicate`, { method: "POST" }),
+  archiveTemplate: (id) => request(`/platform/templates/${id}/archive`, { method: "POST" }),
+  restoreTemplate: (id) => request(`/platform/templates/${id}/restore`, { method: "POST" }),
 };
