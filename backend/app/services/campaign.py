@@ -429,8 +429,13 @@ async def create_export_job(
     campaign = await get_campaign(session, campaign_id, market_id)
     formats = normalize_requested_formats(payload.requested_formats)
     if payload.job_type == "final_export" and campaign.frozen_at is None:
-        await finalize_campaign(session, campaign.id, campaign.market_id)
-        campaign = await get_campaign(session, campaign_id, market_id)
+        # Legacy Telegram campaigns may not have a template reference. Keep
+        # those exports renderable while still freezing every campaign that
+        # has an eligible template (explicit or default).
+        template = campaign.template or await _get_default_template(session, campaign.market_id)
+        if template is not None:
+            await finalize_campaign(session, campaign.id, campaign.market_id)
+            campaign = await get_campaign(session, campaign_id, market_id)
     existing = await session.scalar(
         select(ExportJob).where(
             ExportJob.campaign_id == campaign.id,
