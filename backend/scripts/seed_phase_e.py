@@ -31,6 +31,9 @@ async def main() -> None:
         markets = list((await session.scalars(select(Market).order_by(Market.created_at))).all())
         for index, market in enumerate(markets[:3]):
             market.subscription_plan = ("starter", "growth", "pro")[index]
+        demo_market = await session.scalar(select(Market).where(Market.slug == "anadolu-market"))
+        if demo_market is not None:
+            demo_market.subscription_plan = "growth"
         if markets:
             existing = list((await session.scalars(select(Template).where(Template.is_global.is_(True)).order_by(Template.created_at))).all())
             if not existing:

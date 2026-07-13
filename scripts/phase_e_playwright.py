@@ -96,7 +96,15 @@ def main() -> int:
             market.goto(f"{frontend_url}/#/templates", wait_until="networkidle")
             expect(market.get_by_text("Paylaşılan şablonlar")).to_be_visible()
             expect(market.get_by_text("Şablonlar yükleniyor...")).not_to_be_visible()
+            add_button = market.get_by_role("button", name="Marketime ekle")
+            if add_button.count():
+                add_button.first.click()
+            expect(market.get_by_role("button", name="Eklendi").first).to_be_visible()
             for name in ("06-shared-template-gallery.png", "07-plan-visibility-or-upgrade.png", "08-adopted-template.png", "09-my-templates.png", "10-custom-template.png", "11-market-thumbnail.png"):
+                if name == "10-custom-template.png":
+                    market.get_by_role("button", name="Özel şablon oluştur").click()
+                    expect(market.locator(".inline-result-warning")).to_be_visible()
+                    errors[:] = [error for error in errors if "403" not in error]
                 market.screenshot(path=str(ARTIFACTS / name), full_page=True)
             market.goto(f"{frontend_url}/#/campaigns/new", wait_until="networkidle")
             market.screenshot(path=str(ARTIFACTS / "12-campaign-preview.png"), full_page=True)
