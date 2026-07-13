@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import { markets, parsedWizardProducts, templates as mockTemplates } from "../data/mockData.js";
 import { createCampaignFromText, getTemplates, parseCampaignTextPreview } from "../data/dataSource.js";
+import { createCampaign, getCampaignBuilderOptions } from "../api/campaignApi.js";
+import { getSelectedMarketId } from "../api/authSession.js";
 import {
   Badge,
   Button,
@@ -47,6 +49,9 @@ export function NewCampaign() {
   const [notice, setNotice] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [builderProducts, setBuilderProducts] = useState([]);
+  const [selectedProducts, setSelectedProducts] = useState([]);
+  const [builderConfig, setBuilderConfig] = useState({ headline: "", subtitle: "", footer: "" });
 
   const parsedCount = useMemo(() => parsedItems.length, [parsedItems]);
   const selectedTemplateItem = templateItems.find((template) => template.id === selectedTemplate) || templateItems[0];
@@ -56,9 +61,15 @@ export function NewCampaign() {
 
     async function loadTemplates() {
       try {
-        const items = await getTemplates();
+        const response = isRealApiEnabled ? await getCampaignBuilderOptions(getSelectedMarketId()) : await getTemplates();
+        const items = isRealApiEnabled ? (response?.templates || []) : response;
         if (!isMounted) return;
         setTemplateItems(items);
+        if (isRealApiEnabled) {
+          const availableProducts = response?.products || [];
+          setBuilderProducts(availableProducts);
+          setSelectedProducts(availableProducts.slice(0, 6));
+        }
         setSelectedTemplate((current) => (items.some((template) => template.id === current) ? current : items[0]?.id || ""));
       } catch (error) {
         if (isMounted) {
@@ -104,7 +115,13 @@ export function NewCampaign() {
     try {
       setIsCreating(true);
       setApiError("");
-      const response = await createCampaignFromText({ title: campaignName, rawText, templateId: selectedTemplate, currency, language });
+      const marketId = getSelectedMarketId();
+      const items = selectedProducts.length
+        ? selectedProducts.map((product, index) => ({ raw_line: product.name, incoming_name: product.name, display_name: product.name, market_product_id: product.id, currency: product.currency || currency, price: product.promo_price ?? product.regular_price, sort_order: index }))
+        : null;
+      const response = items
+        ? await createCampaign({ title: campaignName, template_id: selectedTemplate || null, currency, language, items, builder_config: builderConfig }, marketId)
+        : await createCampaignFromText({ title: campaignName, rawText, templateId: selectedTemplate, currency, language });
       const campaignId = response?.campaign_id || response?.campaign?.id;
       if (!campaignId) throw new Error("Backend kampanya kimliği döndürmedi.");
       window.location.hash = `#/campaigns/${campaignId}`;
@@ -163,6 +180,14 @@ export function NewCampaign() {
 
           {step === 2 ? (
             <div className="product-list-step">
+              {isRealApiEnabled ? (
+                <div className="template-grid">
+                  {builderProducts.map((product) => {
+                    const checked = selectedProducts.some((item) => item.id === product.id);
+                    return <label className={`template-card ${checked ? "is-selected" : ""}`} key={product.id}><input type="checkbox" checked={checked} onChange={() => setSelectedProducts((current) => checked ? current.filter((item) => item.id !== product.id) : [...current, product])} /><strong>{product.name}</strong><small>{product.category || "Kategori yok"}</small><span>{product.promo_price ?? product.regular_price ?? "-"} {product.currency}</span></label>;
+                  })}
+                </div>
+              ) : null}
               <label className="field field-full">
                 <span>Ürün Listesi</span>
                 <textarea value={rawText} onChange={(event) => setRawText(event.target.value)} />

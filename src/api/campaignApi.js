@@ -18,6 +18,14 @@ export function createCampaign(payload, marketId) {
   return apiClient.post("/campaigns", payload, { marketId });
 }
 
+export function getCampaignBuilderOptions(marketId) {
+  return apiClient.get("/campaigns/builder/options", { marketId });
+}
+
+export function finalizeCampaign(campaignId, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/finalize`, {}, { marketId });
+}
+
 export function updateCampaign(campaignId, payload, marketId) {
   return apiClient.patch(`/campaigns/${campaignId}`, payload, { marketId });
 }
