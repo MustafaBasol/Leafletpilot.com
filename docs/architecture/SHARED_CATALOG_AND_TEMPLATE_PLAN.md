@@ -464,8 +464,10 @@ Drafts resolve live. `POST /api/campaigns/{id}/finalize` validates the selected 
 
 ### Tests and acceptance
 
-Relevant regression tests passed locally: `16 passed, 4 skipped` across campaign API, preview renderer, rendering, and Phase E template acceptance. Frontend production build passed. PostgreSQL 16 rehearsal and the deterministic Phase F browser harness/screenshots are not yet run in this implementation slice; no Phase F acceptance artifacts or CI/review certification are claimed.
+The isolated PostgreSQL 16 rehearsal passed: upgrade `0015 -> 0016`, downgrade, re-upgrade, `alembic current`, and `alembic heads` all completed with `20260713_0016` as the sole head. Focused PostgreSQL-backed campaign/template/rendering acceptance passed with `20 passed, 3 warnings`; the concurrent Telegram export regression also passed after preserving legacy campaigns without a template. The full CI run for final HEAD `369c65d` passed backend, frontend, and Docker validation. The local default Vite loader remains blocked by an existing Windows permission-protected `.vite-temp` path, while CI's clean build passes.
+
+The deterministic Phase F browser harness and authenticated screenshots have not been run. PR #25 remains draft; review submissions and inline review threads are currently zero. No Phase F acceptance artifacts or formal completion are claimed.
 
 ### Phase G entry criteria
 
-Run the isolated PostgreSQL seed and migration rehearsal, add end-to-end freeze/re-export and preview/export parity assertions, execute the 14-capture browser harness, certify CI and review threads, and verify Telegram regression coverage before declaring Phase G safe.
+Run the deterministic Phase F seed and browser harness with the required authenticated screenshots, add end-to-end freeze/re-export and normalized preview/export parity assertions, certify the exact final CI run and review threads, and complete the remaining frontend wizard controls before declaring Phase G safe.
