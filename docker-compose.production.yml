@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -21,6 +21,23 @@
     build:
       context: ./backend
       dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=leafletpilot_app"
+      - "traefik.http.middlewares.leafletpilot-api-gzip.compress=true"
+      - "traefik.http.middlewares.leafletpilot-api-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.leafletpilot-api-http.entrypoints=http"
+      - "traefik.http.routers.leafletpilot-api-http.rule=Host(`api.leafletpilot.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.leafletpilot-api-http.middlewares=leafletpilot-api-redirect"
+      - "traefik.http.routers.leafletpilot-api-http.service=leafletpilot-api"
+      - "traefik.http.routers.leafletpilot-api-https.entrypoints=https"
+      - "traefik.http.routers.leafletpilot-api-https.rule=Host(`api.leafletpilot.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.leafletpilot-api-https.middlewares=leafletpilot-api-gzip"
+      - "traefik.http.routers.leafletpilot-api-https.tls=true"
+      - "traefik.http.routers.leafletpilot-api-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.leafletpilot-api-https.service=leafletpilot-api"
+      - "traefik.http.services.leafletpilot-api.loadbalancer.server.port=8000"
+
     restart: unless-stopped
     depends_on:
       postgres:
@@ -93,6 +110,23 @@
       dockerfile: Dockerfile.frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=leafletpilot_app"
+      - "traefik.http.middlewares.leafletpilot-web-gzip.compress=true"
+      - "traefik.http.middlewares.leafletpilot-web-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.leafletpilot-web-http.entrypoints=http"
+      - "traefik.http.routers.leafletpilot-web-http.rule=(Host(`leafletpilot.com`) || Host(`www.leafletpilot.com`)) && PathPrefix(`/`)"
+      - "traefik.http.routers.leafletpilot-web-http.middlewares=leafletpilot-web-redirect"
+      - "traefik.http.routers.leafletpilot-web-http.service=leafletpilot-web"
+      - "traefik.http.routers.leafletpilot-web-https.entrypoints=https"
+      - "traefik.http.routers.leafletpilot-web-https.rule=(Host(`leafletpilot.com`) || Host(`www.leafletpilot.com`)) && PathPrefix(`/`)"
+      - "traefik.http.routers.leafletpilot-web-https.middlewares=leafletpilot-web-gzip"
+      - "traefik.http.routers.leafletpilot-web-https.tls=true"
+      - "traefik.http.routers.leafletpilot-web-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.leafletpilot-web-https.service=leafletpilot-web"
+      - "traefik.http.services.leafletpilot-web.loadbalancer.server.port=8080"
+
     restart: unless-stopped
     expose:
       - "8080"
