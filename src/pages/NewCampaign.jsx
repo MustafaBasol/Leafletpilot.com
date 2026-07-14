@@ -55,6 +55,8 @@ export function NewCampaign() {
 
   const parsedCount = useMemo(() => parsedItems.length, [parsedItems]);
   const selectedTemplateItem = templateItems.find((template) => template.id === selectedTemplate) || templateItems[0];
+  const selectedSlotCount = Number(selectedTemplateItem?.config_json?.slot_count || Number.POSITIVE_INFINITY);
+  const slotValidation = selectedProducts.length > selectedSlotCount
 
   useEffect(() => {
     let isMounted = true;
@@ -133,6 +135,10 @@ export function NewCampaign() {
   }
 
   async function goNext() {
+    if (step === 2 && slotValidation) {
+      setApiError(`Şablon en fazla ${selectedSlotCount} ürün destekliyor. Devam etmek için ürün sayısını azaltın.`);
+      return;
+    }
     if (step === 2) {
       const parsed = await parseText();
       if (!parsed) return;
@@ -188,6 +194,7 @@ export function NewCampaign() {
                   })}
                 </div>
               ) : null}
+              {isRealApiEnabled && slotValidation ? <p className="inline-result inline-result-warning" data-testid="slot-validation">Şablon en fazla {selectedSlotCount} ürün destekliyor; finalize engellendi.</p> : null}
               <label className="field field-full">
                 <span>Ürün Listesi</span>
                 <textarea value={rawText} onChange={(event) => setRawText(event.target.value)} />
@@ -246,7 +253,18 @@ export function NewCampaign() {
             </div>
           ) : null}
 
-          {step === 5 ? <PreviewFrame title={campaignName} status="Taslak önizleme" /> : null}
+          {step === 5 ? (
+            <div className="stack-list">
+              <PreviewFrame title={builderConfig.headline || campaignName} status="Taslak önizleme" />
+              {isRealApiEnabled ? (
+                <div className="form-grid">
+                  <Input label="Başlık" value={builderConfig.headline} onChange={(event) => setBuilderConfig((current) => ({ ...current, headline: event.target.value }))} />
+                  <Input label="Alt başlık" value={builderConfig.subtitle} onChange={(event) => setBuilderConfig((current) => ({ ...current, subtitle: event.target.value }))} />
+                  <Input label="Alt bilgi" value={builderConfig.footer} onChange={(event) => setBuilderConfig((current) => ({ ...current, footer: event.target.value }))} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {step === 6 ? (
             <div className="checkbox-grid">
@@ -286,7 +304,7 @@ export function NewCampaign() {
             </Button>
             <Button
               variant="primary"
-              disabled={isParsing || isCreating || (!isRealApiEnabled && step === steps.length)}
+              disabled={isParsing || isCreating || (step === 2 && slotValidation) || (!isRealApiEnabled && step === steps.length)}
               onClick={goNext}
             >
               {isParsing ? "Ayrıştırılıyor..." : isCreating ? "Oluşturuluyor..." : step === steps.length ? "Kampanyayı Oluştur" : "İleri"}

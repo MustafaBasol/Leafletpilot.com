@@ -84,8 +84,8 @@ async def main() -> None:
             membership.is_active = True
         await one(session, MarketUser, market_id=markets["phase-f-growth"].id, user_id=users[1].id, role="market_staff")
 
-        def template(slug, name, *, market_id=None, status="published", version=1, active=True, source_template_id=None):
-            return {"slug": slug, "name": name, "market_id": market_id, "is_global": market_id is None, "is_active": active, "status": status, "version": version, "source_template_id": source_template_id, "template_type": "flyer", "visibility": "shared", "minimum_plan": "starter", "published_at": datetime.now(UTC), "config_json": {"slot_count": 4, "layout": "phase-f", "accent_color": "#2563eb"}}
+        def template(slug, name, *, market_id=None, status="published", version=1, active=True, source_template_id=None, slot_count=4):
+            return {"slug": slug, "name": name, "market_id": market_id, "is_global": market_id is None, "is_active": active, "status": status, "version": version, "source_template_id": source_template_id, "template_type": "flyer", "visibility": "shared", "minimum_plan": "starter", "published_at": datetime.now(UTC), "config_json": {"slot_count": slot_count, "layout": "phase-f", "accent_color": "#2563eb"}}
 
         v1 = await one(session, Template, slug="phase-f-global-v1", market_id=None, name="Phase F Global v1", template_type="flyer")
         for key, value in template("phase-f-global-v1", "Phase F Global v1").items(): setattr(v1, key, value)
@@ -94,26 +94,38 @@ async def main() -> None:
         adopted = await one(session, Template, slug="phase-f-adopted", market_id=markets["phase-f-growth"].id, name="Phase F Adopted Template", template_type="flyer", is_global=False)
         for key, value in template("phase-f-adopted", "Phase F Adopted Template", market_id=markets["phase-f-growth"].id, source_template_id=v2.id).items(): setattr(adopted, key, value)
         custom = await one(session, Template, slug="phase-f-custom", market_id=markets["phase-f-growth"].id, name="Phase F Custom Template", template_type="flyer", is_global=False)
-        for key, value in template("phase-f-custom", "Phase F Custom Template", market_id=markets["phase-f-growth"].id).items(): setattr(custom, key, value)
+        for key, value in template("phase-f-custom", "Phase F Custom Template", market_id=markets["phase-f-growth"].id, slot_count=2).items(): setattr(custom, key, value)
         for slug, status, active in (("phase-f-draft", "draft", True), ("phase-f-archived", "archived", False)):
             row = await one(session, Template, slug=slug, market_id=None, name=f"Phase F {status.title()} Template", template_type="flyer")
             for key, value in template(slug, f"Phase F {status.title()} Template", status=status, active=active).items(): setattr(row, key, value)
         markets["phase-f-growth"].default_template_id = adopted.id
 
-        product = await session.scalar(select(Product).where(Product.barcode == "PHASE-F-001", Product.market_id.is_(None)))
-        if product is None:
-            product = Product(name="Phase F Adopted Product", short_name="Phase F Product", barcode="PHASE-F-001", regular_price=Decimal("9.99"), promo_price=Decimal("7.99"), currency="EUR", is_global=True, is_active=True)
-            session.add(product)
-            await session.flush()
-        image = await session.scalar(select(ProductImage).where(ProductImage.product_id == product.id))
-        if image is None:
-            session.add(ProductImage(product_id=product.id, url="https://example.com/phase-f-product.png", mime_type="image/png", quality_status="good", is_primary=True))
-        market_product = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, product_id=product.id)
-        market_product.regular_price = Decimal("10.99")
-        market_product.promo_price = Decimal("8.99")
-        market_product.image_url = "https://example.com/phase-f-override.png"
-        market_product.image_quality_status = "good"
-        market_product.is_active = True
+        products = []
+        for index, (barcode, name, regular, promo) in enumerate((
+            ("PHASE-F-001", "Phase F Adopted Product", "9.99", "7.99"),
+            ("PHASE-F-002", "Phase F Second Product", "6.99", "5.99"),
+            ("PHASE-F-003", "Phase F Third Product", "4.99", "3.99"),
+        )):
+            product = await session.scalar(select(Product).where(Product.barcode == barcode, Product.market_id.is_(None)))
+            if product is None:
+                product = Product(name=name, short_name=name, barcode=barcode, regular_price=Decimal(regular), promo_price=Decimal(promo), currency="EUR", is_global=True, is_active=True)
+                session.add(product)
+                await session.flush()
+            product.name = name
+            product.regular_price = Decimal(regular)
+            product.promo_price = Decimal(promo)
+            product.is_active = True
+            image = await session.scalar(select(ProductImage).where(ProductImage.product_id == product.id))
+            if image is None:
+                session.add(ProductImage(product_id=product.id, url=f"https://example.com/phase-f-product-{index + 1}.png", mime_type="image/png", quality_status="good", is_primary=True))
+            market_product = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, product_id=product.id)
+            market_product.regular_price = Decimal(regular) + Decimal("1.00")
+            market_product.promo_price = Decimal(promo) + Decimal("1.00")
+            market_product.image_url = f"https://example.com/phase-f-override-{index + 1}.png"
+            market_product.image_quality_status = "good"
+            market_product.is_active = True
+            products.append((product, market_product))
+        product, market_product = products[0]
         private = await one(session, MarketProduct, market_id=markets["phase-f-growth"].id, private_name="Phase F Private Product")
         private.regular_price = Decimal("4.99")
         private.is_active = True
@@ -135,13 +147,33 @@ async def main() -> None:
             row.campaign_end_date = date(2026, 7, 21)
             row.created_by_user_id = users[0].id
             row.builder_config_json = {"headline": title, "subtitle": "Phase F acceptance", "promo_label": "%20 indirim", "footer": "Sentetik kabul verisi"}
-            item = await session.scalar(select(CampaignItem).where(CampaignItem.campaign_id == row.id))
-            if item is None:
-                session.add(CampaignItem(campaign_id=row.id, market_id=row.market_id, product_id=product.id, market_product_id=market_product.id, raw_line="Phase F Adopted Product", incoming_name="Phase F Adopted Product", display_name="Phase F Adopted Product", price=Decimal("8.99"), old_price=Decimal("10.99"), currency="EUR", sort_order=0, is_hero=True, match_status="matched", match_confidence=Decimal("99")))
+            existing_items = {item.product_id: item for item in await session.scalars(select(CampaignItem).where(CampaignItem.campaign_id == row.id))}
+            for index, (item_product, item_market_product) in enumerate(products):
+                item = existing_items.get(item_product.id)
+                if item is None:
+                    item = CampaignItem(campaign_id=row.id, market_id=row.market_id, product_id=item_product.id, market_product_id=item_market_product.id, raw_line=item_product.name, incoming_name=item_product.name, display_name=item_product.name, price=item_market_product.promo_price, old_price=item_market_product.regular_price, currency="EUR", sort_order=index, is_hero=index == 0, match_status="matched", match_confidence=Decimal("99"))
+                    session.add(item)
+                else:
+                    item.sort_order = index
+                    item.display_name = item_product.name
+                    item.price = item_market_product.promo_price
+                    item.old_price = item_market_product.regular_price
             if frozen:
                 row.frozen_at = row.frozen_at or datetime(2026, 7, 10, tzinfo=UTC)
                 row.finalized_at = row.finalized_at or row.frozen_at
-                row.snapshot_json = {"template_id": str(template_id), "template_version": 1 if historical else 2, "items": [{"name": "Phase F Adopted Product", "price": "8.99"}]}
+                snapshot_template = await session.get(Template, template_id)
+                row.snapshot_json = {
+                    "template_id": str(template_id),
+                    "template_version": 1 if historical else 2,
+                    "template_name": snapshot_template.name if snapshot_template else None,
+                    "template_slug": snapshot_template.slug if snapshot_template else None,
+                    "template_config": dict(snapshot_template.config_json or {}) if snapshot_template else {},
+                    "title": title,
+                    "language": row.language,
+                    "currency": row.currency,
+                    "market_name": markets["phase-f-growth"].name,
+                    "items": [{"name": "Phase F Adopted Product", "resolved_name": "Phase F Adopted Product", "price": "8.99", "currency": "EUR", "sort_order": 0}],
+                }
             return row
 
         draft = await campaign("phase-f-draft", "Phase F Draft Campaign", template_id=adopted.id)
@@ -157,7 +189,7 @@ async def main() -> None:
             "markets": await session.scalar(select(func.count()).select_from(Market).where(Market.slug.like("phase-f-%"))),
             "users": await session.scalar(select(func.count()).select_from(User).where(User.email.like("phase-f-%"))),
             "templates": await session.scalar(select(func.count()).select_from(Template).where(Template.slug.like("phase-f-%"))),
-            "products": await session.scalar(select(func.count()).select_from(Product).where(Product.barcode == "PHASE-F-001")),
+            "products": await session.scalar(select(func.count()).select_from(Product).where(Product.barcode.in_(["PHASE-F-001", "PHASE-F-002", "PHASE-F-003"]))),
             "market_products": await session.scalar(select(func.count()).select_from(MarketProduct).where(MarketProduct.market_id.in_(phase_markets))),
             "campaigns": await session.scalar(select(func.count()).select_from(Campaign).where(Campaign.slug.like("phase-f-%"))),
             "campaign_items": await session.scalar(select(func.count()).select_from(CampaignItem).where(CampaignItem.campaign_id.in_(phase_campaigns))),
@@ -169,8 +201,8 @@ async def main() -> None:
             "platform_admin_ready": admin_ready,
             "market_users_ready": market_users_ready,
             "templates_ready": counts["templates"] == 6,
-            "products_ready": counts["products"] == 1 and counts["market_products"] == 3,
-            "campaigns_ready": counts["campaigns"] == 3 and counts["campaign_items"] == 3,
+            "products_ready": counts["products"] == 3 and counts["market_products"] == 5,
+            "campaigns_ready": counts["campaigns"] == 3 and counts["campaign_items"] == 9,
             "exports_ready": counts["export_jobs"] == 2,
             "fixture_version": "phase-f-v1",
             "counts": counts,

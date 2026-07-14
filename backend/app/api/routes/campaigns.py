@@ -177,6 +177,16 @@ async def add_campaign_item(
     return await campaign_service.add_campaign_item(session, campaign_id, payload, market_id)
 
 
+@router.patch("/{campaign_id}/items/order", response_model=CampaignDetail)
+async def reorder_campaign_items_before_item_route(
+    campaign_id: UUID,
+    payload: CampaignItemOrderUpdate,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignDetail:
+    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id)
+
+
 @router.patch("/{campaign_id}/items/{item_id}", response_model=CampaignItemRead)
 async def update_campaign_item(
     campaign_id: UUID,

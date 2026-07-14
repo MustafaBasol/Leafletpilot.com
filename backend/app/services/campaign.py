@@ -35,7 +35,7 @@ from app.services.campaign_rendering import campaign_render_load_options
 from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
 from app.services.catalog import list_my_market_products, resolved_market_product
 from app.services.templates import list_templates
-from app.services.entitlements import resolve_capabilities
+from app.services.entitlements import has_capacity, resolve_capabilities, resolve_plan_code
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
@@ -200,6 +200,7 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
     campaign = await session.scalar(statement)
     if campaign is None:
         raise _not_found("Campaign")
+    campaign.items.sort(key=lambda item: (item.sort_order, item.created_at, str(item.id)))
     return campaign
 
 
@@ -209,11 +210,24 @@ async def get_campaign_preview_html(
     market_id: UUID | None,
 ) -> CampaignPreviewHtml:
     campaign = await get_campaign(session, campaign_id, market_id)
+    generated_at = datetime.now(UTC).replace(microsecond=0)
+    if campaign.snapshot_json:
+        from app.services.campaign_rendering import render_campaign_snapshot_html
+
+        snapshot = campaign.snapshot_json
+        return CampaignPreviewHtml(
+            campaign_id=campaign.id,
+            template_id=snapshot.get("template_id"),
+            template_name=snapshot.get("template_name") or "Frozen template",
+            html=render_campaign_snapshot_html(snapshot, generated_at=generated_at),
+            generated_at=generated_at,
+            template_version=snapshot.get("template_version"),
+            page_count=1,
+        )
     template = campaign.template
     if template is None:
         template = await _get_default_template(session, campaign.market_id)
 
-    generated_at = datetime.now(UTC).replace(microsecond=0)
     return CampaignPreviewHtml(
         campaign_id=campaign.id,
         template_id=template.id if template else None,
@@ -311,10 +325,18 @@ async def reorder_campaign_items(session: AsyncSession, campaign_id: UUID, item_
     campaign = await get_campaign(session, campaign_id, market_id)
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
-    current = {item.id: item for item in campaign.items}
-    if set(current) != set(item_ids) or len(item_ids) != len(current):
-        raise HTTPException(status_code=422, detail="item_ids must contain each campaign item exactly once.")
-    for index, item_id in enumerate(item_ids):
+    current = {str(item.id): item for item in campaign.items}
+    requested_ids = [str(item_id) for item_id in item_ids]
+    if set(current) != set(requested_ids) or len(requested_ids) != len(current):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "item_ids must contain each campaign item exactly once.",
+                "expected_item_ids": list(current),
+                "received_item_ids": requested_ids,
+            },
+        )
+    for index, item_id in enumerate(requested_ids):
         current[item_id].sort_order = index
     await _persist(session, campaign)
     return await get_campaign(session, campaign.id, campaign.market_id)
@@ -447,6 +469,22 @@ async def create_export_job(
     )
     if existing is not None:
         return existing
+    market = campaign.market or await session.get(Market, campaign.market_id)
+    capabilities = resolve_capabilities(market)
+    if capabilities.monthly_exports_limit is not None:
+        month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        completed_exports = await session.scalar(
+            select(func.count(ExportJob.id)).where(
+                ExportJob.market_id == campaign.market_id,
+                ExportJob.status == "completed",
+                ExportJob.completed_at >= month_start,
+            )
+        )
+        if not has_capacity(completed_exports or 0, capabilities.monthly_exports_limit):
+            raise HTTPException(
+                status_code=403,
+                detail=f"The {resolve_plan_code(market)} plan has reached its monthly export limit.",
+            )
     export_job = ExportJob(
         **payload.model_dump(exclude={"requested_formats", "status"}),
         campaign_id=campaign.id,
