@@ -471,3 +471,17 @@ The deterministic Phase F seed and fixed-port Playwright harness are now present
 ### Phase G entry criteria
 
 Complete the remaining authenticated UI flows (ordering/slot validation/content customization/draft reopen/freeze/PDF+PNG export/historical render/entitlement limit/market isolation), add normalized preview/export parity assertions, certify the exact final CI run and review threads, and only then declare Phase G safe.
+
+## Phase F closure
+
+- Root causes fixed: `/items/order` was shadowed by the generic item route; item order was not normalized on campaign reads; the browser harness called `asyncio.run()` inside sync Playwright; frozen previews/exports still read mutable source rows; historical snapshots omitted template metadata; the builder had no persisted content-customization controls; and export entitlement was not enforced at the service boundary.
+- Reorder persistence is covered by the UI save/reopen flow and API response verification. Slot validation uses the selected template's `config_json.slot_count`, blocks progression, and clears after reducing the selection.
+- Finalization stores template identity/version/configuration, market display context, builder configuration, effective product values, prices, image references, and sort order. Frozen preview/PDF/PNG rendering consumes only that snapshot, so source product, market-product, and template mutations do not change the frozen campaign.
+- PDF and PNG exports are synchronously rendered, repeated requests reuse the completed export job, and preview/export parity is checked against the frozen normalized payload. Starter monthly-limit denial is visible and enforced; Growth succeeds. Historical template v1 continues to render, and a different market receives no campaign/export access.
+- The final deterministic fixture reports 3 markets, 2 users, 6 templates, 3 products, 5 market-product rows, 3 campaigns, 9 campaign items, and 2 seeded export jobs. Focused PostgreSQL-backed browser seeding and export rendering passed; focused backend tests passed 17 with 3 database-dependent skips in the local environment. Frontend validation, platform tests (19), and production build passed.
+- Browser acceptance generated all 16 ignored screenshots under `artifacts/phase-f-browser-acceptance/`: campaign list/details, template selection/preview, product selection/order, slot validation, customization, preview, reopen, finalized campaign, PDF, PNG, historical v1, entitlement denial, and market isolation. Unexpected console errors: 0; page errors: 0; failed critical requests: 0. Three expected policy-denial network messages are recorded separately.
+- PR #25 was inspected with no review comments, reviews, or unresolved threads at the time of closure. The final exact-head CI result and commit/push status are recorded in the PR update accompanying this change.
+
+### Phase G entry criteria
+
+Phase G is safe only after the focused commits from this continuation are pushed, CI is green on the exact final HEAD, the working tree is clean, and no new review threads appear. No merge, deploy, or production access is part of Phase F.
