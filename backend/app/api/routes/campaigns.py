@@ -28,6 +28,9 @@ from app.schemas.campaign import (
     CampaignParseRequest,
     CampaignParseResponse,
     ParsedCampaignLineRead,
+    CampaignBuilderOptions,
+    CampaignFinalizeResponse,
+    CampaignItemOrderUpdate,
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
@@ -36,6 +39,14 @@ from app.services.campaign_parser import parse_campaign_text
 from app.services import product_matching
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+
+
+@router.get("/builder/options", response_model=CampaignBuilderOptions)
+async def campaign_builder_options(
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignBuilderOptions:
+    return await campaign_service.get_builder_options(session, market_id)
 
 
 @router.get("", response_model=ListResponse[CampaignListItem])
@@ -138,6 +149,15 @@ async def update_campaign(
     return await campaign_service.update_campaign(session, campaign_id, payload, market_id)
 
 
+@router.post("/{campaign_id}/finalize", response_model=CampaignFinalizeResponse)
+async def finalize_campaign(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignFinalizeResponse:
+    return await campaign_service.finalize_campaign(session, campaign_id, market_id)
+
+
 @router.delete("/{campaign_id}", response_model=CampaignDetail)
 async def cancel_campaign(
     campaign_id: UUID,
@@ -157,6 +177,16 @@ async def add_campaign_item(
     return await campaign_service.add_campaign_item(session, campaign_id, payload, market_id)
 
 
+@router.patch("/{campaign_id}/items/order", response_model=CampaignDetail)
+async def reorder_campaign_items_before_item_route(
+    campaign_id: UUID,
+    payload: CampaignItemOrderUpdate,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignDetail:
+    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id)
+
+
 @router.patch("/{campaign_id}/items/{item_id}", response_model=CampaignItemRead)
 async def update_campaign_item(
     campaign_id: UUID,
@@ -166,6 +196,16 @@ async def update_campaign_item(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
     return await campaign_service.update_campaign_item(session, campaign_id, item_id, payload, market_id)
+
+
+@router.patch("/{campaign_id}/items/order", response_model=CampaignDetail)
+async def reorder_campaign_items(
+    campaign_id: UUID,
+    payload: CampaignItemOrderUpdate,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignDetail:
+    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id)
 
 
 @router.post("/{campaign_id}/items/{item_id}/resolve-match", response_model=CampaignItemRead)

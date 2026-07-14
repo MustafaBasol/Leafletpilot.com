@@ -5,11 +5,13 @@ import { campaignProducts, findCampaignById, generatedFiles } from "../data/mock
 import {
   createCampaignExportJob,
   downloadCampaignFile,
+  finalizeCampaign,
   generateCampaignDetailSuggestions,
   generateCampaignItemSuggestions,
   getCampaignDetail,
   getCampaignPreviewHtml,
   resolveCampaignItem,
+  reorderCampaignItems,
   updateCampaignDetail,
 } from "../data/dataSource.js";
 import {
@@ -270,6 +272,26 @@ export function CampaignDetail({ campaignId }) {
     );
   }
 
+  async function finalizeCurrentCampaign() {
+    await runRealAction("finalize", () => finalizeCampaign(campaignId), "Kampanya donduruldu ve sürümü sabitlendi.");
+  }
+
+  async function moveRow(index, direction) {
+    if (!isRealApiEnabled || campaign.frozenAt || index + direction < 0 || index + direction >= rows.length) return;
+    const next = [...rows];
+    [next[index], next[index + direction]] = [next[index + direction], next[index]];
+    setRows(next);
+    try {
+      const updated = await reorderCampaignItems(campaignId, next);
+      setCampaign(updated);
+      setRows(updated.items || next);
+      setNotice("Ürün sırası kaydedildi.");
+    } catch (error) {
+      setApiError(error.message || "Ürün sırası kaydedilemedi.");
+      await loadCampaign();
+    }
+  }
+
   async function downloadFile(file) {
     if (!isRealApiEnabled) {
       setNotice("Mock modda indirme simüle edildi.");
@@ -341,6 +363,11 @@ export function CampaignDetail({ campaignId }) {
                   {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
                 </Button>
               </>
+            ) : null}
+            {canEditCampaigns && isRealApiEnabled && !campaign.frozenAt ? (
+              <Button variant="primary" disabled={isLoading || actionLoading === "finalize"} onClick={finalizeCurrentCampaign}>
+                {actionLoading === "finalize" ? "Donduruluyor..." : "Kampanyayı Dondur"}
+              </Button>
             ) : null}
             {canGenerateExports ? (
               <Button
@@ -455,11 +482,12 @@ export function CampaignDetail({ campaignId }) {
               "Kategori",
               "Eşleşme Skoru",
               "Durum",
+              canEditCampaigns ? "Sıra" : null,
               canEditCampaigns ? "Öneriler" : null,
               canEditCampaigns ? "Aksiyon" : null,
             ].filter(Boolean)}
           >
-            {rows.map((product) => (
+            {rows.map((product, index) => (
               <tr key={product.id}>
                 <td><ProductThumbnail label={product.matchedProduct || product.incomingName} hasImage={product.image} /></td>
                 <td>{product.incomingName}{product.rawLine ? <small>{product.rawLine}</small> : null}</td>
@@ -471,6 +499,10 @@ export function CampaignDetail({ campaignId }) {
                 <td><StatusBadge status={product.status} /></td>
                 {canEditCampaigns ? (
                   <>
+                    <td>
+                      <Button disabled={Boolean(campaign.frozenAt) || index === 0} onClick={() => moveRow(index, -1)}>↑</Button>
+                      <Button disabled={Boolean(campaign.frozenAt) || index === rows.length - 1} onClick={() => moveRow(index, 1)}>↓</Button>
+                    </td>
                     <td>
                       {(product.suggestions || []).slice(0, 2).map((suggestion) => (
                         <button

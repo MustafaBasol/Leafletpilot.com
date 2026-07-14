@@ -110,8 +110,13 @@ async def render_campaign_export(
     created_files: list[CampaignFile] = []
     try:
         generated_at = datetime.now(UTC).replace(microsecond=0)
-        template = campaign.template
-        html = render_campaign_preview_html(campaign, template, generated_at=generated_at)
+        if campaign.snapshot_json:
+            from app.services.campaign_rendering import render_campaign_snapshot_html
+
+            html = render_campaign_snapshot_html(campaign.snapshot_json, generated_at=generated_at)
+        else:
+            template = campaign.template
+            html = render_campaign_preview_html(campaign, template, generated_at=generated_at)
 
         for file_format in formats:
             file_name = build_export_file_name(campaign, file_format)

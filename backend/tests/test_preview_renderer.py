@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from app.models import Brand, Campaign, CampaignItem, Market, Product, ProductImage, Template
 from app.services.preview_renderer import render_campaign_preview_html
+from app.services.campaign_rendering import render_campaign_snapshot_html
 
 
 def test_preview_renderer_escapes_user_generated_text_and_hides_diagnostics() -> None:
@@ -168,6 +169,26 @@ def test_preview_renderer_renders_hydrated_market_product_graph_without_io() -> 
     assert 'class="promo-badge">New' in html
     assert "Fresh Product" in html
     assert "not-present.png" not in html
+
+
+def test_frozen_snapshot_renderer_uses_snapshot_values_after_source_mutation() -> None:
+    snapshot = {
+        "title": "Frozen Campaign",
+        "language": "tr",
+        "currency": "EUR",
+        "market_name": "Frozen Market",
+        "template_name": "Historical v1",
+        "template_slug": "premium-market",
+        "template_config": {"layout": "premium-market", "accent_color": "#2563eb"},
+        "items": [{"id": str(uuid4()), "name": "Original Product", "resolved_name": "Original Product", "price": "8.99", "old_price": "10.99", "currency": "EUR", "sort_order": 0}],
+    }
+
+    html = render_campaign_snapshot_html(snapshot, generated_at=datetime(2026, 7, 5, 10, 0, tzinfo=UTC))
+
+    assert "Original Product" in html
+    assert "8,99" in html
+    assert "#2563eb" in html
+    assert "MUTATED" not in html
 
 
 def _campaign_with_items(title: str, match_status: str) -> Campaign:
