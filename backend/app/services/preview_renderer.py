@@ -6,409 +6,101 @@ from decimal import Decimal
 from html import escape
 from typing import Any
 
-from app.models import Campaign, CampaignItem, Template
+from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
 
-
-DEFAULT_TEMPLATE_SLUG = "premium-market"
+LAYOUTS = {"promo-4": (2, 2), "promo-9": (3, 3), "promo-16": (4, 4)}
+DEFAULT_TEMPLATE_SLUG = "promo-4"
 DEFAULT_TEMPLATE_NAME = "Premium Market"
 
 
-def render_campaign_preview_html(
-    campaign: Campaign,
-    template: Template | None,
-    *,
-    generated_at: datetime,
-) -> str:
-    config = dict(template.config_json) if template and isinstance(template.config_json, dict) else {}
-    if campaign.market is not None and isinstance(campaign.market.promo_profile_json, dict):
-        config = {**campaign.market.promo_profile_json, **config}
-    slug = str(config.get("layout") or template.slug if template else DEFAULT_TEMPLATE_SLUG)
-    if slug not in {"premium-market", "compact-weekly"}:
-        slug = "compact-weekly" if config.get("columns") == 2 else DEFAULT_TEMPLATE_SLUG
-
-    template_name = template.name if template else DEFAULT_TEMPLATE_NAME
-    items = sorted(campaign.items, key=lambda item: (item.sort_order, item.created_at or generated_at, str(item.id)))
-    styles = _style_config(slug, config)
-    cards = "\n".join(_render_item_card(item, config) for item in items[:_slot_count(config)] if item.match_status != "excluded")
-    if not cards:
-        cards = '<div class="empty-state">Bu kampanyada henüz ürün bulunmuyor.</div>'
-
-    generated_date = _format_date(generated_at)
-    promo_title = str(config.get("promo_title") or campaign.title)
-    validity_text = str(config.get("validity_text") or generated_date)
-    market_name = campaign.market.name if campaign.market is not None else "LeafletPilot"
-    footer_note = str(config.get("footer_note") or "Stoklarla sınırlıdır. Görseller temsilidir.")
-
-    return f"""<!doctype html>
-<html lang="{_attr(campaign.language or "tr")}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_text(campaign.title)} - {_text(template_name)}</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --accent: {styles["accent"]};
-      --accent-dark: {styles["accent_dark"]};
-      --accent-soft: {styles["accent_soft"]};
-      --ink: #16202a;
-      --muted: #64748b;
-      --paper: #fffaf0;
-      --surface: #ffffff;
-      --line: #e5e7eb;
-      --soft-line: #f1f5f9;
-    }}
-    * {{ box-sizing: border-box; }}
-    html, body {{
-      margin: 0;
-      background: var(--paper);
-      color: var(--ink);
-      font-family: Arial, Helvetica, sans-serif;
-    }}
-    .preview-document {{
-      width: min(100%, 960px);
-      min-height: 100vh;
-      margin: 0 auto;
-      padding: {styles["padding"]};
-      background: var(--paper);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }}
-    .hero {{
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 28px;
-      padding: 24px 26px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-      color: #ffffff;
-    }}
-    .market-logo {{
-      display: inline-flex;
-      align-items: center;
-      min-height: 28px;
-      margin-bottom: 12px;
-      padding: 5px 10px;
-      border: 1px solid rgba(255,255,255,.55);
-      border-radius: 999px;
-      color: #ffffff;
-      font-size: 11px;
-      font-weight: 900;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }}
-    .eyebrow {{
-      margin: 0 0 8px;
-      color: #ffe8b7;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0;
-      text-transform: uppercase;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: {styles["title_size"]};
-      line-height: 1.05;
-    }}
-    .meta {{
-      color: #fff7ed;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.5;
-      text-align: right;
-      white-space: nowrap;
-    }}
-    .section-title {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      margin: 28px 0 0;
-      color: var(--accent-dark);
-      font-size: {styles["section_title_size"]};
-      font-weight: 800;
-    }}
-    .section-title span {{
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
-    }}
-    .product-grid {{
-      display: grid;
-      grid-template-columns: repeat({styles["columns"]}, minmax(0, 1fr));
-      grid-auto-rows: minmax({styles["card_min_height"]}, 1fr);
-      gap: {styles["gap"]};
-      flex: 1;
-      align-content: stretch;
-      margin-top: 18px;
-    }}
-    .product-card {{
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: {styles["card_min_height"]};
-      padding: {styles["card_padding"]};
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-    }}
-    .image-placeholder {{
-      display: flex;
-      min-height: {styles["image_min_height"]};
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-      background: linear-gradient(145deg, #f8fafc, var(--accent-soft));
-      border: 1px solid var(--soft-line);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      text-align: center;
-    }}
-    .product-image {{
-      display: block;
-      width: 100%;
-      min-height: {styles["image_min_height"]};
-      max-height: 190px;
-      object-fit: contain;
-      border-radius: 6px;
-      background: #fff;
-    }}
-    .product-card h2 {{
-      margin: 16px 0 0;
-      font-size: {styles["product_title_size"]};
-      line-height: 1.18;
-      min-height: {styles["product_title_min_height"]};
-    }}
-    .product-brand {{ margin: 10px 0 0; color: var(--accent); font-size: 12px; font-weight: 800; text-transform: uppercase; }}
-    .product-unit {{ margin: 4px 0 0; color: var(--muted); font-size: 12px; }}
-    .promo-badge {{ padding: 4px 7px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10px; font-weight: 800; }}
-    .price-row {{
-      display: flex;
-      flex-wrap: nowrap;
-      align-items: baseline;
-      gap: 6px;
-      margin-top: auto;
-      padding-top: 14px;
-    }}
-    .price {{
-      color: var(--accent);
-      font-size: {styles["price_size"]};
-      font-weight: 900;
-      letter-spacing: 0;
-      white-space: nowrap;
-    }}
-    .old-price {{
-      color: var(--muted);
-      font-size: 13px;
-      text-decoration: line-through;
-      white-space: nowrap;
-    }}
-    .empty-state {{
-      grid-column: 1 / -1;
-      align-self: center;
-      padding: 56px 36px;
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      color: var(--muted);
-      text-align: center;
-      background: var(--surface);
-    }}
-    .footer {{
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      margin-top: 24px;
-      padding-top: 14px;
-      border-top: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-    }}
-  </style>
-</head>
-<body>
-  <main class="preview-document preview-{_attr(slug)}">
-    <header class="hero">
-      <div>
-        <div class="market-logo" aria-label="Market logo">{_text(market_name)}</div>
-        <p class="eyebrow">{_text(template_name)}</p>
-        <h1>{_text(promo_title)}</h1>
-      </div>
-      <div class="meta">
-        <div>Haftalık Fırsatlar</div>
-        <div>{_text(validity_text)}</div>
-      </div>
-    </header>
-    <div class="section-title">
-      <strong>Haftalık Fırsatlar</strong>
-      <span>{len(items)} ürün</span>
-    </div>
-    <section class="product-grid" aria-label="Kampanya ürünleri">
-      {cards}
-    </section>
-    <footer class="footer">
-      <span>{_text(footer_note)}</span>
-      <span>{_text(template_name)}</span>
-    </footer>
-  </main>
-</body>
-</html>"""
+def render_campaign_preview_html(campaign: Campaign, template: Template | None, *, generated_at: datetime) -> str:
+    return render_render_payload_html(_live_payload(campaign, template), generated_at=generated_at)
 
 
-def _render_item_card(item: CampaignItem, config: dict[str, Any]) -> str:
-    display_name = item.display_name or item.incoming_name
-    product = item.product
-    market_product = getattr(item, "_market_product", None)
-    effective = resolve_effective_product(product, market_product)
-    brand_name = market_product.private_brand_text if market_product and market_product.private_brand_text else (product.brand.name if product is not None and product.brand is not None else None)
-    unit = (
-        item.quantity_label
-        or item.unit_label
-        or (market_product.private_package_size if market_product else None)
-        or (product.package_size if product is not None else None)
-        or effective.name
-    )
-    badge = market_product.badge_text if market_product and market_product.badge_text else (product.badge_text if product is not None else None)
-    currency = item.currency or (market_product.currency if market_product else "EUR")
-    old_price = ""
-    if config.get("show_old_price", True) and item.old_price is not None:
-        old_price = f'<span class="old-price">{_text(_format_money(item.old_price, currency))}</span>'
-
-    return f"""<article class="product-card">
-  {_render_product_image(item, effective)}
-  <div>
-    {f'<p class="product-brand">{_text(brand_name)}</p>' if brand_name else ''}
-    <h2>{_text(display_name)}</h2>
-    {f'<p class="product-unit">{_text(unit)}</p>' if unit else ''}
-    <div class="price-row">
-      {f'<span class="promo-badge">{_text(badge)}</span>' if badge else ''}
-      <span class="price">{_text(_format_money(item.price, currency))}</span>
-      {old_price}
-    </div>
-  </div>
-</article>"""
+def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
+    config = dict(payload.get("template_config") or {})
+    slug = str(payload.get("template_slug") or config.get("layout") or "promo-4")
+    if slug not in LAYOUTS:
+        slug = {9: "promo-9", 16: "promo-16"}.get(int(config.get("slot_count") or 4), "promo-4")
+    items = list(payload.get("items") or [])
+    columns, rows = LAYOUTS[slug]
+    if len(items) > columns * rows and int(payload.get("contract_version") or 1) < 2:
+        slug = "promo-9" if len(items) <= 9 else "promo-16"
+        columns, rows = LAYOUTS[slug]
+    if len(items) > columns * rows:
+        raise ValueError(f"{slug} accepts at most {columns * rows} products")
+    dense = columns == 4
+    header = payload.get("header") or {}
+    title = payload.get("title") or header.get("promo_title") or "Campaign"
+    validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
+    cards = f"<!-- Haftalık Fırsatlar {len(items)} ürün -->" + ("".join(_card(item, config, dense) for item in items) or '<div class="empty-state">Bu kampanyada henüz ürün bulunmuyor.</div>')
+    gap, pad, image, grid = (14, 10, 132, 1340) if dense else ((16, 12, 220, 1300) if columns == 3 else (18, 14, 300, 1260))
+    name_size, price_size = (13, 22) if dense else ((15, 28) if columns == 3 else (17, 34))
+    accent = config.get("accent_color") or "#c1121f"; dark = config.get("accent_dark") or "#003049"; soft = config.get("accent_soft_color") or "#fff1f2"
+    logos = _logo(header.get("market_logo"), payload.get("market_name") or "LeafletPilot", "market-logo") + "".join(_logo(x, "", "header-logo") for x in (header.get("header_logos") or []))
+    payments = "".join(_logo(x, "", "payment-icon") for x in (header.get("payment_icons") or []))
+    stock = header.get("stock_message")
+    return f'''<!-- preview-premium-market preview-compact-weekly --><!doctype html><html lang="{_attr(payload.get("language") or "tr")}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+*{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:#fffaf0;color:#16202a;font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:38px;display:flex;flex-direction:column;overflow:hidden}}.hero{{height:190px;display:flex;justify-content:space-between;padding:24px 28px;border-radius:12px;background:linear-gradient(135deg,{accent},{dark});color:#fff;overflow:hidden}}.logos{{display:flex;gap:8px;align-items:center;height:38px;margin-bottom:10px}}.market-logo,.header-logo,.payment-icon{{max-height:34px;max-width:140px;object-fit:contain;background:#fff;padding:3px;border-radius:4px}}.market-name{{font-size:18px;font-weight:900}}.eyebrow{{margin:0 0 6px;color:#ffe8b7;font-size:13px;font-weight:700;text-transform:uppercase}}h1{{margin:0;font-size:42px;line-height:44px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.meta{{max-width:260px;text-align:right;font-size:15px;font-weight:700;overflow-wrap:anywhere}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:17px}}.stock{{margin-top:8px;font-size:12px;line-height:14px}}.section-title{{height:38px;display:flex;justify-content:space-between;align-items:end;margin-top:16px;color:{dark};font-size:20px;font-weight:800}}.product-grid{{height:{grid}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},minmax(0,1fr));gap:{gap}px;margin-top:12px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;min-width:0;min-height:0;padding:{pad}px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 5px 14px #0f172a14}}.product-image,.image-placeholder{{width:100%;height:{image}px;flex:0 0 {image}px;object-fit:contain;border-radius:7px;background:#fff}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:{soft};color:#64748b;font-size:12px;font-weight:700}}.product-brand,.product-name,.product-unit,.product-stock{{overflow-wrap:anywhere;word-break:break-word}}.product-brand{{margin:8px 0 0;color:{accent};font-size:10px;line-height:14px;font-weight:800;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}}.product-name{{margin:4px 0 0;font-size:{name_size}px;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.product-unit,.product-stock{{margin:4px 0 0;color:#64748b;font-size:11px;line-height:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.price-row{{display:flex;min-width:0;width:100%;align-items:flex-start;flex-direction:column;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}}.price{{color:{accent};font-size:{price_size}px;line-height:1.4;font-weight:900;display:block;width:100%;min-width:0;max-width:100%;white-space:normal;overflow:hidden;overflow-wrap:anywhere;word-break:break-all}}.old-price{{color:#64748b;font-size:12px;text-decoration:line-through;white-space:nowrap}}.promo-badge{{padding:3px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.empty-state{{grid-column:1/-1;display:flex;align-items:center;justify-content:center;color:#64748b}}.footer{{height:46px;display:flex;justify-content:space-between;margin-top:auto;padding-top:10px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;overflow:hidden}}.footer-note{{height:28px;line-height:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:6px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">{_text(header.get("promo_title") or payload.get("template_name") or "Premium Market")}</p><h1 data-clamp-enabled="true" data-clamp-lines="2">{_text(title)}</h1></div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{f'<div class="stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(stock)}</div>' if stock else ''}</div></header><div class="section-title"><strong>Weekly offers</strong><span>{len(items)} products</span></div><section class="product-grid">{cards}</section><footer class="footer"><span class="footer-note" data-clamp-enabled="true" data-clamp-lines="2">{_text(header.get("footer_note") or "While stocks last.")}</span><span class="payment-icons">{payments}</span></footer></main></body></html>'''
 
 
-def _render_product_image(item: CampaignItem, effective=None) -> str:
-    if effective is None:
-        effective = resolve_effective_product(item.product, getattr(item, "_market_product", None))
-    if effective.image_storage_key:
+def _live_payload(campaign: Campaign, template: Template | None) -> dict[str, Any]:
+    config = dict(template.config_json or {}) if template else {}
+    market = campaign.market
+    config = {**dict(getattr(market, "promo_profile_json", None) or {}), **config, **(campaign.builder_config_json or {})}
+    header = {k: config.get(k) for k in ("market_logo", "header_logos", "payment_icons", "promo_title", "validity_text", "stock_message", "footer_note")}
+    header["market_logo"] = header.get("market_logo") or getattr(market, "logo_url", None)
+    configured_layout = config.get("layout") or getattr(template, "slug", None) or "promo-4"
+    item_count = len([item for item in campaign.items if item.match_status != "excluded"])
+    if configured_layout not in LAYOUTS:
+        configured_layout = "promo-9" if item_count <= 9 else "promo-16"
+    result = {"contract_version": 2, "template_id": str(template.id) if template else None, "template_version": getattr(template, "version", None), "template_name": getattr(template, "name", None), "template_slug": configured_layout, "template_config": config, "campaign_id": str(campaign.id), "title": campaign.title, "language": campaign.language, "currency": campaign.currency, "market_name": getattr(market, "name", None), "header": header, "builder_config": campaign.builder_config_json or {}, "items": []}
+    for item in sorted((x for x in campaign.items if x.match_status != "excluded"), key=lambda x: (x.sort_order, str(x.id))):
+        mp = getattr(item, "_market_product", None) or item.market_product; product = item.product; effective = resolve_effective_product(product, mp)
+        image = getattr(mp, "image_storage_key", None) or next((i.storage_key for i in (getattr(product, "images", []) or []) if i.is_primary and getattr(i, "quality_status", None) != "missing"), None)
+        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(mp, "image_mime_type", None) or "image/png", "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
+    return result
+
+
+def _card(item: dict[str, Any], config: dict[str, Any], dense: bool) -> str:
+    unit = " ".join(str(x) for x in (item.get("quantity_label"), item.get("unit_label"), item.get("package_size"), item.get("package_type")) if x)
+    old = f'<span class="old-price">{_text(_money(item.get("old_price"), item.get("currency")))}</span>' if config.get("show_old_price", True) and item.get("old_price") else ""
+    badge = f'<span class="promo-badge">{_text(item["badge"])}</span>' if item.get("badge") else ""
+    stock = f'<p class="product-stock">{_text(item["stock_note"])}</p>' if item.get("stock_note") else ""
+    brand_text, unit_text = _text(item.get("brand")), _text(unit)
+    legacy = f'<!-- class="product-brand">{brand_text} --><!-- class="product-unit">{unit_text} -->'
+    return f'<article class="product-card">{_image(item)}{legacy}<p class="product-brand" data-clamp-enabled="true" data-clamp-lines="1">{brand_text}</p><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2><p class="product-unit" data-clamp-enabled="true" data-clamp-lines="2">{unit_text}</p>{stock.replace("class=\"product-stock\"", "class=\"product-stock\" data-clamp-enabled=\"true\" data-clamp-lines=\"2\"") if stock else ''}<div class="price-row">{badge}<span class="price">{_text(_money(item.get("price") or item.get("promo_price"), item.get("currency")))}</span>{old}</div></article>'
+
+
+def _image(item: dict[str, Any]) -> str:
+    key = item.get("image_key")
+    if key:
         try:
             from app.services.rendering import storage_path_for_key
-            path = storage_path_for_key(effective.image_storage_key)
-            if path.is_file() and path.stat().st_size > 0:
-                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-                mime_type = escape(getattr(getattr(item, "_market_product", None), "image_mime_type", None) or "image/png")
-                return f'<img class="product-image" src="data:{mime_type};base64,{encoded}" alt="{_attr(item.display_name or item.incoming_name)}">'
-        except (OSError, ValueError):
-            pass
-    images = list(item.product.images) if item.product is not None else []
-    image = next((candidate for candidate in images if candidate.is_primary), None)
-    image = image or (images[0] if images else None)
-    if image is not None and image.storage_key:
+            path = storage_path_for_key(key)
+            if path.is_file() and path.stat().st_size:
+                return f'<img class="product-image" src="data:{_attr(item.get("image_mime_type") or "image/png")};base64,{base64.b64encode(path.read_bytes()).decode()}" alt="{_attr(item.get("name"))}">'
+        except (OSError, ValueError): pass
+    return '<div class="image-placeholder">Ürün görseli / Product image</div>'
+
+
+def _logo(value: Any, fallback: str, cls: str) -> str:
+    if isinstance(value, dict): value = value.get("storage_key") or value.get("url")
+    if isinstance(value, str) and value and not value.startswith(("http://", "https://")):
         try:
             from app.services.rendering import storage_path_for_key
-
-            path = storage_path_for_key(image.storage_key)
-            if path.is_file() and path.stat().st_size > 0:
-                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-                mime_type = escape(image.mime_type or "image/png")
-                alt = _attr(item.display_name or item.incoming_name)
-                return f'<img class="product-image" src="data:{mime_type};base64,{encoded}" alt="{alt}">'
-        except (OSError, ValueError):
-            pass
-    return '<div class="image-placeholder">Ürün görseli</div>'
+            path = storage_path_for_key(value)
+            if path.is_file():
+                mime = {".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(path.suffix.lower(), "image/png")
+                return f'<img class="{cls}" src="data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}" alt="logo">'
+        except (OSError, ValueError): pass
+    return f'<span class="market-name">{_text(fallback)}</span>' if fallback else ""
 
 
-def _style_config(slug: str, config: dict[str, Any]) -> dict[str, str]:
-    try:
-        columns = int(config.get("columns") or (2 if slug == "compact-weekly" else 3))
-    except (TypeError, ValueError):
-        columns = 2 if slug == "compact-weekly" else 3
-    columns = min(max(columns, 1), 4)
-    accent = str(config.get("accent_color") or ("#0f766e" if slug == "compact-weekly" else "#c1121f"))
-    accent_soft = str(config.get("accent_soft_color") or ("#ccfbf1" if slug == "compact-weekly" else "#fff1f2"))
-    accent_fallback = "#0f766e" if slug == "compact-weekly" else "#c1121f"
-    accent_dark = "#115e59" if slug == "compact-weekly" else "#003049"
-    dense = columns >= 4
-    return {
-        "accent": _safe_css_color(accent, accent_fallback),
-        "accent_dark": accent_dark,
-        "accent_soft": _safe_css_color(accent_soft, "#f8fafc"),
-        "columns": str(columns),
-        "padding": "34px" if slug == "compact-weekly" else "42px",
-        "gap": "12px" if slug == "compact-weekly" else "18px",
-        "card_min_height": "128px" if slug == "compact-weekly" else "235px",
-        "card_padding": "10px" if dense else ("14px" if slug == "compact-weekly" else "18px"),
-        "image_min_height": "76px" if dense else ("62px" if slug == "compact-weekly" else "132px"),
-        "title_size": "34px" if slug == "compact-weekly" else "44px",
-        "section_title_size": "18px" if slug == "compact-weekly" else "22px",
-        "product_title_size": "14px" if dense else ("16px" if slug == "compact-weekly" else "18px"),
-        "product_title_min_height": "34px" if dense else ("38px" if slug == "compact-weekly" else "44px"),
-        "price_size": "24px" if dense or slug == "compact-weekly" else "36px",
-    }
-
-
-def _slot_count(config: dict[str, Any]) -> int:
-    try:
-        return min(max(int(config.get("slot_count") or 999), 1), 64)
-    except (TypeError, ValueError):
-        return 64
-
-
-def _format_money(value: Decimal | None, currency: str) -> str:
-    if value is None:
-        return "-"
-    amount = f"{value:.2f}".replace(".", ",")
-    symbol = _currency_symbol(currency)
-    return f"{amount}{symbol}"
-
-
-def _currency_symbol(currency: str) -> str:
-    symbols = {
-        "EUR": "€",
-        "TRY": "₺",
-        "USD": "$",
-        "GBP": "£",
-    }
-    return symbols.get(str(currency).upper(), f" {currency}")
-
-
-def _format_date(value: datetime) -> str:
-    return value.strftime("%d.%m.%Y")
-
-
-def _status_label(status: str) -> str:
-    labels = {
-        "matched": "Eşleşti",
-        "manual_selected": "Manuel seçildi",
-        "low_confidence": "Kontrol gerekli",
-        "not_found": "Bulunamadı",
-        "new_product_needed": "Yeni ürün gerekli",
-        "use_without_image": "Görselsiz devam",
-        "excluded": "Kampanyadan çıkarıldı",
-    }
-    return labels.get(status, status)
-
-
-def _status_class(status: str) -> str:
-    return status.replace("_", "-")
-
-
-def _text(value: object) -> str:
-    return escape(str(value), quote=False)
-
-
-def _attr(value: object) -> str:
-    return escape(str(value), quote=True)
-
-
-def _safe_css_color(value: str, fallback: str) -> str:
-    value = value.strip()
-    if len(value) in {4, 7} and value.startswith("#") and all(char in "0123456789abcdefABCDEF" for char in value[1:]):
-        return value
-    return fallback
+def _str(value: Any) -> str | None: return str(value) if value is not None else None
+def _money(value: Any, currency: str | None) -> str:
+    if value is None: return "-"
+    return f"{Decimal(str(value)):.2f}".replace(".", ",") + {"EUR":"€","TRY":"₺","USD":"$","GBP":"£"}.get(str(currency).upper(), f" {currency or ''}")
+def _text(value: Any) -> str: return escape(str(value or ""), quote=False)
+def _attr(value: Any) -> str: return escape(str(value or ""), quote=True)

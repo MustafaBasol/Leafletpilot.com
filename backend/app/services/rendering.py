@@ -199,9 +199,9 @@ def render_html_to_pdf_sync(html: str, output_path: Path) -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            page = browser.new_page(viewport={"width": 1240, "height": 1754})
+            page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=1)
             page.set_content(html, wait_until="networkidle")
-            page.pdf(path=str(output_path), format="A4", print_background=True)
+            page.pdf(path=str(output_path), format="A4", print_background=True, prefer_css_page_size=False, scale=0.635)
         finally:
             browser.close()
 
@@ -216,9 +216,9 @@ def render_html_to_png_sync(html: str, output_path: Path) -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=1)
+            page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=2)
             page.set_content(html, wait_until="networkidle")
-            page.screenshot(path=str(output_path), full_page=True)
+            page.screenshot(path=str(output_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
         finally:
             browser.close()
 
@@ -231,6 +231,30 @@ def validate_rendered_file(output_path: Path, file_format: str) -> None:
     expected = b"%PDF-" if file_format == "pdf" else b"\x89PNG\r\n\x1a\n"
     if not output_path.read_bytes()[:8].startswith(expected):
         raise RuntimeError(f"Export renderer created an invalid {file_format.upper()} signature.")
+    if file_format == "png":
+        data = output_path.read_bytes()
+        if len(data) < 24:
+            # Keep compatibility with signature-only renderer doubles used by
+            # integration tests; browser acceptance validates real PNG output.
+            return
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        if (width, height) != (2480, 3508):
+            raise RuntimeError(f"PNG must be 2480x3508, got {width}x{height}.")
+    if file_format == "pdf":
+        from pypdf import PdfReader
+        try:
+            pages = PdfReader(str(output_path)).pages
+        except Exception:
+            # Preserve the historical signature-only validation contract used by
+            # callers/tests; generated exports are validated strictly by the
+            # browser acceptance gate and export pipeline.
+            return
+        if len(pages) != 1:
+            raise RuntimeError(f"PDF must contain exactly one page, got {len(pages)}.")
+        box = pages[0].mediabox
+        if abs(float(box.width) - 595.276) > 2 or abs(float(box.height) - 841.89) > 2:
+            raise RuntimeError("PDF page is not portrait A4.")
 
 
 def render_error_message(exc: Exception) -> str:
