@@ -162,6 +162,18 @@ DEMO_MARKET_PRODUCTS = (
 
 DEMO_TEMPLATES = (
     {
+        "name": "Supermarket Promo 4", "slug": "supermarket-promo-4", "description": "Commercial supermarket promotional flyer with a 2x2 product grid.", "template_type": "supermarket",
+        "config_json": {"layout": "supermarket-promo-4", "columns": 2, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
+    },
+    {
+        "name": "Supermarket Promo 9", "slug": "supermarket-promo-9", "description": "Commercial supermarket promotional flyer with a 3x3 product grid.", "template_type": "supermarket",
+        "config_json": {"layout": "supermarket-promo-9", "columns": 3, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
+    },
+    {
+        "name": "Supermarket Promo 16", "slug": "supermarket-promo-16", "description": "Commercial supermarket promotional flyer with a 4x4 product grid.", "template_type": "supermarket",
+        "config_json": {"layout": "supermarket-promo-16", "columns": 4, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
+    },
+    {
         "name": "Premium Market",
         "slug": "premium-market",
         "description": "Modern market kampanyaları için geniş görsel alanlı temel şablon.",

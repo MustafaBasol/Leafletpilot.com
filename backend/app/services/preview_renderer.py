@@ -8,8 +8,10 @@ from typing import Any
 
 from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
+from app.services.template_presets import SUPERMARKET_PRESETS, SUPERMARKET_VISUAL_DEFAULTS
 
 LAYOUTS = {"promo-4": (2, 2), "promo-9": (3, 3), "promo-16": (4, 4)}
+SUPERMARKET_LAYOUTS = {preset["slug"]: (preset["columns"], preset["rows"]) for preset in SUPERMARKET_PRESETS.values()}
 DEFAULT_TEMPLATE_SLUG = "promo-4"
 DEFAULT_TEMPLATE_NAME = "Premium Market"
 
@@ -21,6 +23,8 @@ def render_campaign_preview_html(campaign: Campaign, template: Template | None, 
 def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
     config = dict(payload.get("template_config") or {})
     slug = str(payload.get("template_slug") or config.get("layout") or "promo-4")
+    if slug in SUPERMARKET_LAYOUTS:
+        return _polish_supermarket_html(_render_supermarket_payload_html(payload, generated_at=generated_at))
     if slug not in LAYOUTS:
         slug = {9: "promo-9", 16: "promo-16"}.get(int(config.get("slot_count") or 4), "promo-4")
     items = list(payload.get("items") or [])
@@ -101,6 +105,63 @@ def _logo(value: Any, fallback: str, cls: str) -> str:
 def _str(value: Any) -> str | None: return str(value) if value is not None else None
 def _money(value: Any, currency: str | None) -> str:
     if value is None: return "-"
-    return f"{Decimal(str(value)):.2f}".replace(".", ",") + {"EUR":"€","TRY":"₺","USD":"$","GBP":"£"}.get(str(currency).upper(), f" {currency or ''}")
+    major, minor, symbol = _money_parts(value, currency)
+    if str(currency or "").strip().upper() in {"USD", "GBP", "CHF", "KR"}:
+        return f"{symbol} {major}{minor}"
+    return f"{major}{minor}{symbol}"
 def _text(value: Any) -> str: return escape(str(value or ""), quote=False)
 def _attr(value: Any) -> str: return escape(str(value or ""), quote=True)
+
+
+def _money_parts(value: Any, currency: str | None) -> tuple[str, str, str]:
+    if value is None:
+        return "-", "", ""
+    amount = Decimal(str(value)).quantize(Decimal("0.01"))
+    major, minor = f"{amount:.2f}".split(".")
+    code = str(currency or "").strip().upper()
+    symbol = {"EUR": "\u20ac", "TRY": "\u20ba", "USD": "$", "GBP": "\u00a3", "CHF": "CHF", "KR": "kr"}.get(code, str(currency or ""))
+    separator = "." if code in {"USD", "CHF", "KR"} else ","
+    return major, f"{separator}{minor}", symbol
+
+
+def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
+    config = {**SUPERMARKET_VISUAL_DEFAULTS, **dict(payload.get("template_config") or {})}
+    slug = str(payload.get("template_slug") or "supermarket-promo-4")
+    columns, rows = SUPERMARKET_LAYOUTS[slug]
+    items = list(payload.get("items") or [])
+    limit = columns * rows
+    if len(items) > limit:
+        raise ValueError(f"{slug} accepts at most {limit} products")
+    tuning = {2: (252, 1378, 38, 300), 3: (218, 1392, 30, 205), 4: (184, 1410, 23, 130)}[columns]
+    header = payload.get("header") or {}
+    title = payload.get("title") or "Campaign"
+    validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
+    logos = _logo(header.get("market_logo"), payload.get("market_name") or "MARKET", "market-logo")
+    if config.get("show_additional_logos", True):
+        logos += "".join(_logo(value, "", "header-logo") for value in (header.get("header_logos") or [])[:2])
+    payments = "".join(_logo(value, "", "payment-icon") for value in (header.get("payment_icons") or [])) if config.get("show_payment_icons", True) else ""
+    cards = "".join(_supermarket_card(item, config, tuning[2]) for item in items)
+    stock = header.get("stock_message") if config.get("show_stock_message", True) else ""
+    footer_note = (header.get("footer_note") or "While stocks last.") if config.get("show_footer_note", True) else ""
+    stock_html = f'<div class="stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(stock)}</div>' if stock else ""
+    gap = 10 if columns == 4 else 14
+    return f'''<!doctype html><html lang="{_attr(payload.get("language") or "en")}"><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:{config["background_end"]};font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:24px;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(145deg,{config["background_start"]},{config["background_end"]})}}.hero{{height:{tuning[0]}px;flex:0 0 {tuning[0]}px;padding:20px 24px;border-radius:20px;background:linear-gradient(135deg,#ff6b25,#7e0718);color:{config["title_color"]};display:flex;justify-content:space-between;overflow:hidden;position:relative}}.hero:after{{content:"";position:absolute;right:-100px;top:-130px;width:420px;height:420px;border-radius:50%;background:#ffd92833}}.logos{{display:flex;gap:8px;align-items:center;height:48px;margin-bottom:12px;position:relative;z-index:1}}.market-logo,.header-logo,.payment-icon{{max-height:48px;max-width:190px;object-fit:contain;background:#fff;padding:4px;border-radius:7px}}.header-logo{{max-width:105px;max-height:38px}}.eyebrow{{margin:0 0 4px;color:#ffe66d;font-size:18px;font-weight:900;text-transform:uppercase;position:relative;z-index:1}}h1{{margin:0;max-width:700px;font-size:{42 if columns<4 else 32}px;line-height:1.03;font-weight:1000;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;position:relative;z-index:1}}.meta{{max-width:285px;text-align:right;font-size:17px;font-weight:900;position:relative;z-index:1}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:20px}}.stock{{margin-top:10px;color:#ffe66d;font-size:14px;line-height:16px}}.section-title{{height:34px;flex:0 0 34px;display:flex;justify-content:space-between;align-items:end;padding:0 4px;color:#fff;font-size:18px;font-weight:900;text-transform:uppercase}}.product-grid{{height:{tuning[1]}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},minmax(0,1fr));gap:{gap}px;margin-top:10px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;min-width:0;min-height:0;padding:{8 if columns==4 else 12}px;border:2px solid #f1b900;border-radius:16px;background:{config["card_background"]};overflow:hidden;box-shadow:0 5px 0 #8a101b55}}.brand-label{{align-self:flex-start;max-width:100%;padding:3px 8px;border-radius:5px;background:{config["brand_label_background"]};color:{config["brand_label_color"]};font-size:{10 if columns==4 else 12}px;line-height:1.1;font-weight:900;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.product-name{{margin:6px 0 0;color:#2b1a12;font-size:{14 if columns==4 else 17 if columns==3 else 21}px;line-height:1.08;font-weight:900;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.product-image,.image-placeholder{{width:100%;height:{tuning[3]}px;flex:0 0 {tuning[3]}px;object-fit:contain;border-radius:9px;background:transparent;margin:6px 0}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:#fff1c7;color:#8a5a00;font-size:12px;font-weight:800}}.product-unit{{margin:2px 0 0;color:#2b1a12;font-size:{12 if columns==4 else 15}px;line-height:1.1;font-weight:900;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}}.price-panel{{margin-top:auto;min-height:{62 if columns==4 else 76}px;padding:7px 10px;background:{config["price_panel_background"]};border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:4px;overflow:hidden}}.price{{color:{config["price_color"]};font-size:{tuning[2]}px;line-height:.9;font-weight:1000;min-width:0;max-width:100%;display:block;height:44px;white-space:normal;overflow:hidden;overflow-wrap:anywhere;word-break:break-all;text-overflow:ellipsis}}.price-minor{{font-size:.58em;vertical-align:baseline}}.price-currency{{font-size:.5em;margin-left:2px;vertical-align:top}}.old-price{{color:#6d4b39;font-size:13px;text-decoration:line-through;white-space:nowrap;overflow:hidden}}.promo-badge{{color:#fff;background:#d51f2a;padding:3px 5px;border-radius:5px;font-size:10px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.footer{{height:40px;flex:0 0 40px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:12px;font-weight:700;overflow:hidden}}.footer-note{{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.payment-icons{{display:flex;gap:6px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">PROMO</p><h1 data-clamp-enabled="true" data-clamp-lines="2">{_text(title)}</h1></div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{stock_html}</div></header><div class="section-title"><span>Top supermarket offers</span><span>{len(items)} products</span></div><section class="product-grid">{cards}</section><footer class="footer"><span class="footer-note">{_text(footer_note)}</span><span class="payment-icons">{payments}</span></footer></main></body></html>'''
+
+
+def _supermarket_card(item: dict[str, Any], config: dict[str, Any], price_size: int) -> str:
+    major, minor, symbol = _money_parts(item.get("price") or item.get("promo_price"), item.get("currency"))
+    prefix_currency = str(item.get("currency") or "").strip().upper() in {"USD", "GBP", "CHF", "KR"}
+    unit = " ".join(str(x) for x in (item.get("quantity_label"), item.get("unit_label"), item.get("package_size"), item.get("package_type")) if x)
+    old = f'<span class="old-price">{_text(_money(item.get("old_price"), item.get("currency")))}</span>' if item.get("old_price") else ""
+    badge = f'<span class="promo-badge">{_text(item["badge"])}</span>' if item.get("badge") else ""
+    brand = _text(item.get("brand") or "Market choice")
+    currency_html = f'<span class="price-currency">{_text(symbol)}</span>'
+    price = f'{currency_html}<span class="price-major">{_text(major)}</span><span class="price-minor">{_text(minor)}</span>' if prefix_currency else f'<span class="price-major">{_text(major)}</span><span class="price-minor">{_text(minor)}</span>{currency_html}'
+    return f'<article class="product-card"><span class="brand-label">{brand}</span><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2>{_image(item)}<p class="product-unit" data-clamp-enabled="true" data-clamp-lines="1">{_text(unit)}</p><div class="price-panel"><span class="price">{price}</span>{old}{badge}</div></article>'
+
+
+def _polish_supermarket_html(html: str) -> str:
+    old = ".market-logo,.header-logo,.payment-icon{max-height:48px;max-width:190px;object-fit:contain;background:#fff;padding:4px;border-radius:7px}"
+    new = ".market-logo,.header-logo{max-height:48px;max-width:190px;object-fit:contain;background:transparent;padding:0;border-radius:0}.payment-icon{max-height:48px;max-width:190px;object-fit:contain;background:#fff;padding:4px;border-radius:7px}"
+    return html.replace(old, new)
