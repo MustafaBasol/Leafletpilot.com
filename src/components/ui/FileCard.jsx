@@ -3,7 +3,8 @@ import { Button } from "./Button.jsx";
 import { Icon } from "./Icon.jsx";
 import { StatusBadge } from "./StatusBadge.jsx";
 
-export function FileCard({ file, onDownload }) {
+export function FileCard({ file, onDownload, onPreview, isPreviewing }) {
+  const isReady = file.rawStatus === "ready" || file.status === "Hazır";
   return (
     <article className="file-card">
       <div className="file-icon">
@@ -18,8 +19,10 @@ export function FileCard({ file, onDownload }) {
       </div>
       {file.status ? <StatusBadge status={file.status} /> : <Badge tone="neutral">Taslak</Badge>}
       <div className="file-actions">
-        <Button>Önizle</Button>
-        <Button disabled={!onDownload} onClick={() => onDownload?.(file)}>
+        <Button disabled={!isReady || !onPreview || isPreviewing} onClick={() => onPreview?.(file)}>
+          {isPreviewing ? "Yükleniyor..." : "Önizle"}
+        </Button>
+        <Button disabled={!isReady || !onDownload} onClick={() => onDownload?.(file)}>
           İndir
         </Button>
         <Button>Kullanıcıya Gönder</Button>

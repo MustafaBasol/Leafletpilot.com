@@ -75,6 +75,11 @@ def test_plan_capacity_supports_limited_and_unlimited_plans() -> None:
     assert has_capacity(10000, None)
 
 
+def test_growth_market_can_create_private_templates_but_unassigned_cannot() -> None:
+    assert resolve_capabilities(Market(subscription_plan="growth")).custom_template is True
+    assert resolve_capabilities(Market(subscription_plan=None)).custom_template is False
+
+
 @pytest.mark.asyncio
 async def test_market_cannot_update_global_product(monkeypatch) -> None:
     global_product = Product(id=uuid4(), name="Platform Product", is_global=True, market_id=None)

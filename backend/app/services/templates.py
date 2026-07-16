@@ -140,6 +140,8 @@ async def adopt_global_template(session: AsyncSession, source_id: UUID, market_i
 
 
 async def create_custom_template(session: AsyncSession, payload: TemplateCreate, market_id: UUID) -> Template:
+    if payload.is_global:
+        raise _global_mutation_forbidden()
     market = await session.get(Market, market_id)
     if market is None:
         raise _not_found()

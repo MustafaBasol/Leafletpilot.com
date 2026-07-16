@@ -52,10 +52,9 @@ function getErrorMessage(response, body) {
   if (typeof detail === "object" && detail?.code === "invitation_email_mismatch") {
     return "Bu davet başka bir e-posta adresi için oluşturulmuş. Davet edilen hesapla giriş yapın veya mevcut oturumdan çıkın.";
   }
-  if (response.status === 403) {
-    return "Bu işlem için yetkiniz bulunmuyor.";
-  }
   const formattedDetail = formatValidationDetail(detail);
+  if (response.status === 403 && formattedDetail) return formattedDetail;
+  if (response.status === 403) return "Bu işlem için yetkiniz bulunmuyor.";
   const suffix = formattedDetail
     ? `: ${typeof formattedDetail === "string" ? formattedDetail : JSON.stringify(formattedDetail)}`
     : "";

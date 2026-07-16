@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "validate": "node scripts/validate.mjs",
     "test:platform": "node --test src/pages/platform/platformOps.test.mjs src/pages/platform/platformCatalogUtils.test.mjs src/api/platformApi.test.mjs",
-    "test:campaign": "node --test src/pages/NewCampaign.preview.test.mjs",
+    "test:campaign": "node --test src/pages/NewCampaign.preview.test.mjs src/pages/CampaignDetail.preview.test.mjs",
     "test:e2e:phase-d": "python scripts/phase_d_playwright.py",
     "test:e2e:phase-f": "python scripts/phase_f_playwright.py",
     "smoke": "node scripts/smoke-vite.mjs"

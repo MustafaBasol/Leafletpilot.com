@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { canCreateExports, canMutateCampaigns, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { campaignProducts, findCampaignById, generatedFiles } from "../data/mockData.js";
@@ -10,6 +10,7 @@ import {
   generateCampaignItemSuggestions,
   getCampaignDetail,
   getCampaignPreviewHtml,
+  fetchCampaignFile,
   resolveCampaignItem,
   reorderCampaignItems,
   updateCampaignDetail,
@@ -85,6 +86,7 @@ function mapFileForPanel(file) {
     format: file.format || "-",
     size: file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : "-",
     status: fileStatusLabels[file.status] || file.status || "Bekliyor",
+    rawStatus: file.status,
     createdAt: formatDateTime(file.created_at),
   };
 }
@@ -181,6 +183,11 @@ export function CampaignDetail({ campaignId }) {
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState("");
   const [isPreviewLoading, setIsPreviewLoading] = useState(isRealApiEnabled);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewingFileId, setPreviewingFileId] = useState(null);
+  const previewViewportRef = useRef(null);
+  const [fitScale, setFitScale] = useState(1);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [isEditing, setEditing] = useState(false);
   const [editError, setEditError] = useState("");
   const [isSavingEdit, setSavingEdit] = useState(false);
@@ -229,6 +236,20 @@ export function CampaignDetail({ campaignId }) {
     loadCampaign();
     loadPreview();
   }, [campaignId, selectedMarketId]);
+
+  useEffect(() => {
+    const element = previewViewportRef.current;
+    if (!element) return undefined;
+    const resize = () => {
+      const parent = element.parentElement;
+      const rect = parent?.getBoundingClientRect();
+      if (rect) setFitScale(Math.min(rect.width / 1240, rect.height / 1754));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element.parentElement || element);
+    return () => observer.disconnect();
+  }, [preview?.html]);
 
   async function runRealAction(key, action, successMessage) {
     try {
@@ -308,6 +329,25 @@ export function CampaignDetail({ campaignId }) {
       setActionLoading("");
     }
   }
+
+  async function previewFileContent(file) {
+    if (!isRealApiEnabled || !file?.id || file.rawStatus !== "ready" || previewingFileId) return;
+    try {
+      setPreviewingFileId(file.id);
+      setApiError("");
+      const blob = await fetchCampaignFile(campaignId, file.id, selectedMarketId);
+      const url = URL.createObjectURL(blob);
+      setPreviewFile({ id: file.id, url, type: blob.type || (String(file.format).toLowerCase() === "pdf" ? "application/pdf" : "image/png"), name: file.name });
+    } catch (error) {
+      setApiError(error.message || "Önizleme yüklenemedi.");
+    } finally {
+      setPreviewingFileId(null);
+    }
+  }
+
+  useEffect(() => () => {
+    if (previewFile?.url) URL.revokeObjectURL(previewFile.url);
+  }, [previewFile]);
 
   async function saveCampaignEdit(form) {
     try {
@@ -425,7 +465,18 @@ export function CampaignDetail({ campaignId }) {
               </div>
               {previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}
               {preview?.html ? (
-                <iframe className="campaign-preview-iframe" sandbox="" srcDoc={preview.html} title={`${campaign.name} önizleme`} />
+                <>
+                  <div className="preview-control-actions" aria-label="Önizleme yakınlaştırma kontrolleri">
+                    <Button onClick={() => setPreviewZoom(1)}>Sayfaya sığdır</Button>
+                    <Button disabled={previewZoom <= 0.5} onClick={() => setPreviewZoom((value) => Math.max(0.5, value - 0.1))}>−</Button>
+                    <span className="preview-zoom-label">{Math.round(previewZoom * 100)}%</span>
+                    <Button disabled={previewZoom >= 2} onClick={() => setPreviewZoom((value) => Math.min(2, value + 0.1))}>+</Button>
+                    <Button onClick={() => setPreviewZoom(1)}>Sıfırla</Button>
+                  </div>
+                  <div className={`campaign-preview-viewport ${previewZoom > 1 ? "is-zoomed" : ""}`}>
+                    <iframe ref={previewViewportRef} className="campaign-preview-iframe" style={{ transform: `scale(${fitScale * previewZoom})` }} sandbox="" srcDoc={preview.html} title={`${campaign.name} önizleme`} />
+                  </div>
+                </>
               ) : (
                 <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
               )}
@@ -540,6 +591,8 @@ export function CampaignDetail({ campaignId }) {
             files={files}
             isGenerating={actionLoading === "export-job"}
             onDownload={isRealApiEnabled ? downloadFile : undefined}
+            onPreview={isRealApiEnabled ? previewFileContent : undefined}
+            previewingFileId={previewingFileId}
             onAction={canGenerateExports ? (message, formats) => (isRealApiEnabled ? generateFiles(formats) : setNotice(message)) : undefined}
           />
         </Card>
@@ -565,6 +618,15 @@ export function CampaignDetail({ campaignId }) {
       </section>
 
       {canEditCampaigns ? <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} /> : null}
+      {previewFile ? (
+        <Modal title={`${previewFile.name} önizleme`} onClose={() => setPreviewFile(null)} className="file-preview-modal">
+          {previewFile.type === "application/pdf" ? (
+            <iframe className="file-preview-content" src={previewFile.url} title={`${previewFile.name} önizleme`} />
+          ) : (
+            <img className="file-preview-content" src={previewFile.url} alt={`${previewFile.name} önizleme`} />
+          )}
+        </Modal>
+      ) : null}
       {isEditing ? (
         <CampaignEditModal
           campaign={campaign}

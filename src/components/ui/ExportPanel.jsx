@@ -1,7 +1,7 @@
 import { Button } from "./Button.jsx";
 import { FileCard } from "./FileCard.jsx";
 
-export function ExportPanel({ files, onAction, onDownload, isGenerating }) {
+export function ExportPanel({ files, onAction, onDownload, onPreview, previewingFileId, isGenerating }) {
   return (
     <div className="export-panel">
       {onAction ? (
@@ -20,7 +20,7 @@ export function ExportPanel({ files, onAction, onDownload, isGenerating }) {
       <div className="stack-list">
         {files.length === 0 ? <p className="catalog-empty">Henüz üretilmiş dosya yok.</p> : null}
         {files.map((file) => (
-          <FileCard file={file} key={file.id || file.name} onDownload={onDownload} />
+          <FileCard file={file} key={file.id || file.name} onDownload={onDownload} onPreview={onPreview} isPreviewing={previewingFileId === file.id} />
         ))}
       </div>
     </div>

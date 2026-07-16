@@ -238,7 +238,7 @@ async def seed_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[str
         await reset_demo(session)
         market, owner = await load_target(session, allow_missing=True)
     if market is None:
-        market = Market(id=settings.demo_market_id, name="LeafletPilot Demo Market", slug=settings.demo_market_slug, country_code="TR", city="İstanbul", currency="EUR", language="tr", timezone="Europe/Paris", is_active=True)
+        market = Market(id=settings.demo_market_id, name="LeafletPilot Demo Market", slug=settings.demo_market_slug, country_code="TR", city="İstanbul", currency="EUR", language="tr", timezone="Europe/Paris", subscription_plan="starter", is_active=True)
         session.add(market)
         await session.flush()
     if owner is None:
