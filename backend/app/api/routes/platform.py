@@ -237,6 +237,7 @@ async def provision_signup_request(
         timezone=payload.timezone,
         contact_email=signup_request.email,
         contact_phone=signup_request.phone,
+        subscription_plan="starter",
         lifecycle_status="trial",
         lifecycle_updated_at=now,
         lifecycle_updated_by_platform_admin_id=admin.id,

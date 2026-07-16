@@ -20,7 +20,7 @@ class PlanCapabilities:
 
 
 STARTER = PlanCapabilities(True, 25, False, True, False, 0, False, 1, 10)
-GROWTH = PlanCapabilities(True, 250, True, True, True, 5, False, 3, 50)
+GROWTH = PlanCapabilities(True, 250, True, True, True, 5, True, 3, 50)
 PRO = PlanCapabilities(True, None, True, True, True, None, True, None, 250)
 UNASSIGNED = PlanCapabilities(True, 0, False, True, False, 0, False, 1, 10)
 
@@ -47,7 +47,7 @@ def require_capability(market: Market, capability: str) -> None:
     if not getattr(resolve_capabilities(market), capability, False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"The current plan does not include {capability.replace('_', ' ')}.",
+            detail=f"Mevcut abonelik planı bu yeteneği desteklemiyor: {capability.replace('_', ' ')}.",
         )
 
 

@@ -67,6 +67,10 @@ export function createExportJob(campaignId, payload, marketId) {
 }
 
 export async function downloadCampaignFile(campaignId, fileId, marketId) {
+  return fetchCampaignFile(campaignId, fileId, marketId);
+}
+
+export async function fetchCampaignFile(campaignId, fileId, marketId) {
   const token = getAccessToken();
   const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/files/${fileId}/download`, {
     headers: {

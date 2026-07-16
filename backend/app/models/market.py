@@ -30,7 +30,7 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     primary_color: Mapped[str | None] = mapped_column(String(32))
     secondary_color: Mapped[str | None] = mapped_column(String(32))
     promo_profile_json: Mapped[dict | None] = mapped_column(JSONB)
-    subscription_plan: Mapped[str | None] = mapped_column(String(32))
+    subscription_plan: Mapped[str] = mapped_column(String(32), default="starter", nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
     language: Mapped[str] = mapped_column(String(16), default="tr", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)

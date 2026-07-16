@@ -492,6 +492,12 @@ export async function downloadCampaignFile(campaignId, file) {
   return null;
 }
 
+export async function fetchCampaignFile(campaignId, fileId) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return campaignApi.fetchCampaignFile(campaignId, fileId, marketId);
+}
+
 function cleanText(value) {
   const text = String(value || "").trim();
   return text || null;
