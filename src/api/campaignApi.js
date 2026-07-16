@@ -10,8 +10,8 @@ export function getCampaign(campaignId, marketId) {
   return apiClient.get(`/campaigns/${campaignId}`, { marketId });
 }
 
-export function getCampaignPreviewHtml(campaignId, marketId) {
-  return apiClient.get(`/campaigns/${campaignId}/preview-html`, { marketId });
+export function getCampaignPreviewHtml(campaignId, marketId, params = {}) {
+  return apiClient.get(`/campaigns/${campaignId}/preview-html`, { marketId, params });
 }
 
 export function createCampaign(payload, marketId) {

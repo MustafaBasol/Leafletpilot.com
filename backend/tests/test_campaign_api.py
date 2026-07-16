@@ -1,4 +1,5 @@
 from decimal import Decimal
+from html.parser import HTMLParser
 from uuid import uuid4
 
 import pytest
@@ -18,6 +19,31 @@ from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services.campaign import recalculate_campaign_counts
 
 client = TestClient(app)
+
+
+class _ProductUnitParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._active = False
+        self._text_parts: list[list[str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "p" and "product-unit" in (attributes.get("class") or "").split():
+            self._active = True
+            self._text_parts.append([])
+
+    def handle_data(self, data: str) -> None:
+        if self._active:
+            self._text_parts[-1].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "p" and self._active:
+            self._active = False
+
+    @property
+    def normalized_texts(self) -> list[str]:
+        return [" ".join("".join(parts).split()) for parts in self._text_parts]
 
 
 def _override_user(user_id):
@@ -366,7 +392,9 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
             assert "Preview &lt;Campaign&gt;" in body["html"]
             assert "Market Weekend Deals" in body["html"]
             assert 'class="product-brand">Coca Cola' in body["html"]
-            assert 'class="product-unit">2L' in body["html"]
+            product_units = _ProductUnitParser()
+            product_units.feed(body["html"])
+            assert product_units.normalized_texts == ["2 L"]
             assert 'class="promo-badge">Hafta Fırsatı' in body["html"]
             assert "Coca Cola 2L" in body["html"]
     finally:

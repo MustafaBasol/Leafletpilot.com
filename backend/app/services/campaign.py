@@ -118,7 +118,7 @@ async def create_campaign(
             await validate_visible_market_product(session, item.market_product_id, scoped_market_id)
     campaign = Campaign(**data, market_id=scoped_market_id, status="draft")
     campaign.items = [
-        _build_campaign_item(item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
+        await _build_campaign_item(session, item, campaign_id=None, market_id=scoped_market_id, default_currency=campaign.currency)
         for item in payload.items
     ]
     recalculate_campaign_counts(campaign)
@@ -208,6 +208,7 @@ async def get_campaign_preview_html(
     session: AsyncSession,
     campaign_id: UUID,
     market_id: UUID | None,
+    output_format: str | None = None,
 ) -> CampaignPreviewHtml:
     campaign = await get_campaign(session, campaign_id, market_id)
     generated_at = datetime.now(UTC).replace(microsecond=0)
@@ -232,7 +233,7 @@ async def get_campaign_preview_html(
         campaign_id=campaign.id,
         template_id=template.id if template else None,
         template_name=template.name if template else DEFAULT_TEMPLATE_NAME,
-        html=render_campaign_preview_html(campaign, template, generated_at=generated_at),
+        html=render_campaign_preview_html(campaign, template, generated_at=generated_at, output_format=output_format),
         generated_at=generated_at,
         template_version=template.version if template else None,
         page_count=1,
@@ -249,12 +250,25 @@ async def update_campaign(
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
     updates = payload.model_dump(exclude_unset=True)
+    item_payloads = updates.pop("items", None)
     if "builder_config" in updates:
         updates["builder_config_json"] = updates.pop("builder_config") or {}
     if updates.get("template_id") is not None:
         await validate_visible_template(session, updates["template_id"], campaign.market_id)
     for key, value in updates.items():
         setattr(campaign, key, value)
+    if item_payloads is not None:
+        campaign.items = [
+            await _build_campaign_item(
+                session,
+                CampaignItemCreate.model_validate(item),
+                campaign_id=None,
+                market_id=campaign.market_id,
+                default_currency=campaign.currency,
+            )
+            for item in item_payloads
+        ]
+        recalculate_campaign_counts(campaign)
     if "status" in updates:
         now = datetime.now(UTC)
         if campaign.status == "approved" and campaign.approved_at is None:
@@ -285,7 +299,8 @@ async def add_campaign_item(
     market_id: UUID | None,
 ) -> CampaignItem:
     campaign = await get_campaign(session, campaign_id, market_id)
-    item = _build_campaign_item(
+    item = await _build_campaign_item(
+        session,
         payload,
         campaign_id=campaign.id,
         market_id=campaign.market_id,
@@ -582,7 +597,13 @@ async def validate_visible_product(session: AsyncSession, product_id: UUID, mark
 
 async def validate_visible_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> MarketProduct:
     row = await session.scalar(
-        select(MarketProduct).where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id, MarketProduct.is_active.is_(True))
+        select(MarketProduct)
+        .options(
+            selectinload(MarketProduct.product).selectinload(Product.brand),
+            selectinload(MarketProduct.product).selectinload(Product.category),
+            selectinload(MarketProduct.product).selectinload(Product.images),
+        )
+        .where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id, MarketProduct.is_active.is_(True))
     )
     if row is None:
         raise HTTPException(status_code=400, detail="market_product_id must reference an active product owned by the current market.")
@@ -620,6 +641,9 @@ async def finalize_campaign(session: AsyncSession, campaign_id: UUID, market_id:
     if template is None:
         raise HTTPException(status_code=422, detail="A published template is required before finalization.")
     _validate_template_slots(template, len([item for item in campaign.items if item.match_status != "excluded"]))
+    for item in campaign.items:
+        if item.market_product_id is not None:
+            await _refresh_catalog_item(session, item, campaign.market_id, campaign.currency)
     from app.services.campaign_rendering import build_campaign_render_payload
     now = datetime.now(UTC).replace(microsecond=0)
     campaign.snapshot_json = build_campaign_render_payload(campaign, template)
@@ -707,7 +731,8 @@ async def _persist(session: AsyncSession, instance: Any, *, commit: bool = True)
     return instance
 
 
-def _build_campaign_item(
+async def _build_campaign_item(
+    session: AsyncSession,
     payload: CampaignItemCreate,
     *,
     campaign_id: UUID | None,
@@ -715,11 +740,47 @@ def _build_campaign_item(
     default_currency: str,
 ) -> CampaignItem:
     data = payload.model_dump()
+    if payload.market_product_id is not None:
+        market_product = await validate_visible_market_product(session, payload.market_product_id, market_id)
+        effective = resolved_market_product(market_product)
+        data.update(
+            product_id=effective.get("product_id"),
+            incoming_name=effective.get("name") or payload.incoming_name,
+            display_name=effective.get("name") or payload.display_name,
+            price=effective.get("promo_price") or effective.get("regular_price"),
+            old_price=effective.get("regular_price"),
+            currency=effective.get("currency") or default_currency,
+            unit_label=effective.get("package_type") or payload.unit_label,
+            quantity_label=effective.get("package_size") or payload.quantity_label,
+            parsed_payload={**(payload.parsed_payload or {}), "catalog_source": "market_product", "effective_image_url": effective.get("image_url")},
+        )
     data["currency"] = data["currency"] or default_currency
     data["market_id"] = market_id
     if campaign_id is not None:
         data["campaign_id"] = campaign_id
-    return CampaignItem(**data, match_status="not_found")
+    return CampaignItem(
+        **data,
+        match_status="matched" if payload.market_product_id is not None else "not_found",
+        match_confidence=100 if payload.market_product_id is not None else None,
+    )
+
+
+async def _refresh_catalog_item(session: AsyncSession, item: CampaignItem, market_id: UUID, default_currency: str) -> None:
+    market_product = await validate_visible_market_product(session, item.market_product_id, market_id)
+    effective = resolved_market_product(market_product)
+    item.market_product = market_product
+    item.product = market_product.product
+    item.product_id = effective.get("product_id")
+    item.incoming_name = effective.get("name") or item.incoming_name
+    item.display_name = effective.get("name") or item.display_name
+    item.price = effective.get("promo_price") or effective.get("regular_price")
+    item.old_price = effective.get("regular_price")
+    item.currency = effective.get("currency") or default_currency
+    item.unit_label = effective.get("package_type") or item.unit_label
+    item.quantity_label = effective.get("package_size") or item.quantity_label
+    item.parsed_payload = {**(item.parsed_payload or {}), "catalog_source": "market_product", "effective_image_url": effective.get("image_url")}
+    item.match_status = "matched"
+    item.match_confidence = 100
 
 
 def _campaign_item_create_from_parsed(item: ParsedCampaignLine) -> CampaignItemCreate:

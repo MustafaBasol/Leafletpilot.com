@@ -53,7 +53,7 @@ Create `backend/.env`:
 
 ```text
 DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot
-TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test
+TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test_suite
 ```
 
 `DATABASE_URL` is required for migrations, API CRUD calls, and seed data.

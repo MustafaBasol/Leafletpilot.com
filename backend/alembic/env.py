@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.core.database import Base
+from app.core.test_database import application_database_url
 import app.models  # noqa: F401
 
 config = context.config
@@ -16,14 +17,20 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-if settings.database_url:
-    config.set_main_option("sqlalchemy.url", settings.database_url)
+resolved_database_url = application_database_url(
+    database_url=settings.database_url,
+    test_database_url=settings.test_database_url,
+    environment=settings.environment,
+)
+
+if resolved_database_url:
+    config.set_main_option("sqlalchemy.url", resolved_database_url)
 
 
 def get_database_url() -> str:
-    if not settings.database_url:
+    if not resolved_database_url:
         raise RuntimeError("DATABASE_URL must be configured before running Alembic.")
-    return settings.database_url
+    return resolved_database_url
 
 
 def run_migrations_offline() -> None:

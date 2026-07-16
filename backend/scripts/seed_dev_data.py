@@ -276,6 +276,7 @@ async def upsert_market(session: AsyncSession, counts: dict[str, int]) -> Market
         "currency": "EUR",
         "language": "tr",
         "timezone": "Europe/Paris",
+        "subscription_plan": "growth",
         "is_active": True,
     }
     if market is None:
@@ -297,6 +298,7 @@ async def upsert_second_market(session: AsyncSession, counts: dict[str, int]) ->
         "currency": "EUR",
         "language": "tr",
         "timezone": "Europe/Paris",
+        "subscription_plan": "growth",
         "is_active": True,
     }
     if market is None:
