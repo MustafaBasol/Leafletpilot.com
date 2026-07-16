@@ -5,6 +5,8 @@ from uuid import uuid4
 import pytest
 
 from scripts import seed_dev_data
+from app.models import Market
+from app.services.entitlements import resolve_capabilities, resolve_plan_code
 
 
 class RelationshipGuard:
@@ -31,9 +33,10 @@ class ScalarRows:
 
 
 class FakeSession:
-    def __init__(self, *, alias_rows=None, image_id=None):
+    def __init__(self, *, alias_rows=None, image_id=None, scalar_value=None):
         self.alias_rows = alias_rows or []
         self.image_id = image_id
+        self.scalar_value = scalar_value
         self.added = []
         self.executed = []
         self.scalar_statements = []
@@ -45,7 +48,7 @@ class FakeSession:
 
     async def scalar(self, statement):
         self.scalar_statements.append(statement)
-        return self.image_id
+        return self.scalar_value if self.scalar_value is not None else self.image_id
 
     def add(self, instance):
         self.added.append(instance)
@@ -83,6 +86,48 @@ def test_seed_allows_development(monkeypatch) -> None:
     monkeypatch.setattr(seed_dev_data.settings, "environment", "development")
 
     seed_dev_data.require_seed_allowed()
+
+
+def test_demo_markets_receive_growth_plan_and_rerun_is_idempotent() -> None:
+    asyncio.run(_exercise_demo_market_plan_upserts())
+
+
+async def _exercise_demo_market_plan_upserts() -> None:
+    for upsert in (seed_dev_data.upsert_market, seed_dev_data.upsert_second_market):
+        counts = {"created": 0, "updated": 0, "unchanged": 0}
+        create_session = FakeSession()
+        market = await upsert(create_session, counts)
+        assert market.subscription_plan == "growth"
+        assert counts["created"] == 1
+
+        existing = Market(
+            id=market.id,
+            slug=market.slug,
+            name=market.name,
+            currency=market.currency,
+            language=market.language,
+            timezone=market.timezone,
+            subscription_plan=None,
+            is_active=True,
+        )
+        update_counts = {"created": 0, "updated": 0, "unchanged": 0}
+        await upsert(FakeSession(scalar_value=existing), update_counts)
+        assert existing.subscription_plan == "growth"
+        assert update_counts == {"created": 0, "updated": 1, "unchanged": 0}
+
+        unchanged_counts = {"created": 0, "updated": 0, "unchanged": 0}
+        await upsert(FakeSession(scalar_value=existing), unchanged_counts)
+        assert unchanged_counts == {"created": 0, "updated": 0, "unchanged": 1}
+
+
+def test_growth_seed_plan_allows_private_products_and_unassigned_stays_restricted() -> None:
+    growth_market = type("MarketFixture", (), {"subscription_plan": "growth"})()
+    unassigned_market = type("MarketFixture", (), {"subscription_plan": None})()
+
+    assert resolve_plan_code(growth_market) == "growth"
+    assert resolve_capabilities(growth_market).private_products_limit == 250
+    assert resolve_plan_code(unassigned_market) == "unassigned"
+    assert resolve_capabilities(unassigned_market).private_products_limit == 0
 
 
 def test_seed_product_helpers_do_not_read_lazy_relationships() -> None:

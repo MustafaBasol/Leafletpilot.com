@@ -36,8 +36,9 @@ def test_supermarket_defaults_and_header_assets_are_available():
 
 
 def test_supermarket_rejects_overflow_without_affecting_generic():
-    with pytest.raises(ValueError):
-        render_render_payload_html({"template_slug": "supermarket-promo-4", "items": [{"name": "x"}] * 5}, generated_at=datetime.now(UTC))
+    adaptive = render_render_payload_html({"template_slug": "supermarket-promo-4", "items": [{"name": "x"}] * 5}, generated_at=datetime.now(UTC))
+    assert "preview-supermarket-promo-9" in adaptive
+    assert "grid-template-columns:repeat(3" in adaptive
     generic = render_render_payload_html({"template_slug": "promo-4", "items": [{"name": "x"}]}, generated_at=datetime.now(UTC))
     assert "price-panel" not in generic
 

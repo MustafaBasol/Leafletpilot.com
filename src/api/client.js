@@ -87,8 +87,16 @@ export async function apiRequest(
   };
 
   if (body !== undefined && body !== null) {
-    requestHeaders["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
+    const isRawBody = body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData;
+    if (!isRawBody) {
+      requestHeaders["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    } else {
+      options.body = body;
+      if (body instanceof Blob && body.type && !requestHeaders["Content-Type"]) {
+        requestHeaders["Content-Type"] = body.type;
+      }
+    }
   }
 
   let response;
@@ -107,6 +115,49 @@ export async function apiRequest(
   }
 
   return responseBody;
+}
+
+export function resolveImageUrl(imageUrl) {
+  if (!imageUrl) return "";
+
+  try {
+    return new URL(imageUrl, `${apiBaseUrl}/`).toString();
+  } catch {
+    return "";
+  }
+}
+
+function isApiImageUrl(imageUrl, resolvedUrl) {
+  if (imageUrl.startsWith("/api/")) return true;
+
+  try {
+    const apiOrigin = new URL(apiBaseUrl).origin;
+    const parsed = new URL(resolvedUrl);
+    return parsed.origin === apiOrigin && parsed.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchImageSource(imageUrl, { signal, marketId } = {}) {
+  const resolvedUrl = resolveImageUrl(imageUrl);
+  if (!resolvedUrl) throw new Error("Görsel URL'si geçersiz.");
+
+  if (!isApiImageUrl(imageUrl, resolvedUrl)) {
+    return { src: resolvedUrl, revoke: false };
+  }
+
+  const selectedMarketId = marketId || getSelectedMarketId();
+  if (!selectedMarketId) throw new Error("Görsel için seçili market gerekli.");
+
+  const headers = { Accept: "image/*", "X-Market-Id": selectedMarketId };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(resolvedUrl, { headers, signal, cache: "no-store" });
+  if (!response.ok) throw new Error(`Görsel yüklenemedi (${response.status}).`);
+
+  return { src: URL.createObjectURL(await response.blob()), revoke: true };
 }
 
 export const apiClient = {

@@ -239,6 +239,7 @@ class CampaignUpdate(BaseModel):
     language: str | None = Field(default=None, min_length=2, max_length=16)
     failure_reason: str | None = None
     builder_config: dict[str, Any] | None = None
+    items: list[CampaignItemCreate] | None = None
 
 
 class CampaignListItem(BaseModel):

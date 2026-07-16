@@ -15,10 +15,10 @@ def test_a4_layout_has_explicit_grid_and_cards(slug, count):
     assert "width:1240px;height:1754px" in html
 
 
-def test_a4_rejects_implicit_overflow():
+def test_a4_adapts_overflow_to_the_next_product_count_layout():
     payload = {"contract_version": 2, "template_slug": "promo-4", "items": [{"name": "x"} for _ in range(5)]}
-    with pytest.raises(ValueError):
-        render_render_payload_html(payload, generated_at=datetime.now(UTC))
+    html = render_render_payload_html(payload, generated_at=datetime.now(UTC))
+    assert "layout-3x2" in html
 
 
 def test_a4_card_contains_safe_long_text_and_fallback():

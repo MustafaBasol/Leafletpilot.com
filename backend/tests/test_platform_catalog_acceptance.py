@@ -14,13 +14,20 @@ from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.core.security import create_access_token, create_platform_access_token, hash_password
 from app.main import app
-from app.models import Brand, Category, Market, MarketProduct, MarketUser, PlatformAdmin, Product, User
+from app.models import Brand, Category, Market, MarketProduct, MarketUser, PlatformAdmin, Product, ProductImage, User
 
 
 async def _seed(prefix: str) -> dict:
     async with AsyncSessionLocal() as session:
         admin = PlatformAdmin(email=f"{prefix}@example.test", full_name="Phase C Admin", password_hash=hash_password("phase-c-password"))
-        markets = [Market(name=f"{prefix} Market {index}", slug=f"{prefix}-{index}") for index in ("a", "b")]
+        markets = [
+            Market(
+                name=f"{prefix} Market {index}",
+                slug=f"{prefix}-{index}",
+                subscription_plan="growth" if index == "a" else "starter",
+            )
+            for index in ("a", "b")
+        ]
         users = [User(email=f"{prefix}-{index}@example.test", full_name=f"Market User {index}", password_hash=hash_password("market-password")) for index in ("a", "b")]
         session.add_all([admin, *markets, *users])
         await session.flush()
@@ -35,10 +42,55 @@ async def _seed(prefix: str) -> dict:
         ]
         session.add_all(products)
         await session.flush()
+        session.add(ProductImage(product_id=products[0].id, url="https://example.test/global-product.png", mime_type="image/png", quality_status="excellent", is_primary=True))
         for index, product in enumerate(products):
             session.add(MarketProduct(market_id=markets[index % 2].id, product_id=product.id, regular_price="2.50", currency="EUR"))
         await session.commit()
         return {"admin": admin, "markets": markets, "users": users, "categories": categories, "brands": brands, "products": products}
+
+
+@pytest.mark.asyncio
+async def test_market_image_upload_authorization_and_scope_acceptance() -> None:
+    if AsyncSessionLocal is None:
+        pytest.skip("DATABASE_URL is not configured.")
+
+    prefix = f"phase-image-{uuid4().hex[:10]}"
+    seeded = await _seed(prefix)
+    viewer = User(email=f"{prefix}-viewer@example.test", full_name="Catalog Viewer", password_hash=hash_password("market-password"))
+    async with AsyncSessionLocal() as session:
+        session.add(viewer)
+        await session.flush()
+        session.add(MarketUser(market_id=seeded["markets"][0].id, user_id=viewer.id, role="viewer"))
+        await session.commit()
+
+    admin_headers = {"Authorization": f"Bearer {create_access_token(str(seeded['users'][0].id))}", "X-Market-Id": str(seeded["markets"][0].id)}
+    viewer_headers = {"Authorization": f"Bearer {create_access_token(str(viewer.id))}", "X-Market-Id": str(seeded["markets"][0].id)}
+    other_market_headers = {"Authorization": f"Bearer {create_access_token(str(seeded['users'][1].id))}", "X-Market-Id": str(seeded["markets"][1].id)}
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
+    adopted_id = str((await client.get("/api/catalog/my-products", headers=admin_headers)).json()["items"][0]["id"])
+    body = b"\x89PNG\r\n\x1a\nphase-image"
+    try:
+        uploaded = await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=body)
+        assert uploaded.status_code == 200
+        assert uploaded.json()["image_override_active"] is True
+
+        async with AsyncSessionLocal() as session:
+            market = await session.get(Market, seeded["markets"][0].id)
+            market.subscription_plan = "growth"
+            await session.commit()
+        private = await client.post("/api/catalog/private-products", headers=admin_headers, json={"private_name": f"{prefix} Private"})
+        assert private.status_code == 201
+        private_id = private.json()["id"]
+        assert (await client.post(f"/api/catalog/my-products/{private_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=body)).status_code == 200
+        assert (await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**viewer_headers, "Content-Type": "image/png"}, content=body)).status_code == 403
+        other_id = str((await client.get("/api/catalog/my-products", headers=other_market_headers)).json()["items"][0]["id"])
+        assert (await client.post(f"/api/catalog/my-products/{other_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=body)).status_code == 404
+        assert (await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**admin_headers, "Content-Type": "image/gif"}, content=b"GIF89a")).status_code == 415
+        assert (await client.delete(f"/api/catalog/my-products/{adopted_id}/image", headers=admin_headers)).status_code == 204
+        restored = (await client.get("/api/catalog/my-products", headers=admin_headers)).json()["items"]
+        assert next(item for item in restored if item["id"] == adopted_id)["image_url"] == "https://example.test/global-product.png"
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

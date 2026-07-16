@@ -55,12 +55,14 @@ function useHashPath() {
 
 function Page({ path, sessionVersion }) {
   void sessionVersion;
-  if (!canAccessPilotPath(path)) return <Dashboard />;
-  if (path === "/dashboard") return <Dashboard />;
-  if (path === "/campaigns") return <Campaigns />;
-  if (path === "/campaigns/new") return <NewCampaign />;
-  if (path.startsWith("/campaigns/")) return <CampaignDetail campaignId={path.replace("/campaigns/", "")} />;
-  if (path === "/products") return <MarketCatalog />;
+  const [pathname, search = ""] = path.split("?");
+  const action = new URLSearchParams(search).get("action") || "";
+  if (!canAccessPilotPath(pathname)) return <Dashboard />;
+  if (pathname === "/dashboard") return <Dashboard />;
+  if (pathname === "/campaigns") return <Campaigns />;
+  if (pathname === "/campaigns/new") return <NewCampaign />;
+  if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
+  if (pathname === "/products") return <MarketCatalog action={action} />;
   if (path === "/categories") return <Categories />;
   if (path === "/templates") return <Templates />;
   if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
@@ -68,7 +70,7 @@ function Page({ path, sessionVersion }) {
   if (path === "/settings") return <Settings />;
   if (path === "/team") return <Team />;
   if (path === "/onboarding") return <Onboarding />;
-  if (pageMeta[path]) return <PlaceholderPage path={path} />;
+  if (pageMeta[pathname]) return <PlaceholderPage path={pathname} />;
   return <PlaceholderPage path="/campaigns" />;
 }
 
@@ -221,7 +223,7 @@ export function App() {
   }
 
   return (
-    <AppLayout currentPath={path} pageTitle={getPageTitle(path)} onLogout={logout} sessionVersion={sessionVersion}>
+    <AppLayout currentPath={path} pageTitle={getPageTitle(path.split("?")[0])} onLogout={logout} sessionVersion={sessionVersion}>
       <Page path={path} sessionVersion={sessionVersion} key={`${path}:${sessionVersion}`} />
     </AppLayout>
   );

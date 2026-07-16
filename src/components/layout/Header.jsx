@@ -18,7 +18,9 @@ export function Header({ pageTitle, onLogout, sessionVersion }) {
           <input aria-label="Ara" placeholder="Kampanya, ürün veya market ara" />
         </div>
         {showCatalogAction && (
-          <Button variant="secondary" href="#/products">
+          <Button variant="secondary" href="#/products?action=create-private" onClick={() => {
+            if (window.location.hash === "#/products?action=create-private") window.dispatchEvent(new Event("leafletpilot:catalog-create"));
+          }}>
             Ürün Ekle
           </Button>
         )}

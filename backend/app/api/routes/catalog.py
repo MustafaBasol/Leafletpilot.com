@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Market, MarketProduct
+from app.models import Market, MarketProduct, Product
 
 from app.api.deps import get_catalog_session, get_current_market_id, require_market_role
 from app.core.roles import MARKET_MUTATION_ROLES
@@ -268,8 +268,25 @@ async def shared_catalog(search: str | None = None, barcode: str | None = None, 
     require_capability(market, "global_catalog_access")
     products, total = await catalog_service.search_global_products(session, search=search, barcode=barcode, limit=limit, offset=offset)
     adopted = set((await session.scalars(select(MarketProduct.product_id).where(MarketProduct.market_id == market_id, MarketProduct.product_id.is_not(None)))).all())
-    items = [SharedCatalogProductRead(id=p.id, name=p.name, brand=p.brand.name if p.brand else None, package_size=p.package_size, package_type=p.package_type, barcode=p.barcode, category=p.category.name if p.category else None, image_url=(next((i.url for i in p.images if i.is_primary), None)), is_active=p.is_active, already_added=p.id in adopted) for p in products]
+    items = [SharedCatalogProductRead(id=p.id, name=p.name, brand=p.brand.name if p.brand else None, package_size=p.package_size, package_type=p.package_type, barcode=p.barcode, category=p.category.name if p.category else None, image_url=(f"/api/catalog/shared/{p.id}/image/content" if next((i for i in p.images if i.is_primary and i.storage_key), None) else next((i.url for i in p.images if i.is_primary and i.url and i.url.startswith(("http://", "https://"))), None)), is_active=p.is_active, already_added=p.id in adopted) for p in products]
     return ListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/shared/{product_id}/image/content", include_in_schema=False)
+async def shared_image_content(product_id: UUID, market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)):
+    from app.services.rendering import storage_path_for_key
+    market = await session.get(Market, market_id)
+    from app.services.entitlements import require_capability
+    require_capability(market, "global_catalog_access")
+    from sqlalchemy.orm import selectinload
+    product = await session.scalar(select(Product).options(selectinload(Product.images)).where(Product.id == product_id, Product.is_global.is_(True)))
+    image = next((item for item in (product.images if product else []) if item.is_primary and item.storage_key), None) if product else None
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    path = storage_path_for_key(image.storage_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found.")
+    return FileResponse(path, media_type=image.mime_type or "application/octet-stream")
 
 
 @router.get("/my-products", response_model=ListResponse[ResolvedMarketProductRead])

@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, or_, select
@@ -539,9 +540,22 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
     effective = resolve_effective_product(product, row)
     global_brand = product.brand.name if product and product.brand else None
     global_category = product.category.name if product and product.category else None
-    image_url = effective.image_url
-    if effective.image_storage_key and not image_url:
-        image_url = f"/api/catalog/my-products/{row.id}/image/content"
+    image_url = effective.image_url if effective.image_url and urlparse(effective.image_url).scheme in {"http", "https"} else None
+    if effective.image_storage_key:
+        image_url = f"/api/catalog/my-products/{row.id}/image/content" if row.image_storage_key else f"/api/catalog/shared/{row.product_id}/image/content"
+    has_override = bool(
+        row.display_name_override
+        or row.category_override_id
+        or row.badge_text
+        or row.stock_note
+        or row.image_storage_key
+        or row.regular_price is not None
+        or row.promo_price is not None
+        or row.private_brand_text
+        or row.private_package_size
+        or row.private_package_type
+        or (product is not None and row.currency != (product.currency or "EUR"))
+    )
     return {
         "id": row.id, "market_id": row.market_id, "product_id": row.product_id or row.legacy_product_id,
         "name": effective.name, "brand": row.private_brand_text or global_brand,
@@ -552,7 +566,7 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
         "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
         "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),
         "stock_note": row.stock_note, "sort_order": row.sort_order, "is_active": row.is_active,
-        "source_type": "Shared product" if row.product_id else "Custom product", "image_url": image_url,
+        "source_type": ("Global with tenant override" if has_override else "Global") if row.product_id else "Private", "image_url": image_url,
         "image_override_active": bool(row.image_storage_key),
         "promo_active": row.promo_price is not None,
     }

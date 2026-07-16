@@ -133,10 +133,11 @@ async def get_campaign(
 @router.get("/{campaign_id}/preview-html", response_model=CampaignPreviewHtml)
 async def get_campaign_preview_html(
     campaign_id: UUID,
+    format: str | None = Query(default=None, pattern="^(pdf|png|instagram_post|instagram_story|whatsapp)$"),
     market_id: UUID = Depends(get_required_market_id),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignPreviewHtml:
-    return await campaign_service.get_campaign_preview_html(session, campaign_id, market_id)
+    return await campaign_service.get_campaign_preview_html(session, campaign_id, market_id, output_format=format)
 
 
 @router.patch("/{campaign_id}", response_model=CampaignDetail)

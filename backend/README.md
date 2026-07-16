@@ -104,7 +104,7 @@ For the default local setup, create `backend/.env`:
 
 ```text
 DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot
-TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test
+TEST_DATABASE_URL=postgresql+asyncpg://leafletpilot:leafletpilot@localhost:5432/leafletpilot_test_suite
 LOCAL_STORAGE_DIR=storage
 DEBUG=false
 ```
