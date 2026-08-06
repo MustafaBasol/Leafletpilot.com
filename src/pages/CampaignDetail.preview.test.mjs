@@ -29,5 +29,16 @@ test("fit mode preserves A4 ratio and only enables scrolling after manual zoom",
   assert.match(styles, /aspect-ratio: 210 \/ 297/);
   assert.match(styles, /overflow: hidden/);
   assert.match(styles, /\.campaign-preview-viewport\.is-zoomed[\s\S]*overflow: auto/);
-  assert.match(page, /Math\.min\(rect\.width \/ 1240, rect\.height \/ 1754\)/);
+  assert.match(page, /Math\.min\(availableWidth \/ PREVIEW_PAGE_WIDTH, availableHeight \/ PREVIEW_PAGE_HEIGHT\)/);
+  assert.match(page, /campaign-preview-page-box/);
+  assert.match(page, /width: PREVIEW_PAGE_WIDTH \* fitScale \* previewZoom/);
+  assert.match(page, /previewMode === "manual"/);
+  assert.match(page, /Math\.round\(fitScale \* previewZoom \* 100\)/);
+});
+
+test("fit reset and resize use the viewport rather than the adjacent grid panel", () => {
+  assert.match(page, /observer\.observe\(element\)/);
+  assert.match(page, /setPreviewMode\("fit"\)/);
+  assert.match(page, /setPreviewZoom\(1\)/);
+  assert.match(styles, /\.campaign-preview-page-box[\s\S]*flex: 0 0 auto/);
 });

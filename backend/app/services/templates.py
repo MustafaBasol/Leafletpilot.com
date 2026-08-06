@@ -287,10 +287,16 @@ async def update_template(
     if template.is_global:
         raise _global_mutation_forbidden()
     updates = payload.model_dump(exclude_unset=True)
+    if payload.config_json is not None and "config_json" in payload.model_fields_set:
+        updates["config_json"] = payload.config_json.model_dump(exclude_unset=True)
     if updates.get("is_global"):
         raise _global_mutation_forbidden()
     if "name" in updates and "slug" not in updates:
         updates["slug"] = slugify(updates["name"])
+    if "config_json" in updates and updates["config_json"] is not None:
+        # Supported fields are validated by Pydantic; merging keeps legacy and
+        # future renderer keys that this client did not intentionally change.
+        updates["config_json"] = {**dict(template.config_json or {}), **updates["config_json"]}
     if "is_global" in updates:
         updates["market_id"] = resolve_market_scope(updates["is_global"], market_id)
     for key, value in updates.items():
@@ -318,7 +324,7 @@ async def _persist(session: AsyncSession, template: Template) -> Template:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Template record conflicts with existing data.",
+            detail="Bu isimle bir şablon zaten mevcut.",
         ) from exc
     return template
 

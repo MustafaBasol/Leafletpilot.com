@@ -240,7 +240,7 @@ function mapMockProduct(product) {
 function mapTemplate(template) {
   const config = template.config_json || {};
   const formats = Array.isArray(config.formats) && config.formats.length ? config.formats : ["A4 PNG"];
-  const maxProductsPerPage = Number(config.max_products_per_page || 0);
+  const maxProductsPerPage = Number(config.max_products_per_page || config.slot_count || 0);
 
   return {
     id: template.id,
