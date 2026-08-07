@@ -18,7 +18,7 @@ export function ProductThumbnail({ label, hasImage = true, imageUrl = "", market
     setSource(imageUrl ? { loading: true } : null);
     if (!imageUrl) return () => controller.abort();
 
-    fetchImageSource(imageUrl, { signal: controller.signal, marketId })
+    fetchImageSource(imageUrl, { signal: controller.signal, marketId, cacheKey: refreshKey })
       .then((nextSource) => {
         if (!active) {
           if (nextSource.revoke) URL.revokeObjectURL(nextSource.src);

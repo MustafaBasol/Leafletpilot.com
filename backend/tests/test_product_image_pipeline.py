@@ -12,6 +12,7 @@ from app.api.routes import catalog as catalog_routes
 from app.api.routes import platform_catalog as platform_catalog_routes
 from app.core.config import settings
 from app.models import Campaign, CampaignItem, Market, MarketProduct, Product, ProductImage, Template
+from app.services import rendering
 from app.services.image_pipeline import (
     MAX_FLYER_EDGE,
     normalize_flyer_image,
@@ -258,6 +259,39 @@ async def test_market_upload_rejects_unsupported_mime_before_stream() -> None:
 
     assert error.value.status_code == 415
     assert error.value.detail == "Only PNG, JPEG, and WebP images are allowed."
+
+
+@pytest.mark.asyncio
+async def test_shared_image_content_disables_caching(tmp_path, monkeypatch) -> None:
+    market = Market(
+        id=uuid4(),
+        name="Shared Image Market",
+        slug=f"shared-image-{uuid4().hex}",
+        subscription_plan="growth",
+    )
+    product = Product(
+        id=uuid4(),
+        name="Shared Image Product",
+        is_global=True,
+        images=[ProductImage(storage_key="global/catalog/image.png", mime_type="image/png", is_primary=True)],
+    )
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+
+    class Session:
+        async def get(self, model, item_id):
+            return market
+
+        async def scalar(self, statement):
+            return product
+
+    monkeypatch.setattr(rendering, "storage_path_for_key", lambda _key: image_path)
+
+    response = await catalog_routes.shared_image_content(
+        product.id, market_id=market.id, session=Session()
+    )
+
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_frozen_snapshot_image_survives_source_product_replacement(tmp_path, monkeypatch) -> None:

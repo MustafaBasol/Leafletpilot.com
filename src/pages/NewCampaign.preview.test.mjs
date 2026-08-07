@@ -65,3 +65,9 @@ test("text import remains available and selection summary has thumbnails", () =>
   assert.match(page, /selectedProducts\.slice\(0, 5\)/);
   assert.match(page, /Tümünü temizle/);
 });
+
+test("campaign product thumbnails use deterministic authenticated image cache keys", () => {
+  assert.match(page, /imageUrl=\{product\.image_url\}/);
+  assert.match(page, /refreshKey=\{product\.image_url\}/);
+  assert.doesNotMatch(page, /refreshKey=\{(?:Math\.random|Date\.now)/);
+});

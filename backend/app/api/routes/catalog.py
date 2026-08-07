@@ -287,7 +287,11 @@ async def shared_image_content(product_id: UUID, market_id: UUID = Depends(get_c
     path = storage_path_for_key(image.storage_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found.")
-    return FileResponse(path, media_type=image.mime_type or "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=image.mime_type or "application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/my-products", response_model=ListResponse[ResolvedMarketProductRead])
@@ -335,7 +339,11 @@ async def market_image_content(market_product_id: UUID, market_id: UUID = Depend
     path = storage_path_for_key(row.image_storage_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found.")
-    return FileResponse(path, media_type=row.image_mime_type or "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=row.image_mime_type or "application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/products/{product_id}", response_model=ProductRead)

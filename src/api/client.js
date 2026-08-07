@@ -138,12 +138,17 @@ function isApiImageUrl(imageUrl, resolvedUrl) {
   }
 }
 
-export async function fetchImageSource(imageUrl, { signal, marketId } = {}) {
+export async function fetchImageSource(imageUrl, { signal, marketId, cacheKey } = {}) {
   const resolvedUrl = resolveImageUrl(imageUrl);
   if (!resolvedUrl) throw new Error("Görsel URL'si geçersiz.");
 
   if (!isApiImageUrl(imageUrl, resolvedUrl)) {
     return { src: resolvedUrl, revoke: false };
+  }
+
+  const requestUrl = new URL(resolvedUrl);
+  if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
+    requestUrl.searchParams.set("v", String(cacheKey));
   }
 
   const selectedMarketId = marketId || getSelectedMarketId();
@@ -153,7 +158,7 @@ export async function fetchImageSource(imageUrl, { signal, marketId } = {}) {
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(resolvedUrl, { headers, signal, cache: "no-store" });
+  const response = await fetch(requestUrl.toString(), { headers, signal, cache: "no-store" });
   if (!response.ok) throw new Error(`Görsel yüklenemedi (${response.status}).`);
 
   return { src: URL.createObjectURL(await response.blob()), revoke: true };

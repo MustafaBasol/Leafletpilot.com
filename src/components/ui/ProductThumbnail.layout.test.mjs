@@ -31,7 +31,13 @@ test("thumbnail variants constrain images and preserve fallback bounds", () => {
 });
 
 test("image replacement refreshes the same URL and cleans blob URLs", () => {
-  assert.match(componentSource, /fetchImageSource\(imageUrl, \{ signal: controller\.signal, marketId \}\)/);
+  assert.match(componentSource, /fetchImageSource\(imageUrl, \{ signal: controller\.signal, marketId, cacheKey: refreshKey \}\)/);
   assert.match(componentSource, /URL\.revokeObjectURL\(nextSource\.src\)/);
   assert.match(componentSource, /if \(objectUrl\) URL\.revokeObjectURL\(objectUrl\)/);
+});
+
+test("stale image requests cannot overwrite the latest thumbnail", () => {
+  assert.match(componentSource, /if \(!active\) \{[\s\S]*URL\.revokeObjectURL\(nextSource\.src\);[\s\S]*return;/);
+  assert.match(componentSource, /active = false;[\s\S]*controller\.abort\(\);/);
+  assert.match(componentSource, /if \(!active\) \{[\s\S]*return;[\s\S]*\}[\s\S]*setSource\(nextSource\)/);
 });
