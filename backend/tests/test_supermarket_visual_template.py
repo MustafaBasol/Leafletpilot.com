@@ -126,3 +126,92 @@ def test_supermarket_currency_formats_are_safe(value, currency, major, minor):
     html = render_render_payload_html({"template_slug": "supermarket-promo-4", "items": [{"name": "x", "price": value, "currency": currency}]}, generated_at=datetime.now(UTC))
     assert f'<span class="price-major">{major}</span>' in html
     assert f'<span class="price-minor">{minor}</span>' in html
+
+
+@pytest.mark.parametrize(("slug", "composition"), [
+    ("supermarket-promo-4", "hero-offers"),
+    ("supermarket-promo-9", "weekly-grid"),
+    ("supermarket-promo-16", "catalogue-grid"),
+])
+def test_density_profiles_emit_distinct_retail_compositions(slug, composition):
+    html = render_render_payload_html(
+        {"template_slug": slug, "items": [{"name": "Offer", "price": "9.99"}]},
+        generated_at=datetime.now(UTC),
+    )
+    assert f"composition-{composition}" in html
+    assert f'"composition": "{composition}"' not in html
+
+
+def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis():
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-4",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(4)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert 'border:0;border-bottom:1px solid color-mix' in html
+    assert 'data-emphasis="featured" data-rhythm="a"' in html
+    assert html.count('<article class="product-card" data-emphasis="featured"') == 1
+    assert 'data-rhythm="b"' in html and 'data-rhythm="c"' in html
+
+    weekly = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "items": [{"name": "Offer", "price": "9.99", "emphasis": "featured"}],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert 'data-emphasis="normal"' in weekly
+
+
+def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-4",
+            "template_config": {
+                "header_style": "minimal",
+                "price_style": "split",
+                "badge_style": "burst",
+                "image_treatment": "cutout",
+                "show_header_title": False,
+            },
+            "items": [{
+                "name": "Large offer",
+                "image_key": "missing.png",
+                "image_has_alpha": True,
+                "price": "999999.99",
+                "currency": "CHF",
+                "badge": "25% OFF",
+            }],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert "retail-header-minimal" in html
+    assert "retail-price-split" in html
+    assert "retail-badge-burst" in html
+    assert "retail-image-cutout" in html
+    assert 'data-image-stage="cutout"' in html
+    assert 'class="price price-long"' in html
+    assert 'data-title-visible="false"' in html
+    assert '<header class="hero"' in html
+    assert "<h1 " not in html
+
+
+@pytest.mark.parametrize("variant,selector", [
+    ("pill", ".retail-badge-pill .promo-badge"),
+    ("sticker", ".retail-badge-sticker .promo-badge"),
+    ("burst", ".retail-badge-burst .promo-badge"),
+    ("ribbon", ".retail-badge-ribbon .promo-badge"),
+])
+def test_badge_variants_emit_distinct_safe_composition(variant, selector):
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "template_config": {"badge_style": variant},
+            "items": [{"name": "Offer", "price": "9.99", "badge": "SAVE"}],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert f"retail-badge-{variant}" in html
+    assert selector in html

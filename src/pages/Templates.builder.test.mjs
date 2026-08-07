@@ -7,6 +7,7 @@ const page = readFileSync(new URL("./Templates.jsx", import.meta.url), "utf8");
 const builder = readFileSync(new URL("../components/templates/TemplateBuilderModal.jsx", import.meta.url), "utf8");
 const detail = readFileSync(new URL("./TemplateDetail.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../api/templateApi.js", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const pageAst = parse(page, { sourceType: "module", plugins: ["jsx"] });
 
 function walk(node, visit) {
@@ -90,6 +91,14 @@ test("builder exposes the constrained supermarket visual contract", () => {
   assert.match(builder, /data-density-profile/);
   assert.match(builder, /template-preview-price/);
   assert.doesNotMatch(builder, /dangerouslySetInnerHTML/);
+  assert.match(builder, /data-title-visible=\{String\(config\.show_header_title\)\}/);
+  assert.match(builder, /data-emphasis=\{densityName === "editorial"/);
+  assert.match(builder, /data-rhythm=/);
+  assert.match(builder, /data-image-stage=\{config\.image_treatment\}/);
+  assert.match(styles, /density-editorial .*article:first-child/);
+  assert.match(styles, /density-weekly .*article/);
+  assert.match(styles, /density-compact .*article/);
+  assert.match(styles, /border-bottom:1px solid color-mix/);
   for (const capacity of [4, 9, 16]) assert.match(page, new RegExp(`supermarket-promo-${capacity}`));
 });
 

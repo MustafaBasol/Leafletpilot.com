@@ -108,8 +108,8 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
 
     artifact_root = Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts"))
     artifact_root.mkdir(parents=True, exist_ok=True)
-    png_path = artifact_root / f"{slug}.png"
-    second_png_path = artifact_root / f"{slug}-repeat.png"
+    png_path = artifact_root / f"{slug}-after.png"
+    second_png_path = artifact_root / f"{slug}-after-repeat.png"
     pdf_path = artifact_root / f"{slug}.pdf"
     html_path = artifact_root / f"{slug}.html"
     html_path.write_text(html, encoding="utf-8")
@@ -171,6 +171,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                         imagesContained: [...document.querySelectorAll('.product-image')].every((image) => getComputedStyle(image).objectFit === 'contain'),
                         fallbackCount: document.querySelectorAll('.image-placeholder').length,
                         densityProfile: document.querySelector('.preview-document').dataset.densityProfile,
+                        compositionClass: [...document.querySelector('.preview-document').classList].find((value) => value.startsWith('composition-')),
+                        featuredCount: document.querySelectorAll('.product-card[data-emphasis="featured"]').length,
+                        cutoutStageCount: document.querySelectorAll('.promo-card-image[data-image-stage="cutout"]').length,
+                        cardTopBordersReduced: cards.every((card) => parseFloat(getComputedStyle(card).borderTopWidth) <= 1),
                       };
                     }"""
                 )
@@ -189,6 +193,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                     "imagesContained": True,
                     "fallbackCount": 1,
                     "densityProfile": {4: "editorial", 9: "weekly", 16: "compact"}[count],
+                    "compositionClass": {4: "composition-hero-offers", 9: "composition-weekly-grid", 16: "composition-catalogue-grid"}[count],
+                    "featuredCount": 1 if count == 4 else 0,
+                    "cutoutStageCount": {4: 3, 9: 6, 16: 12}[count],
+                    "cardTopBordersReduced": True,
                 }
                 page.screenshot(path=str(png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
                 page.screenshot(path=str(second_png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})

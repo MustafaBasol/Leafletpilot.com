@@ -40,22 +40,22 @@ SUPERMARKET_STYLE_OPTIONS = {
 # copies. Values are consumed as CSS variables by the one shared renderer.
 SUPERMARKET_DENSITY_PROFILES = {
     "supermarket-promo-4": {
-        "name": "editorial", "header_height": 226, "grid_height": 1390, "grid_gap": 18,
-        "card_padding": 15, "card_radius": 20, "image_height": 420, "name_size": 23,
-        "name_lines": 2, "unit_size": 15, "price_size": 50, "price_panel_height": 92,
-        "badge_size": 12, "footer_height": 38,
+        "name": "editorial", "composition": "hero-offers", "header_height": 190,
+        "grid_height": 1434, "grid_gap": 22, "card_padding": 14, "card_radius": 18,
+        "image_height": 432, "name_size": 26, "name_lines": 2, "unit_size": 16,
+        "price_size": 56, "price_panel_height": 108, "badge_size": 17, "footer_height": 38,
     },
     "supermarket-promo-9": {
-        "name": "weekly", "header_height": 204, "grid_height": 1404, "grid_gap": 12,
-        "card_padding": 10, "card_radius": 15, "image_height": 240, "name_size": 17,
-        "name_lines": 2, "unit_size": 13, "price_size": 35, "price_panel_height": 72,
-        "badge_size": 10, "footer_height": 36,
+        "name": "weekly", "composition": "weekly-grid", "header_height": 172,
+        "grid_height": 1456, "grid_gap": 12, "card_padding": 9, "card_radius": 12,
+        "image_height": 250, "name_size": 18, "name_lines": 2, "unit_size": 13,
+        "price_size": 38, "price_panel_height": 82, "badge_size": 12, "footer_height": 36,
     },
     "supermarket-promo-16": {
-        "name": "compact", "header_height": 174, "grid_height": 1432, "grid_gap": 8,
-        "card_padding": 7, "card_radius": 11, "image_height": 172, "name_size": 14,
-        "name_lines": 2, "unit_size": 11, "price_size": 27, "price_panel_height": 58,
-        "badge_size": 9, "footer_height": 32,
+        "name": "compact", "composition": "catalogue-grid", "header_height": 150,
+        "grid_height": 1482, "grid_gap": 8, "card_padding": 6, "card_radius": 8,
+        "image_height": 180, "name_size": 14, "name_lines": 2, "unit_size": 10,
+        "price_size": 28, "price_panel_height": 62, "badge_size": 10, "footer_height": 32,
     },
 }
 

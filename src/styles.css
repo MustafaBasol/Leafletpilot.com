@@ -2473,6 +2473,38 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.template-preview-page.is-supermarket{position:relative;background:radial-gradient(circle at 92% 4%,color-mix(in srgb,var(--retail-price-panel) 22%,transparent) 0 12%,transparent 12.5%),linear-gradient(150deg,var(--template-primary),var(--template-background))}
+.template-preview-page.is-supermarket header{flex-basis:11%;border-radius:3px;border-bottom:1px solid #ffffff66;background:transparent}
+.template-preview-page.retail-header-burst header{padding-left:12px;background:linear-gradient(110deg,#ffffff18,transparent 65%)}
+.template-preview-page.retail-header-band header{border:0;border-top:4px solid var(--retail-price-panel);border-bottom:4px solid var(--retail-price-panel);border-radius:0;background:var(--template-background)}
+.template-preview-page.retail-header-minimal header{border:0;border-left:5px solid var(--retail-price-panel);border-radius:0;background:#00000012}
+.template-preview-page.is-supermarket .template-preview-products article{border:0;border-bottom:1px solid color-mix(in srgb,var(--retail-border) 48%,transparent);border-radius:3px;background:color-mix(in srgb,var(--retail-card) 90%,transparent);box-shadow:none}
+.template-preview-page.retail-card-shadow .template-preview-products article{border:0;box-shadow:0 3px 7px #43101c30}
+.template-preview-page.retail-card-outlined .template-preview-products article{border:1px solid color-mix(in srgb,var(--retail-border) 62%,transparent);border-radius:1px;background:color-mix(in srgb,var(--retail-card) 82%,transparent)}
+.template-preview-page.retail-card-rounded .template-preview-products article{border:0;border-radius:11px;background:var(--retail-card);box-shadow:0 2px 7px #43101c20}
+.template-preview-page.is-supermarket .template-preview-image{overflow:visible;background:radial-gradient(circle at 50% 70%,#ffffffa8,transparent 70%)}
+.template-preview-page.retail-image-cutout .template-preview-image{background:transparent;filter:drop-shadow(0 3px 2px #43101c30)}
+.template-preview-page.retail-image-photo .template-preview-image{padding:2px;border:1px solid #ffffffaa;background:white}
+.template-preview-page.is-supermarket .template-preview-price{width:88%;border-radius:2px;box-shadow:2px 2px 0 #43101c25}
+.template-preview-page.is-supermarket article:nth-child(3n+2) .template-preview-price{align-self:flex-end}
+.template-preview-page.is-supermarket article:nth-child(3n) .template-preview-price{width:82%}
+.template-preview-page.is-supermarket .template-preview-price b{padding:3px 4px;border:1px solid #ffffff88;box-shadow:0 1px 0 #43101c40}
+.template-preview-page.is-supermarket .template-preview-products article>mark{padding:0;color:var(--retail-label);background:transparent;border-radius:0;letter-spacing:.08em}
+.template-preview-page.density-editorial .template-preview-products article{border:0;background:color-mix(in srgb,var(--retail-card) 78%,transparent)}
+.template-preview-page.density-editorial .template-preview-products article:first-child{background:var(--retail-card);box-shadow:0 4px 9px #43101c35}
+.template-preview-page.density-editorial .template-preview-products article:first-child .template-preview-image{flex-basis:53%}
+.template-preview-page.density-editorial .template-preview-products article:first-child .template-preview-price strong{font-size:22px}
+.template-preview-page.density-editorial .template-preview-price b{font-size:7px}
+.template-preview-page.density-weekly .template-preview-products article{border-radius:3px}
+.template-preview-page.density-compact .template-preview-products article{border-right:1px solid color-mix(in srgb,var(--retail-border) 35%,transparent);border-bottom:1px solid color-mix(in srgb,var(--retail-border) 35%,transparent);border-radius:0;background:color-mix(in srgb,var(--retail-card) 86%,transparent)}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article{border:0;background:transparent;box-shadow:none}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article:first-child{background:radial-gradient(circle at 48% 42%,#ffffff24,transparent 68%)}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article>span,.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article>small{color:#fff;text-shadow:0 1px 1px #43101c55}
+.template-preview-page.density-editorial article:nth-child(3n+2) .template-preview-price{width:82%}
+.template-preview-page.density-editorial article:nth-child(3n) .template-preview-price{width:76%}
+.template-preview-page.density-weekly .template-preview-products,.template-preview-page.density-compact .template-preview-products{gap:0;padding:3px;background:color-mix(in srgb,var(--retail-card) 91%,transparent)}
+.template-preview-page.density-weekly.retail-card-shadow .template-preview-products article,.template-preview-page.density-compact.retail-card-shadow .template-preview-products article{border:0;border-right:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-bottom:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-radius:0;background:transparent;box-shadow:none}
+
 .template-source {
   display: inline-flex;
   margin-bottom: 8px;
