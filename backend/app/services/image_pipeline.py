@@ -18,6 +18,7 @@ SUPPORTED_IMAGE_TYPES = {
     "image/png": ("PNG", ".png"),
     "image/webp": ("WEBP", ".webp"),
 }
+UNSUPPORTED_IMAGE_TYPE_DETAIL = "Only PNG, JPEG, and WebP images are allowed."
 
 # Pillow raises before allocating extreme decompression-bomb images.  The
 # explicit dimension checks below make the public contract deterministic.
@@ -60,6 +61,17 @@ async def read_bounded_image_body(request: Request) -> bytes:
     return b"".join(chunks)
 
 
+def require_supported_image_mime_type(declared_mime_type: str) -> str:
+    """Return the canonical MIME type or reject it before an upload is streamed."""
+    mime_type = declared_mime_type.split(";", 1)[0].strip().lower()
+    if mime_type not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=UNSUPPORTED_IMAGE_TYPE_DETAIL,
+        )
+    return mime_type
+
+
 def normalize_flyer_image(content: bytes, declared_mime_type: str) -> NormalizedFlyerImage:
     """Decode once and create a deterministic, flyer-safe canonical asset.
 
@@ -67,13 +79,8 @@ def normalize_flyer_image(content: bytes, declared_mime_type: str) -> Normalized
     products appear at wildly different visual scales. Opaque photography is
     never cropped. Background removal is intentionally outside this boundary.
     """
-    mime_type = declared_mime_type.split(";", 1)[0].strip().lower()
-    expected = SUPPORTED_IMAGE_TYPES.get(mime_type)
-    if expected is None:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PNG, JPEG, and WebP images are allowed.",
-        )
+    mime_type = require_supported_image_mime_type(declared_mime_type)
+    expected = SUPPORTED_IMAGE_TYPES[mime_type]
     if not content:
         raise HTTPException(status_code=422, detail="Image content is empty.")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -172,6 +179,21 @@ def store_flyer_image(
         height=normalized.height,
         has_alpha=normalized.has_alpha,
     )
+
+
+def stored_flyer_image_has_alpha(storage_key: str | None) -> bool | None:
+    """Inspect an immutable normalized asset when persisted alpha metadata is unavailable."""
+    if not storage_key:
+        return None
+
+    from app.services.rendering import storage_path_for_key
+
+    try:
+        with Image.open(storage_path_for_key(storage_key)) as image:
+            image.load()
+            return _has_visible_transparency(image)
+    except (FileNotFoundError, UnidentifiedImageError, OSError, SyntaxError, ValueError):
+        return None
 
 
 def _has_visible_transparency(image: Image.Image) -> bool:

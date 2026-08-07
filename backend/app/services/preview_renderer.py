@@ -9,6 +9,7 @@ from typing import Any
 
 from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
+from app.services.image_pipeline import stored_flyer_image_has_alpha
 from app.services.template_presets import SUPERMARKET_PRESETS, SUPERMARKET_VISUAL_DEFAULTS
 
 LAYOUTS = {"promo-4": (2, 2), "promo-6": (2, 3), "promo-9": (3, 3), "promo-12": (3, 4), "promo-16": (4, 4)}
@@ -129,8 +130,14 @@ def _live_payload(campaign: Campaign, template: Template | None) -> dict[str, An
     for item in sorted((x for x in campaign.items if x.match_status != "excluded"), key=lambda x: (x.sort_order, str(x.id))):
         mp = getattr(item, "_market_product", None) or item.market_product; product = item.product; effective = resolve_effective_product(product, mp)
         global_image = next((i for i in (getattr(product, "images", []) or []) if i.is_primary and getattr(i, "quality_status", None) != "missing"), None)
-        image = getattr(mp, "image_storage_key", None) or getattr(global_image, "storage_key", None)
-        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": getattr(global_image, "has_transparent_background", None) if not getattr(mp, "image_storage_key", None) else None, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
+        market_image = getattr(mp, "image_storage_key", None)
+        image = market_image or getattr(global_image, "storage_key", None)
+        image_has_alpha = (
+            stored_flyer_image_has_alpha(market_image)
+            if market_image
+            else getattr(global_image, "has_transparent_background", None)
+        )
+        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
     return result
 
 

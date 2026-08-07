@@ -15,7 +15,7 @@ from app.schemas.platform_catalog import (
     PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, slugify
-from app.services.image_pipeline import read_bounded_image_body, store_flyer_image
+from app.services.image_pipeline import read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
 from app.services.rendering import storage_path_for_key
 
 router = APIRouter(prefix="/platform/catalog", tags=["platform-catalog"])
@@ -237,7 +237,7 @@ async def deactivate_product(product_id: UUID, _: PlatformAdmin = admin, session
 @router.post("/products/{product_id}/images", response_model=dict, status_code=201)
 async def upload_image(product_id: UUID, request: Request, primary: bool = False, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     row = await _global(session, Product, product_id)
-    mime_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    mime_type = require_supported_image_mime_type(request.headers.get("content-type", ""))
     content = await read_bounded_image_body(request)
     asset = store_flyer_image(
         namespace=f"global/catalog/{row.id}",
