@@ -17,9 +17,17 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 
 
 @router.get("/presets")
-async def list_flyer_presets() -> dict:
-    """Return the supported slot-count presets for the constrained flyer builder."""
-    return {"items": list(FLYER_PRESETS.values())}
+async def list_template_builder_presets() -> dict:
+    """Return grid presets, page formats, price styles, and badge styles for the template builder."""
+    return {
+        "items": list(FLYER_PRESETS.values()),
+        "page_formats": [
+            {"value": "a4_portrait", "label": "A4 dikey"},
+            {"value": "a4_landscape", "label": "A4 yatay"},
+        ],
+        "price_styles": ["bold", "compact", "panel"],
+        "badge_styles": ["pill", "square", "burst"],
+    }
 
 
 @router.get("/shared", response_model=ListResponse[TemplateRead])

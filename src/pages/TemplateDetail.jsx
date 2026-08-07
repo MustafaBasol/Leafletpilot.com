@@ -3,8 +3,9 @@ import { canManageTemplates, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { getTemplateDetail } from "../data/dataSource.js";
 import { findTemplateById, generatedFiles, outputFormats, products } from "../data/mockData.js";
-import { getTemplatePreviewHtml } from "../api/templateApi.js";
+import { getTemplatePreviewHtml, getTemplatePresets, updateTemplate, uploadTemplateThumbnail } from "../api/templateApi.js";
 import { Badge, Button, Card, ExportPanel, PageHeader, PreviewFrame, StatusBadge } from "../components/ui/index.js";
+import { TemplateBuilderModal } from "../components/templates/TemplateBuilderModal.jsx";
 
 function emptyTemplate(templateId) {
   return {
@@ -29,8 +30,12 @@ export function TemplateDetail({ templateId }) {
   const [previewError, setPreviewError] = useState("");
   const [isPreviewLoading, setPreviewLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(isRealApiEnabled);
+  const [isEditing, setEditing] = useState(false);
+  const [isSaving, setSaving] = useState(false);
+  const [presets, setPresets] = useState({ items: [], page_formats: [], price_styles: [], badge_styles: [] });
   const selectedMarketId = getSelectedMarketId();
   const canManage = canManageTemplates();
+  const canEdit = canManage && !template.isGlobal;
   const formats = outputFormats.filter((format) => template.formats.includes(format.label));
 
   function setMessage(nextMessage) {
@@ -48,9 +53,10 @@ export function TemplateDetail({ templateId }) {
       try {
         setIsLoading(isRealApiEnabled);
         if (isRealApiEnabled) setTemplate(emptyTemplate(templateId));
-        const detail = await getTemplateDetail(templateId);
+        const [detail, presetMetadata] = await Promise.all([getTemplateDetail(templateId), isRealApiEnabled ? getTemplatePresets(selectedMarketId) : Promise.resolve(null)]);
         if (isMounted) {
           setTemplate(detail);
+          if (presetMetadata) setPresets(presetMetadata);
           setApiError("");
         }
       } catch (error) {
@@ -87,6 +93,27 @@ export function TemplateDetail({ templateId }) {
     }
   }
 
+  async function saveTemplate(form) {
+    if (!canEdit || isSaving) return;
+    setSaving(true);
+    setApiError("");
+    try {
+      const { thumbnail, ...payload } = form;
+      const saved = await updateTemplate(templateId, payload, selectedMarketId);
+      if (thumbnail) await uploadTemplateThumbnail(templateId, thumbnail, selectedMarketId);
+      setTemplate((current) => ({ ...current, name: saved.name, type: saved.template_type, recommendation: saved.description || "", status: saved.is_active ? "Aktif" : "Pasif", isGlobal: saved.is_global, raw: saved, capacity: `${saved.config_json?.slot_count || "-"} ürün`, maxProductsPerPage: saved.config_json?.slot_count || "-" }));
+      setEditing(false);
+      setRawMessage("Şablon değişiklikleri kaydedildi.");
+      await loadPreview();
+    } catch (error) {
+      setApiError(error.status === 409 ? "Bu isimle bir şablon zaten mevcut." : (error.message || "Şablon kaydedilemedi."));
+    } finally { setSaving(false); }
+  }
+
+  function openEditor() {
+    if (canEdit) setEditing(true);
+  }
+
   return (
     <>
       <PageHeader
@@ -97,10 +124,7 @@ export function TemplateDetail({ templateId }) {
             <>
               <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
               <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
-              <Button onClick={() => setMessage("Şablon kopyası oluşturuldu.")}>Kopyala</Button>
-              <Button variant="primary" onClick={() => setMessage("Düzenleme paneli bu fazda temsilidir.")}>
-                Düzenle
-              </Button>
+              {canEdit ? <Button variant="primary" onClick={openEditor}>Düzenle</Button> : null}
             </>
           ) : null
         }
@@ -177,6 +201,7 @@ export function TemplateDetail({ templateId }) {
           </Card>
         ) : null}
       </section>
+      {canEdit && isEditing ? <TemplateBuilderModal template={template.raw || template} presets={presets} busy={isSaving} error={apiError} onClose={() => setEditing(false)} onSave={saveTemplate} /> : null}
     </>
   );
 }

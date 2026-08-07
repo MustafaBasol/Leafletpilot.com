@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { canCreateExports, canMutateCampaigns, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { campaignProducts, findCampaignById, generatedFiles } from "../data/mockData.js";
@@ -62,6 +62,9 @@ const exportJobTypeLabels = {
   regenerate_preview: "Önizlemeyi yenile",
   send_files: "Dosya gönderimi",
 };
+
+const PREVIEW_PAGE_WIDTH = 1240;
+const PREVIEW_PAGE_HEIGHT = 1754;
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -188,12 +191,23 @@ export function CampaignDetail({ campaignId }) {
   const previewViewportRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewMode, setPreviewMode] = useState("fit");
   const [isEditing, setEditing] = useState(false);
   const [editError, setEditError] = useState("");
   const [isSavingEdit, setSavingEdit] = useState(false);
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
   const canGenerateExports = canCreateExports();
+
+  const measurePreview = useCallback(() => {
+    const element = previewViewportRef.current;
+    if (!element) return;
+    const styles = getComputedStyle(element);
+    const availableWidth = element.clientWidth - (parseFloat(styles.paddingLeft) || 0) - (parseFloat(styles.paddingRight) || 0);
+    const availableHeight = element.clientHeight - (parseFloat(styles.paddingTop) || 0) - (parseFloat(styles.paddingBottom) || 0);
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+    setFitScale(Math.min(availableWidth / PREVIEW_PAGE_WIDTH, availableHeight / PREVIEW_PAGE_HEIGHT));
+  }, []);
 
   async function loadCampaign() {
     if (!isRealApiEnabled) return;
@@ -240,16 +254,26 @@ export function CampaignDetail({ campaignId }) {
   useEffect(() => {
     const element = previewViewportRef.current;
     if (!element) return undefined;
-    const resize = () => {
-      const parent = element.parentElement;
-      const rect = parent?.getBoundingClientRect();
-      if (rect) setFitScale(Math.min(rect.width / 1240, rect.height / 1754));
+    measurePreview();
+    const observer = new ResizeObserver(measurePreview);
+    observer.observe(element);
+    window.addEventListener("resize", measurePreview);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measurePreview);
     };
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(element.parentElement || element);
-    return () => observer.disconnect();
-  }, [preview?.html]);
+  }, [preview?.html, measurePreview]);
+
+  function restoreFit() {
+    setPreviewMode("fit");
+    setPreviewZoom(1);
+    requestAnimationFrame(measurePreview);
+  }
+
+  function changeZoom(delta) {
+    setPreviewMode("manual");
+    setPreviewZoom((value) => Math.min(2, Math.max(0.5, Number((value + delta).toFixed(2)))));
+  }
 
   async function runRealAction(key, action, successMessage) {
     try {
@@ -467,14 +491,16 @@ export function CampaignDetail({ campaignId }) {
               {preview?.html ? (
                 <>
                   <div className="preview-control-actions" aria-label="Önizleme yakınlaştırma kontrolleri">
-                    <Button onClick={() => setPreviewZoom(1)}>Sayfaya sığdır</Button>
-                    <Button disabled={previewZoom <= 0.5} onClick={() => setPreviewZoom((value) => Math.max(0.5, value - 0.1))}>−</Button>
-                    <span className="preview-zoom-label">{Math.round(previewZoom * 100)}%</span>
-                    <Button disabled={previewZoom >= 2} onClick={() => setPreviewZoom((value) => Math.min(2, value + 0.1))}>+</Button>
-                    <Button onClick={() => setPreviewZoom(1)}>Sıfırla</Button>
+                    <Button onClick={restoreFit}>Sayfaya sığdır</Button>
+                    <Button disabled={previewZoom <= 0.5} onClick={() => changeZoom(-0.1)}>−</Button>
+                    <span className="preview-zoom-label">{Math.round(fitScale * previewZoom * 100)}%</span>
+                    <Button disabled={previewZoom >= 2} onClick={() => changeZoom(0.1)}>+</Button>
+                    <Button onClick={restoreFit}>Sıfırla</Button>
                   </div>
-                  <div className={`campaign-preview-viewport ${previewZoom > 1 ? "is-zoomed" : ""}`}>
-                    <iframe ref={previewViewportRef} className="campaign-preview-iframe" style={{ transform: `scale(${fitScale * previewZoom})` }} sandbox="" srcDoc={preview.html} title={`${campaign.name} önizleme`} />
+                  <div ref={previewViewportRef} className={`campaign-preview-viewport ${previewMode === "manual" ? "is-zoomed" : "is-fit"}`}>
+                    <div className="campaign-preview-page-box" style={{ width: PREVIEW_PAGE_WIDTH * fitScale * previewZoom, height: PREVIEW_PAGE_HEIGHT * fitScale * previewZoom }}>
+                      <iframe className="campaign-preview-iframe" style={{ transform: `scale(${fitScale * previewZoom})` }} sandbox="" srcDoc={preview.html} title={`${campaign.name} önizleme`} />
+                    </div>
                   </div>
                 </>
               ) : (
