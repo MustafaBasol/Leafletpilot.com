@@ -6,10 +6,12 @@ real HTTP surface instead of calling route functions or catalog services.
 """
 
 from pathlib import Path
-from uuid import uuid4
+import io
+from uuid import UUID, uuid4
 
 import pytest
 import httpx
+from PIL import Image
 from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.core.security import create_access_token, create_platform_access_token, hash_password
@@ -49,6 +51,20 @@ async def _seed(prefix: str) -> dict:
         return {"admin": admin, "markets": markets, "users": users, "categories": categories, "brands": brands, "products": products}
 
 
+def _png_upload() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGBA", (80, 120), (230, 40, 70, 180)).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _image_upload(image_format: str) -> bytes:
+    output = io.BytesIO()
+    mode = "RGBA" if image_format in {"PNG", "WEBP"} else "RGB"
+    color = (230, 40, 70, 180) if mode == "RGBA" else (230, 40, 70)
+    Image.new(mode, (80, 120), color).save(output, format=image_format)
+    return output.getvalue()
+
+
 @pytest.mark.asyncio
 async def test_market_image_upload_authorization_and_scope_acceptance() -> None:
     if AsyncSessionLocal is None:
@@ -68,11 +84,20 @@ async def test_market_image_upload_authorization_and_scope_acceptance() -> None:
     other_market_headers = {"Authorization": f"Bearer {create_access_token(str(seeded['users'][1].id))}", "X-Market-Id": str(seeded["markets"][1].id)}
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
     adopted_id = str((await client.get("/api/catalog/my-products", headers=admin_headers)).json()["items"][0]["id"])
-    body = b"\x89PNG\r\n\x1a\nphase-image"
+    body = _png_upload()
     try:
         uploaded = await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=body)
         assert uploaded.status_code == 200
         assert uploaded.json()["image_override_active"] is True
+        assert uploaded.json()["image_url"].endswith(f"/{adopted_id}/image/content")
+        assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content", headers=admin_headers)).status_code == 200
+        assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content", headers=other_market_headers)).status_code == 404
+        assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content")).status_code == 401
+
+        async with AsyncSessionLocal() as session:
+            uploaded_row = await session.get(MarketProduct, UUID(adopted_id))
+            immutable_flyer_path = settings.local_storage_path / uploaded_row.image_storage_key
+            assert "/flyer/" in uploaded_row.image_storage_key.replace("\\", "/")
 
         async with AsyncSessionLocal() as session:
             market = await session.get(Market, seeded["markets"][0].id)
@@ -86,7 +111,9 @@ async def test_market_image_upload_authorization_and_scope_acceptance() -> None:
         other_id = str((await client.get("/api/catalog/my-products", headers=other_market_headers)).json()["items"][0]["id"])
         assert (await client.post(f"/api/catalog/my-products/{other_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=body)).status_code == 404
         assert (await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**admin_headers, "Content-Type": "image/gif"}, content=b"GIF89a")).status_code == 415
+        assert (await client.post(f"/api/catalog/my-products/{adopted_id}/image", headers={**admin_headers, "Content-Type": "image/png"}, content=b"\x89PNG\r\n\x1a\ncorrupt")).status_code == 422
         assert (await client.delete(f"/api/catalog/my-products/{adopted_id}/image", headers=admin_headers)).status_code == 204
+        assert immutable_flyer_path.is_file()  # frozen snapshot references remain renderable
         restored = (await client.get("/api/catalog/my-products", headers=admin_headers)).json()["items"]
         assert next(item for item in restored if item["id"] == adopted_id)["image_url"] == "https://example.test/global-product.png"
     finally:
@@ -166,7 +193,11 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     product_id = str(product.id)
     storage_root = Path(settings.local_storage_path)
     files_before_upload = {path for path in storage_root.rglob("*") if path.is_file()} if storage_root.exists() else set()
-    valid_images = [("image/png", b"\x89PNG\r\n\x1a\nphase-c"), ("image/jpeg", b"\xff\xd8\xffphase-c"), ("image/webp", b"RIFFxxxxWEBPphase-c")]
+    valid_images = [
+        ("image/png", _image_upload("PNG")),
+        ("image/jpeg", _image_upload("JPEG")),
+        ("image/webp", _image_upload("WEBP")),
+    ]
     for mime, body in valid_images:
         response = await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": mime}, content=body, params={"primary": mime == "image/png"})
         assert response.status_code == 201
@@ -175,7 +206,7 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
         assert "storage_key" not in payload
         assert payload["is_primary"] is (mime == "image/png")
     files_after_upload = {path for path in storage_root.rglob("*") if path.is_file()}
-    assert len(files_after_upload - files_before_upload) == 3
+    assert len(files_after_upload - files_before_upload) == 6  # original + canonical flyer asset
 
     before_failed = (await client.get(f"/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]["images"]
     assert (await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": "image/gif"}, content=b"GIF89a")).status_code == 415
@@ -191,11 +222,14 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     assert primary.status_code == 200 and primary.json()["is_primary"] is True
     fresh = (await client.get("/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]
     assert next(image for image in fresh["images"] if str(image["id"]) == primary_id)["is_primary"] is True
+    created_images = [image for image in fresh["images"] if image["id"] in created_image_ids]
+    assert all(0 < image["width"] <= 1600 and 0 < image["height"] <= 1600 for image in created_images)
+    assert any(image["has_transparent_background"] is True for image in created_images)
     assert all("storage_key" not in image and "url" not in image for image in fresh["images"])
     assert (await client.get(f"/api/platform/catalog/products/{product_id}/images/{created_image_ids[2]}/content", headers=platform_headers)).status_code == 200
     assert (await client.delete(f"/api/platform/catalog/products/{product_id}/images/{created_image_ids[2]}", headers=platform_headers)).status_code == 204
     files_after_remove = {path for path in storage_root.rglob("*") if path.is_file()}
-    assert len(files_after_upload - files_after_remove) == 1
+    assert files_after_remove == files_after_upload  # immutable assets may be referenced by snapshots
     assert (await client.get(f"/api/platform/catalog/products/{product_id}/images/{created_image_ids[2]}/content", headers=platform_headers)).status_code == 404
     assert (await client.delete(f"/api/platform/catalog/products/{product_id}/images/{primary_id}", headers=platform_headers)).status_code == 204
     remaining = (await client.get("/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]["images"]

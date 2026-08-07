@@ -18,6 +18,7 @@ from app.schemas.market_product import (
 )
 from app.schemas.product import ProductAliasCreate, ProductAliasRead, ProductCreate, ProductRead, ProductUpdate
 from app.services import catalog as catalog_service
+from app.services.image_pipeline import read_bounded_image_body
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -312,7 +313,9 @@ async def adopt_shared_product(product_id: UUID, payload: MarketProductAdoptCrea
 @router.post("/my-products/{market_product_id}/image", response_model=ResolvedMarketProductRead, status_code=status.HTTP_200_OK)
 async def upload_market_image(market_product_id: UUID, request: Request, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), session: AsyncSession = Depends(get_catalog_session)):
     mime_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
-    row = await catalog_service.upload_market_product_image(session, market_product_id, market_id, await request.body(), mime_type)
+    row = await catalog_service.upload_market_product_image(
+        session, market_product_id, market_id, await read_bounded_image_body(request), mime_type
+    )
     return catalog_service.resolved_market_product(row)
 
 

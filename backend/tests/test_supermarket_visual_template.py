@@ -22,8 +22,11 @@ def test_supermarket_layouts_render_explicit_grids(slug, columns, rows, count):
     assert f"grid-template-rows:repeat({rows}" in html
     assert html.count('class="product-card"') == count
     assert html.count('class="price-panel"') == count
+    assert html.count('class="promo-card-image"') == count
     assert 'class="price-minor"' in html
     assert 'class="product-unit"' in html
+    assert "object-fit:contain" in html
+    assert 'grid-template-areas:"price badge" "price old"' in html
 
 
 def test_supermarket_defaults_and_header_assets_are_available():

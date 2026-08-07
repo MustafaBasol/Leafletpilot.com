@@ -261,7 +261,8 @@ def test_preview_renderer_uses_product_count_compositions_and_localized_copy() -
     assert "Weekly offers" in english and "While stocks last." in english
     assert "min-height:0" in turkish  # grid containment is allowed; cards themselves are content-sized.
     assert ".product-card{display:flex;flex-direction:column;align-self:start" in turkish
-    assert ".price-row{display:flex;min-width:0;width:100%;align-items:flex-start;flex-direction:column;gap:2px;flex-wrap:wrap;margin-top:8px" in turkish
+    assert ".product-stage{width:100%" in turkish
+    assert ".price-row{display:flex;min-width:0;width:100%;align-items:flex-start;flex-direction:column;gap:4px" in turkish
 
 
 def test_preview_and_export_share_the_same_render_state() -> None:
