@@ -65,7 +65,7 @@ export function Templates() {
       setActionError("");
       await loadTemplates();
       setBuilderTemplate(undefined);
-      setSuccess(`${saved.name} şablonu kaydedildi ve seçildi.`);
+      setSuccess(`${saved.name} şablonu ${builderTemplate ? "güncellendi" : "kaydedildi"}.`);
     } catch (error) {
       setActionError(error.status === 409 ? "Bu isimle bir şablon zaten mevcut." : (error.message || "Şablon kaydedilemedi."));
     } finally {

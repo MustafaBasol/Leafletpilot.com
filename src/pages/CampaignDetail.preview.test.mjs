@@ -42,3 +42,11 @@ test("fit reset and resize use the viewport rather than the adjacent grid panel"
   assert.match(page, /setPreviewZoom\(1\)/);
   assert.match(styles, /\.campaign-preview-page-box[\s\S]*flex: 0 0 auto/);
 });
+
+test("preview remeasurement is reused without synthetic resize events", () => {
+  assert.match(page, /const measurePreview = useCallback/);
+  assert.match(page, /new ResizeObserver\(measurePreview\)/);
+  assert.match(page, /window\.addEventListener\("resize", measurePreview\)/);
+  assert.match(page, /requestAnimationFrame\(measurePreview\)/);
+  assert.doesNotMatch(page, /dispatchEvent\(new Event\("resize"\)\)/);
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { canCreateExports, canMutateCampaigns, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { campaignProducts, findCampaignById, generatedFiles } from "../data/mockData.js";
@@ -199,6 +199,16 @@ export function CampaignDetail({ campaignId }) {
   const canEditCampaigns = canMutateCampaigns();
   const canGenerateExports = canCreateExports();
 
+  const measurePreview = useCallback(() => {
+    const element = previewViewportRef.current;
+    if (!element) return;
+    const styles = getComputedStyle(element);
+    const availableWidth = element.clientWidth - (parseFloat(styles.paddingLeft) || 0) - (parseFloat(styles.paddingRight) || 0);
+    const availableHeight = element.clientHeight - (parseFloat(styles.paddingTop) || 0) - (parseFloat(styles.paddingBottom) || 0);
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+    setFitScale(Math.min(availableWidth / PREVIEW_PAGE_WIDTH, availableHeight / PREVIEW_PAGE_HEIGHT));
+  }, []);
+
   async function loadCampaign() {
     if (!isRealApiEnabled) return;
 
@@ -244,22 +254,20 @@ export function CampaignDetail({ campaignId }) {
   useEffect(() => {
     const element = previewViewportRef.current;
     if (!element) return undefined;
-    const resize = () => {
-      const styles = getComputedStyle(element);
-      const availableWidth = element.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
-      const availableHeight = element.clientHeight - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom);
-      setFitScale(Math.min(availableWidth / PREVIEW_PAGE_WIDTH, availableHeight / PREVIEW_PAGE_HEIGHT));
-    };
-    resize();
-    const observer = new ResizeObserver(resize);
+    measurePreview();
+    const observer = new ResizeObserver(measurePreview);
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [preview?.html]);
+    window.addEventListener("resize", measurePreview);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measurePreview);
+    };
+  }, [preview?.html, measurePreview]);
 
   function restoreFit() {
     setPreviewMode("fit");
     setPreviewZoom(1);
-    requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    requestAnimationFrame(measurePreview);
   }
 
   function changeZoom(delta) {

@@ -15,16 +15,26 @@ const toggles = [
   ["show_product_name", "Ürün adı"], ["show_package_size", "Paket boyutu"], ["show_footer", "Alt bilgi"],
 ];
 
-export function TemplateBuilderModal({ template, presets, busy, error, onClose, onSave }) {
-  const initial = useMemo(() => ({
+function buildInitialForm(template) {
+  return {
     name: template?.name || "", description: template?.description || "", category: template?.category || "Broşür",
     template_type: template?.template_type || "market", is_active: template?.is_active ?? true,
     config_json: { ...DEFAULT_CONFIG, ...(template?.config_json || {}) }, thumbnail: null,
-  }), [template]);
+  };
+}
+
+export function TemplateBuilderModal({ template, presets, busy, error, onClose, onSave }) {
+  const targetKey = template?.id ? `edit:${template.id}` : "create";
+  const initial = useMemo(() => buildInitialForm(template), [targetKey]);
   const [form, setForm] = useState(initial);
   const [submitted, setSubmitted] = useState(false);
   const dirty = JSON.stringify({ ...form, thumbnail: Boolean(form.thumbnail) }) !== JSON.stringify({ ...initial, thumbnail: false });
   const config = form.config_json;
+
+  useEffect(() => {
+    setForm(initial);
+    setSubmitted(false);
+  }, [initial]);
 
   useEffect(() => {
     const warn = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
@@ -43,6 +53,7 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
   }
   function submit(event) {
     event.preventDefault();
+    if (busy) return;
     setSubmitted(true);
     if (!form.name.trim() || !form.category.trim()) return;
     onSave({ ...form, name: form.name.trim(), description: form.description.trim() || null, category: form.category.trim(), is_global: false });

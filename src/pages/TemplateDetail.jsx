@@ -35,6 +35,7 @@ export function TemplateDetail({ templateId }) {
   const [presets, setPresets] = useState({ items: [], page_formats: [], price_styles: [], badge_styles: [] });
   const selectedMarketId = getSelectedMarketId();
   const canManage = canManageTemplates();
+  const canEdit = canManage && !template.isGlobal;
   const formats = outputFormats.filter((format) => template.formats.includes(format.label));
 
   function setMessage(nextMessage) {
@@ -93,7 +94,7 @@ export function TemplateDetail({ templateId }) {
   }
 
   async function saveTemplate(form) {
-    if (isSaving) return;
+    if (!canEdit || isSaving) return;
     setSaving(true);
     setApiError("");
     try {
@@ -109,6 +110,10 @@ export function TemplateDetail({ templateId }) {
     } finally { setSaving(false); }
   }
 
+  function openEditor() {
+    if (canEdit) setEditing(true);
+  }
+
   return (
     <>
       <PageHeader
@@ -119,9 +124,7 @@ export function TemplateDetail({ templateId }) {
             <>
               <Button onClick={() => setMessage("Bu şablon varsayılan olarak işaretlendi.")}>Varsayılan Yap</Button>
               <Button onClick={() => setMessage("Önizleme oluşturma simüle edildi.")}>Önizleme Oluştur</Button>
-              <Button variant="primary" disabled={template.isGlobal} onClick={() => setEditing(true)}>
-                Düzenle
-              </Button>
+              {canEdit ? <Button variant="primary" onClick={openEditor}>Düzenle</Button> : null}
             </>
           ) : null
         }
@@ -198,7 +201,7 @@ export function TemplateDetail({ templateId }) {
           </Card>
         ) : null}
       </section>
-      {isEditing ? <TemplateBuilderModal template={template.raw || template} presets={presets} busy={isSaving} error={apiError} onClose={() => setEditing(false)} onSave={saveTemplate} /> : null}
+      {canEdit && isEditing ? <TemplateBuilderModal template={template.raw || template} presets={presets} busy={isSaving} error={apiError} onClose={() => setEditing(false)} onSave={saveTemplate} /> : null}
     </>
   );
 }
