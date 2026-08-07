@@ -40,3 +40,9 @@ test("template detail gates editing for permissions and global templates", () =>
 test("thumbnail upload falls back when the browser omits the file content type", () => {
   assert.match(api, /file\.type \|\| "application\/octet-stream"/);
 });
+
+test("global and market template previews use the hash-based SPA detail route", () => {
+  assert.doesNotMatch(page, /window\.location\.href\s*=\s*`\/templates\//);
+  const previewLinks = page.match(/<Button href=\{`#\/templates\/\$\{template\.id\}`\}>Önizle<\/Button>/g) || [];
+  assert.equal(previewLinks.length, 2);
+});
