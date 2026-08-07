@@ -7,7 +7,18 @@ import { adoptTemplate, createCustomTemplate, getMyTemplates, getSharedTemplates
 import { Button, ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
 import { TemplateBuilderModal } from "../components/templates/TemplateBuilderModal.jsx";
 
-const fallbackPresets = { items: [{ slug: "promo-4", name: "Promo 4", columns: 2, rows: 2 }], page_formats: [{ value: "a4_portrait", label: "A4 dikey" }], price_styles: ["bold"], badge_styles: ["pill"] };
+const fallbackPresets = {
+  items: [
+    { slug: "promo-4", name: "Promo 4", columns: 2, rows: 2 },
+    { slug: "supermarket-promo-4", name: "Supermarket Promo 4", columns: 2, rows: 2 },
+    { slug: "supermarket-promo-9", name: "Supermarket Promo 9", columns: 3, rows: 3 },
+    { slug: "supermarket-promo-16", name: "Supermarket Promo 16", columns: 4, rows: 4 },
+  ],
+  page_formats: [{ value: "a4_portrait", label: "A4 dikey" }],
+  price_styles: ["bold", "panel", "ticket", "split"], badge_styles: ["pill", "sticker", "burst", "ribbon"],
+  header_styles: ["burst", "band", "minimal"], card_styles: ["shadow", "outlined", "rounded"],
+  image_treatments: ["stage", "cutout", "photo"],
+};
 
 export function Templates() {
   const [items, setItems] = useState(() => (isRealApiEnabled ? [] : mockTemplates));

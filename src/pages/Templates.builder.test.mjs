@@ -79,6 +79,26 @@ test("builder exposes canonical settings, preview, dirty warning, and duplicate 
   assert.match(page, /Bu isimle bir şablon zaten mevcut/);
 });
 
+test("builder exposes the constrained supermarket visual contract", () => {
+  for (const key of [
+    "background_start", "background_end", "card_background", "card_border_color",
+    "price_panel_background", "price_color", "header_style", "card_style",
+    "price_style", "badge_style", "image_treatment", "show_payment_icons",
+    "show_additional_logos", "show_stock_message", "show_footer_note",
+  ]) assert.match(builder, new RegExp(key));
+  for (const density of ["editorial", "weekly", "compact"]) assert.match(builder, new RegExp(density));
+  assert.match(builder, /data-density-profile/);
+  assert.match(builder, /template-preview-price/);
+  assert.doesNotMatch(builder, /dangerouslySetInnerHTML/);
+  for (const capacity of [4, 9, 16]) assert.match(page, new RegExp(`supermarket-promo-${capacity}`));
+});
+
+test("old templates receive safe semantic defaults and legacy color mapping", () => {
+  assert.match(builder, /\.\.\.DEFAULT_CONFIG, \.\.\.stored/);
+  assert.match(builder, /stored\.background_start \|\| stored\.primary_color \|\| DEFAULT_CONFIG\.background_start/);
+  assert.match(builder, /stored\.background_end \|\| stored\.secondary_color \|\| DEFAULT_CONFIG\.background_end/);
+});
+
 test("builder resets only when the create or edit target changes", () => {
   assert.match(builder, /const targetKey = template\?\.id \? `edit:\$\{template\.id\}` : "create"/);
   assert.match(builder, /useMemo\(\(\) => buildInitialForm\(template\), \[targetKey\]\)/);
