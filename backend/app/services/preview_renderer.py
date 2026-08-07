@@ -60,7 +60,7 @@ def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetim
         return html.replace(">PROMO</p>", f">{subtitle}</p>", 1)
     compact = family == "compact-weekly" or slug == "compact-weekly"
     if slug in LAYOUT_ALIASES:
-        slug = LAYOUT_ALIASES[slug]
+        slug = str(config.get("grid_preset") or LAYOUT_ALIASES[slug])
     if slug not in LAYOUTS:
         slug = {9: "promo-9", 16: "promo-16"}.get(int(config.get("slot_count") or 4), "promo-4")
     items = list(payload.get("items") or [])

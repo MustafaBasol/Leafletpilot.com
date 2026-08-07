@@ -6,6 +6,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 Color = str
+GridPreset = Literal["promo-4", "promo-6", "promo-9", "promo-12", "promo-16"]
+
+GRID_PRESETS: dict[int, tuple[GridPreset, int, int]] = {
+    4: ("promo-4", 2, 2),
+    6: ("promo-6", 2, 3),
+    9: ("promo-9", 3, 3),
+    12: ("promo-12", 3, 4),
+    16: ("promo-16", 4, 4),
+}
 
 
 class TemplateConfig(BaseModel):
@@ -13,7 +22,10 @@ class TemplateConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    layout: Literal["promo-4", "promo-6", "promo-9", "promo-12", "promo-16"] = "promo-4"
+    # `layout` is the renderer/template family. It deliberately remains open so
+    # persisted families continue to round-trip as new renderers are introduced.
+    layout: str = Field(default="promo-4", min_length=1)
+    grid_preset: GridPreset | None = None
     columns: int = Field(default=2, ge=1, le=4)
     rows: int = Field(default=2, ge=1, le=4)
     slot_count: int = Field(default=4, ge=1, le=16)
@@ -34,15 +46,31 @@ class TemplateConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_legacy_capacity(cls, value):
-        if not isinstance(value, dict) or "slot_count" not in value:
+        if not isinstance(value, dict):
             return value
-        capacity = int(value["slot_count"])
-        grids = {4: ("promo-4", 2, 2), 6: ("promo-6", 2, 3), 9: ("promo-9", 3, 3), 12: ("promo-12", 3, 4), 16: ("promo-16", 4, 4)}
-        if capacity not in grids:
-            raise ValueError("Ürün kapasitesi 4, 6, 9, 12 veya 16 olmalıdır.")
-        layout, columns, rows = grids[capacity]
+
         normalized = dict(value)
-        normalized.setdefault("layout", layout)
+        layout = normalized.get("layout")
+        preset = normalized.get("grid_preset")
+        if preset is None and layout in {grid[0] for grid in GRID_PRESETS.values()}:
+            preset = layout
+        if preset is None and layout in {"supermarket-promo-4", "supermarket-promo-9", "supermarket-promo-16"}:
+            preset = layout.removeprefix("supermarket-")
+        if preset is not None:
+            normalized.setdefault("grid_preset", preset)
+
+        capacity = normalized.get("slot_count")
+        if capacity is None and preset is not None:
+            capacity = int(str(preset).removeprefix("promo-"))
+            normalized["slot_count"] = capacity
+        if capacity is None:
+            return normalized
+        capacity = int(capacity)
+        if capacity not in GRID_PRESETS:
+            raise ValueError("Ürün kapasitesi 4, 6, 9, 12 veya 16 olmalıdır.")
+        canonical_preset, columns, rows = GRID_PRESETS[capacity]
+        normalized.setdefault("layout", canonical_preset)
+        normalized.setdefault("grid_preset", canonical_preset)
         normalized.setdefault("columns", columns)
         normalized.setdefault("rows", rows)
         return normalized
@@ -52,8 +80,9 @@ class TemplateConfig(BaseModel):
         expected = self.columns * self.rows
         if self.slot_count != expected:
             raise ValueError("Ürün kapasitesi sütun × satır değerine eşit olmalıdır.")
-        layout_capacity = int(self.layout.removeprefix("promo-"))
-        if layout_capacity != self.slot_count:
+        canonical_layouts = {grid[0] for grid in GRID_PRESETS.values()}
+        preset = self.grid_preset or (self.layout if self.layout in canonical_layouts else None)
+        if preset is not None and int(preset.removeprefix("promo-")) != self.slot_count:
             raise ValueError("Düzen ön ayarı ile ürün kapasitesi uyuşmuyor.")
         return self
 
