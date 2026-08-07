@@ -1,4 +1,4 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -15,6 +15,7 @@ from app.schemas.platform_catalog import (
     PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, slugify
+from app.services.image_pipeline import read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
 from app.services.rendering import storage_path_for_key
 
 router = APIRouter(prefix="/platform/catalog", tags=["platform-catalog"])
@@ -236,18 +237,25 @@ async def deactivate_product(product_id: UUID, _: PlatformAdmin = admin, session
 @router.post("/products/{product_id}/images", response_model=dict, status_code=201)
 async def upload_image(product_id: UUID, request: Request, primary: bool = False, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     row = await _global(session, Product, product_id)
-    allowed = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
-    mime_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
-    if mime_type not in allowed: raise HTTPException(415, "Only PNG, JPEG, and WebP images are allowed.")
-    content = await request.body()
-    signatures = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
-    if len(content) > 10 * 1024 * 1024: raise HTTPException(413, "Image must be 10 MiB or smaller.")
-    if not content.startswith(signatures[mime_type]) or (mime_type == "image/webp" and content[8:12] != b"WEBP"):
-        raise HTTPException(422, "Image signature does not match the declared MIME type.")
-    key = f"global/catalog/{row.id}/{uuid4()}{allowed[mime_type]}"
-    path = storage_path_for_key(key); path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
+    mime_type = require_supported_image_mime_type(request.headers.get("content-type", ""))
+    content = await read_bounded_image_body(request)
+    asset = store_flyer_image(
+        namespace=f"global/catalog/{row.id}",
+        original_content=content,
+        declared_mime_type=mime_type,
+    )
     if primary: await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == row.id).values(is_primary=False))
-    image = ProductImage(product_id=row.id, storage_key=key, mime_type=mime_type, size_bytes=len(content), quality_status="needs_review", is_primary=primary)
+    image = ProductImage(
+        product_id=row.id,
+        storage_key=asset.storage_key,
+        mime_type=asset.mime_type,
+        size_bytes=asset.size_bytes,
+        width=asset.width,
+        height=asset.height,
+        has_transparent_background=asset.has_alpha,
+        quality_status="needs_review",
+        is_primary=primary,
+    )
     session.add(image); await session.commit(); await session.refresh(image)
     return {"id": image.id, "product_id": row.id, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": image.is_primary}
 
@@ -280,7 +288,4 @@ async def image_content(product_id: UUID, image_id: UUID, _: PlatformAdmin = adm
 async def remove_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     await _global(session, Product, product_id); image = await session.scalar(select(ProductImage).where(ProductImage.id == image_id, ProductImage.product_id == product_id))
     if image is None: raise HTTPException(404, "Image not found.")
-    if image.storage_key:
-        path = storage_path_for_key(image.storage_key)
-        if path.exists(): path.unlink()
     await session.delete(image); await session.commit()

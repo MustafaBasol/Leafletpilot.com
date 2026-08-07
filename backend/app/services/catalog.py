@@ -16,6 +16,7 @@ from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
+from app.services.image_pipeline import store_flyer_image
 
 PUNCTUATION_RE = re.compile(r"[!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-]+")
 SPACES_RE = re.compile(r"\s+")
@@ -573,45 +574,27 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
 
 
 async def upload_market_product_image(session: AsyncSession, market_product_id: UUID, market_id: UUID, content: bytes, mime_type: str) -> MarketProduct:
-    from app.services.rendering import storage_path_for_key
     row = await get_market_product(session, market_product_id, market_id)
     market = await session.get(Market, market_id)
     require_capability(market, "product_image_override")
-    allowed = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
-    signatures = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
-    if mime_type not in allowed:
-        raise HTTPException(status_code=415, detail="Only PNG, JPEG, and WebP images are allowed.")
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image must be 10 MiB or smaller.")
-    if not content.startswith(signatures[mime_type]) or (mime_type == "image/webp" and content[8:12] != b"WEBP"):
-        raise HTTPException(status_code=422, detail="Image signature does not match the declared MIME type.")
-    key = f"markets/{market_id}/catalog/{row.id}/{__import__('uuid').uuid4()}{allowed[mime_type]}"
-    path = storage_path_for_key(key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    old_key = row.image_storage_key
-    row.image_storage_key, row.image_mime_type, row.image_quality_status = key, mime_type, "needs_review"
-    try:
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        path.unlink(missing_ok=True)
-        raise
-    if old_key:
-        storage_path_for_key(old_key).unlink(missing_ok=True)
+    asset = store_flyer_image(
+        namespace=f"markets/{market_id}/catalog/{row.id}",
+        original_content=content,
+        declared_mime_type=mime_type,
+    )
+    row.image_storage_key = asset.storage_key
+    row.image_mime_type = asset.mime_type
+    row.image_quality_status = "good"
+    await session.commit()
     return await get_market_product(session, market_product_id, market_id)
 
 
 async def remove_market_product_image(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> None:
-    from app.services.rendering import storage_path_for_key
     row = await get_market_product(session, market_product_id, market_id)
     market = await session.get(Market, market_id)
     require_capability(market, "product_image_override")
-    old_key = row.image_storage_key
     row.image_storage_key = row.image_url = row.image_mime_type = row.image_quality_status = None
     await session.commit()
-    if old_key:
-        storage_path_for_key(old_key).unlink(missing_ok=True)
 
 
 def _global_mutation_forbidden() -> HTTPException:
