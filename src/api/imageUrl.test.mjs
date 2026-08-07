@@ -44,6 +44,32 @@ test("relative API image URLs resolve against the API base and use the bearer to
   }
 });
 
+test("authenticated image cache keys produce deterministic, query-safe request URLs", async () => {
+  const restore = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, blob: async () => new Blob(["image"], { type: "image/png" }) };
+  };
+
+  try {
+    const imageUrl = "/api/catalog/my-products/1/image/content?size=thumb&v=stale";
+    await fetchImageSource(imageUrl, { marketId: "market-anadolu", cacheKey: "product:1" });
+    await fetchImageSource(imageUrl, { marketId: "market-anadolu", cacheKey: "product:1" });
+    await fetchImageSource(imageUrl, { marketId: "market-anadolu", cacheKey: "product:2" });
+
+    assert.equal(requests[0].url, "http://127.0.0.1:8000/api/catalog/my-products/1/image/content?size=thumb&v=product%3A1");
+    assert.equal(requests[1].url, requests[0].url);
+    assert.equal(requests[2].url, "http://127.0.0.1:8000/api/catalog/my-products/1/image/content?size=thumb&v=product%3A2");
+    assert.equal(requests.every(({ options }) => options.headers.Authorization === "Bearer test-token"), true);
+    assert.equal(requests.every(({ options }) => options.headers["X-Market-Id"] === "market-anadolu"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restore();
+  }
+});
+
 test("absolute external image URLs render directly without sending the access token", async () => {
   const restore = installBrowserGlobals();
   const originalFetch = globalThis.fetch;
@@ -52,8 +78,8 @@ test("absolute external image URLs render directly without sending the access to
   };
 
   try {
-    assert.deepEqual(await fetchImageSource("https://cdn.example.test/product.png"), {
-      src: "https://cdn.example.test/product.png",
+    assert.deepEqual(await fetchImageSource("https://cdn.example.test/product.png?size=large", { cacheKey: "ignored" }), {
+      src: "https://cdn.example.test/product.png?size=large",
       revoke: false,
     });
   } finally {

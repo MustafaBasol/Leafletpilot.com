@@ -53,3 +53,11 @@ test("catalog filter toolbar keeps accessible source and status selects", () => 
   assert.match(source, /aria-label="Durum filtresi"/);
   assert.match(source, /<FilterBar/);
 });
+
+test("successful image replacement changes the thumbnail cache key", () => {
+  const upload = source.slice(source.indexOf("async function upload"), source.indexOf("async function removeImage"));
+  assert.match(upload, /await catalogApi\.uploadProductOverride/);
+  assert.match(upload, /setImageRevision\(\(current\) => current \+ 1\)/);
+  assert.match(source, /refreshKey=\{`\$\{item\.id\}:\$\{imageRevision\}`\}/);
+  assert.match(source, /refreshKey=\{`\$\{editing\.id\}:\$\{imageRevision\}`\}/);
+});

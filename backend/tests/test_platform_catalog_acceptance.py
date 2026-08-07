@@ -90,7 +90,11 @@ async def test_market_image_upload_authorization_and_scope_acceptance() -> None:
         assert uploaded.status_code == 200
         assert uploaded.json()["image_override_active"] is True
         assert uploaded.json()["image_url"].endswith(f"/{adopted_id}/image/content")
-        assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content", headers=admin_headers)).status_code == 200
+        image_content = await client.get(
+            f"/api/catalog/my-products/{adopted_id}/image/content", headers=admin_headers
+        )
+        assert image_content.status_code == 200
+        assert image_content.headers["cache-control"] == "no-store"
         assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content", headers=other_market_headers)).status_code == 404
         assert (await client.get(f"/api/catalog/my-products/{adopted_id}/image/content")).status_code == 401
 
