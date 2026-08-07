@@ -66,3 +66,29 @@ def test_partial_update_preserves_explicit_legacy_renderer_key():
         "layout": "premium-market",
         "show_footer": False,
     }
+
+
+def test_supermarket_semantic_tokens_are_validated_without_arbitrary_css():
+    config = TemplateConfig(
+        layout="supermarket-promo-9",
+        background_start="#123456", background_end="#234567", card_background="#fff8e7",
+        card_border_color="#f1b900", price_panel_background="#ffd928", price_color="#c5161d",
+        header_style="band", card_style="outlined", price_style="ticket",
+        badge_style="ribbon", image_treatment="cutout", show_payment_icons=False,
+    )
+    assert config.slot_count == 9
+    assert (config.header_style, config.card_style, config.price_style, config.badge_style) == (
+        "band", "outlined", "ticket", "ribbon",
+    )
+    with pytest.raises(ValidationError):
+        TemplateConfig(layout="supermarket-promo-4", background_start="red;position:fixed")
+    with pytest.raises(ValidationError):
+        TemplateConfig(layout="supermarket-promo-4", badge_style="custom-css")
+
+
+def test_old_supermarket_config_gets_safe_semantic_defaults():
+    config = TemplateConfig(layout="supermarket-promo-4", primary_color="#112233", secondary_color="#ffffff")
+    assert config.header_style == "burst"
+    assert config.card_style == "shadow"
+    assert config.image_treatment == "stage"
+    assert config.primary_color == "#112233"

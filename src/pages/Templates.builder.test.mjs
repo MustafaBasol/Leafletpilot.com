@@ -7,6 +7,7 @@ const page = readFileSync(new URL("./Templates.jsx", import.meta.url), "utf8");
 const builder = readFileSync(new URL("../components/templates/TemplateBuilderModal.jsx", import.meta.url), "utf8");
 const detail = readFileSync(new URL("./TemplateDetail.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../api/templateApi.js", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const pageAst = parse(page, { sourceType: "module", plugins: ["jsx"] });
 
 function walk(node, visit) {
@@ -77,6 +78,34 @@ test("builder exposes canonical settings, preview, dirty warning, and duplicate 
   assert.match(builder, /beforeunload/);
   assert.match(builder, /Kaydedilmemiş değişiklikler/);
   assert.match(page, /Bu isimle bir şablon zaten mevcut/);
+});
+
+test("builder exposes the constrained supermarket visual contract", () => {
+  for (const key of [
+    "background_start", "background_end", "card_background", "card_border_color",
+    "price_panel_background", "price_color", "header_style", "card_style",
+    "price_style", "badge_style", "image_treatment", "show_payment_icons",
+    "show_additional_logos", "show_stock_message", "show_footer_note",
+  ]) assert.match(builder, new RegExp(key));
+  for (const density of ["editorial", "weekly", "compact"]) assert.match(builder, new RegExp(density));
+  assert.match(builder, /data-density-profile/);
+  assert.match(builder, /template-preview-price/);
+  assert.doesNotMatch(builder, /dangerouslySetInnerHTML/);
+  assert.match(builder, /data-title-visible=\{String\(config\.show_header_title\)\}/);
+  assert.match(builder, /data-emphasis=\{densityName === "editorial"/);
+  assert.match(builder, /data-rhythm=/);
+  assert.match(builder, /data-image-stage=\{config\.image_treatment\}/);
+  assert.match(styles, /density-editorial .*article:first-child/);
+  assert.match(styles, /density-weekly .*article/);
+  assert.match(styles, /density-compact .*article/);
+  assert.match(styles, /border-bottom:1px solid color-mix/);
+  for (const capacity of [4, 9, 16]) assert.match(page, new RegExp(`supermarket-promo-${capacity}`));
+});
+
+test("old templates receive safe semantic defaults and legacy color mapping", () => {
+  assert.match(builder, /\.\.\.DEFAULT_CONFIG, \.\.\.stored/);
+  assert.match(builder, /stored\.background_start \|\| stored\.primary_color \|\| DEFAULT_CONFIG\.background_start/);
+  assert.match(builder, /stored\.background_end \|\| stored\.secondary_color \|\| DEFAULT_CONFIG\.background_end/);
 });
 
 test("builder resets only when the create or edit target changes", () => {

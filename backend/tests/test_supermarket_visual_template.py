@@ -3,15 +3,19 @@ from datetime import UTC, datetime
 import pytest
 
 from app.services.preview_renderer import render_render_payload_html
-from app.services.template_presets import SUPERMARKET_PRESETS, SUPERMARKET_VISUAL_DEFAULTS
+from app.services.template_presets import (
+    SUPERMARKET_DENSITY_PROFILES,
+    SUPERMARKET_PRESETS,
+    SUPERMARKET_VISUAL_DEFAULTS,
+)
 
 
-@pytest.mark.parametrize(("slug", "columns", "rows", "count"), [
-    ("supermarket-promo-4", 2, 2, 4),
-    ("supermarket-promo-9", 3, 3, 9),
-    ("supermarket-promo-16", 4, 4, 16),
+@pytest.mark.parametrize(("slug", "columns", "rows", "count", "density"), [
+    ("supermarket-promo-4", 2, 2, 4, "editorial"),
+    ("supermarket-promo-9", 3, 3, 9, "weekly"),
+    ("supermarket-promo-16", 4, 4, 16, "compact"),
 ])
-def test_supermarket_layouts_render_explicit_grids(slug, columns, rows, count):
+def test_supermarket_layouts_render_explicit_grids(slug, columns, rows, count, density):
     payload = {"template_slug": slug, "title": "Weekly deals", "items": [
         {"name": "Long product name " * 3 if i == 0 else f"Product {i}", "brand": "Brand", "price": "999999.99" if i == 1 else "1.99", "old_price": "2.49", "currency": "EUR", "quantity_label": "2 x 500g"}
         for i in range(count)
@@ -20,6 +24,9 @@ def test_supermarket_layouts_render_explicit_grids(slug, columns, rows, count):
     assert f"preview-{slug}" in html
     assert f"grid-template-columns:repeat({columns}" in html
     assert f"grid-template-rows:repeat({rows}" in html
+    assert f'data-density-profile="{density}"' in html
+    assert f'data-layout="{columns}x{rows}"' in html
+    assert f"density-{density}" in html
     assert html.count('class="product-card"') == count
     assert html.count('class="price-panel"') == count
     assert html.count('class="promo-card-image"') == count
@@ -27,6 +34,11 @@ def test_supermarket_layouts_render_explicit_grids(slug, columns, rows, count):
     assert 'class="product-unit"' in html
     assert "object-fit:contain" in html
     assert 'grid-template-areas:"price badge" "price old"' in html
+    first_card = html.index('<article class="product-card"')
+    assert first_card < html.index('class="promo-card-image"', first_card)
+    assert html.index('class="promo-card-image"', first_card) < html.index('class="price-panel"', first_card)
+    assert html.index('class="price-panel"', first_card) < html.index('class="brand-label"', first_card)
+    assert html.index('class="brand-label"', first_card) < html.index('class="product-name"', first_card)
 
 
 def test_supermarket_defaults_and_header_assets_are_available():
@@ -36,6 +48,58 @@ def test_supermarket_defaults_and_header_assets_are_available():
     assert "PROMO" in html and "01-07 July 2026" in html and "While stocks last" in html
     assert "price-panel" in html and "background:#ffd928" in html
     assert "image-placeholder" in html
+
+
+def test_density_profiles_are_explicit_and_materially_distinct():
+    editorial = SUPERMARKET_DENSITY_PROFILES["supermarket-promo-4"]
+    weekly = SUPERMARKET_DENSITY_PROFILES["supermarket-promo-9"]
+    compact = SUPERMARKET_DENSITY_PROFILES["supermarket-promo-16"]
+    assert editorial["image_height"] > weekly["image_height"] > compact["image_height"]
+    assert editorial["price_size"] > weekly["price_size"] > compact["price_size"]
+    assert editorial["grid_gap"] > weekly["grid_gap"] > compact["grid_gap"]
+    assert {editorial["name"], weekly["name"], compact["name"]} == {"editorial", "weekly", "compact"}
+
+
+def test_semantic_visual_tokens_and_variants_are_constrained():
+    html = render_render_payload_html({
+        "template_slug": "supermarket-promo-4",
+        "template_config": {
+            "background_start": "#123456", "background_end": "#234567",
+            "card_background": "#fefefe", "card_border_color": "#abcdef",
+            "price_panel_background": "#fedcba", "price_color": "#654321",
+            "header_style": "band", "card_style": "outlined", "price_style": "ticket",
+            "badge_style": "ribbon", "image_treatment": "cutout",
+        },
+        "items": [{"name": "Milk", "price": "1.99", "badge": "SAVE", "currency": "EUR"}],
+    }, generated_at=datetime.now(UTC))
+    assert "retail-header-band retail-card-outlined retail-price-ticket retail-badge-ribbon retail-image-cutout" in html
+    for color in ("#123456", "#234567", "#fefefe", "#abcdef", "#fedcba", "#654321"):
+        assert color in html
+
+    unsafe = render_render_payload_html({
+        "template_slug": "supermarket-promo-4",
+        "template_config": {"background_start": "red;position:fixed", "badge_style": "evil"},
+        "items": [],
+    }, generated_at=datetime.now(UTC))
+    assert "red;position:fixed" not in unsafe
+    assert "retail-badge-sticker" in unsafe
+
+
+def test_supermarket_visibility_controls_affect_real_output():
+    html = render_render_payload_html({
+        "template_slug": "supermarket-promo-4",
+        "template_config": {
+            "show_product_image": False, "show_product_name": False, "show_package_size": False,
+            "show_old_price": False, "show_discount_badge": False, "show_footer": False,
+            "show_stock_message": False,
+        },
+        "header": {"stock_message": "Hidden stock"},
+        "items": [{"name": "Hidden", "price": "1.99", "old_price": "2.49", "badge": "SAVE"}],
+    }, generated_at=datetime.now(UTC))
+    for hidden in ('<div class="promo-card-image">', '<h2 class="product-name"', '<p class="product-unit"',
+                   '<span class="old-price">', '<span class="promo-badge">', "Hidden stock", '<footer class="footer">'):
+        assert hidden not in html
+    assert "price-panel" in html
 
 
 def test_supermarket_rejects_overflow_without_affecting_generic():
@@ -62,3 +126,92 @@ def test_supermarket_currency_formats_are_safe(value, currency, major, minor):
     html = render_render_payload_html({"template_slug": "supermarket-promo-4", "items": [{"name": "x", "price": value, "currency": currency}]}, generated_at=datetime.now(UTC))
     assert f'<span class="price-major">{major}</span>' in html
     assert f'<span class="price-minor">{minor}</span>' in html
+
+
+@pytest.mark.parametrize(("slug", "composition"), [
+    ("supermarket-promo-4", "hero-offers"),
+    ("supermarket-promo-9", "weekly-grid"),
+    ("supermarket-promo-16", "catalogue-grid"),
+])
+def test_density_profiles_emit_distinct_retail_compositions(slug, composition):
+    html = render_render_payload_html(
+        {"template_slug": slug, "items": [{"name": "Offer", "price": "9.99"}]},
+        generated_at=datetime.now(UTC),
+    )
+    assert f"composition-{composition}" in html
+    assert f'"composition": "{composition}"' not in html
+
+
+def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis():
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-4",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(4)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert 'border:0;border-bottom:1px solid color-mix' in html
+    assert 'data-emphasis="featured" data-rhythm="a"' in html
+    assert html.count('<article class="product-card" data-emphasis="featured"') == 1
+    assert 'data-rhythm="b"' in html and 'data-rhythm="c"' in html
+
+    weekly = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "items": [{"name": "Offer", "price": "9.99", "emphasis": "featured"}],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert 'data-emphasis="normal"' in weekly
+
+
+def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-4",
+            "template_config": {
+                "header_style": "minimal",
+                "price_style": "split",
+                "badge_style": "burst",
+                "image_treatment": "cutout",
+                "show_header_title": False,
+            },
+            "items": [{
+                "name": "Large offer",
+                "image_key": "missing.png",
+                "image_has_alpha": True,
+                "price": "999999.99",
+                "currency": "CHF",
+                "badge": "25% OFF",
+            }],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert "retail-header-minimal" in html
+    assert "retail-price-split" in html
+    assert "retail-badge-burst" in html
+    assert "retail-image-cutout" in html
+    assert 'data-image-stage="cutout"' in html
+    assert 'class="price price-long"' in html
+    assert 'data-title-visible="false"' in html
+    assert '<header class="hero"' in html
+    assert "<h1 " not in html
+
+
+@pytest.mark.parametrize("variant,selector", [
+    ("pill", ".retail-badge-pill .promo-badge"),
+    ("sticker", ".retail-badge-sticker .promo-badge"),
+    ("burst", ".retail-badge-burst .promo-badge"),
+    ("ribbon", ".retail-badge-ribbon .promo-badge"),
+])
+def test_badge_variants_emit_distinct_safe_composition(variant, selector):
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "template_config": {"badge_style": variant},
+            "items": [{"name": "Offer", "price": "9.99", "badge": "SAVE"}],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert f"retail-badge-{variant}" in html
+    assert selector in html

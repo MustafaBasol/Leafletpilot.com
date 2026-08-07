@@ -2156,6 +2156,23 @@ tbody tr:hover {
   resize: vertical;
 }
 
+.retail-token-controls {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--neutral-200);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.retail-token-controls legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.retail-color-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .template-toggle-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2182,8 +2199,8 @@ tbody tr:hover {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 18px;
+  gap: 5px;
+  padding: 10px;
   color: #172033;
   background: var(--template-background);
   border: 1px solid var(--neutral-200);
@@ -2191,24 +2208,62 @@ tbody tr:hover {
 }
 
 .template-preview-page header {
+  position: relative;
   display: grid;
-  gap: 4px;
-  padding: 14px;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  flex: 0 0 13%;
+  overflow: hidden;
+  padding: 8px;
   color: white;
-  background: var(--template-primary);
+  background: linear-gradient(135deg, var(--template-primary), var(--template-background));
+  border-radius: 7px;
   text-align: left;
 }
 
 .template-preview-page header strong {
-  font-size: clamp(16px, 2vw, 26px);
+  grid-column: 1 / -1;
+  font-size: clamp(12px, 1.5vw, 20px);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.template-preview-page header small {
+  font-weight: 900;
+}
+
+.template-preview-page header em {
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.template-preview-page.retail-header-burst header::after {
+  content: "";
+  position: absolute;
+  right: -25px;
+  top: -30px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--retail-price-panel) 25%, transparent);
+}
+
+.template-preview-page.retail-header-band header {
+  border-bottom: 4px solid var(--retail-price-panel);
+  border-radius: 2px;
+}
+
+.template-preview-page.retail-header-minimal header {
+  border-left: 5px solid var(--retail-price-panel);
+  border-radius: 0;
 }
 
 .template-preview-products {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-auto-rows: 1fr;
-  gap: 6px;
+  gap: 4px;
 }
 
 .template-preview-products article {
@@ -2216,45 +2271,239 @@ tbody tr:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 2px;
+  gap: 1px;
   overflow: hidden;
-  padding: 5px;
-  background: white;
-  border: 1px solid #dfe3e8;
-  border-radius: 6px;
-  font-size: 9px;
+  padding: 4px;
+  background: var(--retail-card, white);
+  border: 1px solid var(--retail-border, #dfe3e8);
+  border-radius: 5px;
+  font-size: 8px;
 }
 
-.template-preview-products article > b {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  padding: 2px;
-  color: white;
-  background: var(--template-primary);
-  font-size: 6px;
+.template-preview-page.retail-card-shadow article {
+  box-shadow: 0 2px 0 #43101c55;
 }
 
-.template-preview-products article > strong {
-  color: var(--template-primary);
-  font-size: 13px;
+.template-preview-page.retail-card-outlined article {
+  border-width: 2px;
+}
+
+.template-preview-page.retail-card-rounded article {
+  border-radius: 9px;
 }
 
 .template-preview-image {
   display: grid;
   place-items: center;
-  min-height: 18px;
-  flex: 1;
+  flex: 0 0 47%;
+  min-height: 0;
+  overflow: hidden;
   color: #8490a0;
+  background: white;
+  border-radius: 4px;
+  font-weight: 800;
+}
+
+.template-preview-image span {
+  display: grid;
+  place-items: center;
+  width: 45%;
+  height: 82%;
+  color: #fff;
+  background: linear-gradient(145deg, var(--template-primary), var(--retail-label));
+  border-radius: 40% 40% 14% 14%;
+  font-size: 6px;
+}
+
+.template-preview-page.retail-image-cutout .template-preview-image {
+  background: transparent;
+}
+
+.template-preview-page.retail-image-photo .template-preview-image {
+  padding: 2px;
   background: #f3f5f7;
 }
 
-.template-preview-page footer {
-  padding-top: 6px;
-  border-top: 1px solid #dfe3e8;
-  font-size: 8px;
+.template-preview-price {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 3px;
+  color: var(--retail-price);
+  background: var(--retail-price-panel);
+  border-radius: 3px;
 }
+
+.template-preview-price strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: .9;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.template-preview-price sup,
+.template-preview-price i {
+  font-size: .5em;
+  font-style: normal;
+}
+
+.template-preview-price b {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px;
+  color: white;
+  background: var(--retail-label);
+  border-radius: 2px;
+  font-size: 5px;
+  white-space: nowrap;
+}
+
+.template-preview-price del {
+  grid-column: 2;
+  font-size: 5px;
+}
+
+.template-preview-page.retail-price-ticket .template-preview-price {
+  clip-path: polygon(0 0, 94% 0, 100% 50%, 94% 100%, 0 100%);
+  padding-right: 9%;
+}
+
+.template-preview-page.retail-price-split .template-preview-price {
+  background: transparent;
+  border: 1px solid var(--retail-price-panel);
+}
+
+.template-preview-page.retail-badge-pill .template-preview-price b {
+  border-radius: 999px;
+}
+
+.template-preview-page.retail-badge-burst .template-preview-price b {
+  clip-path: polygon(50% 0, 65% 20%, 88% 12%, 84% 39%, 100% 55%, 77% 68%, 74% 96%, 51% 79%, 28% 96%, 25% 69%, 0 55%, 18% 38%, 12% 13%, 36% 20%);
+  padding: 4px 3px;
+}
+
+.template-preview-page.retail-badge-ribbon .template-preview-price b {
+  border-radius: 0;
+  transform: rotate(-2deg);
+}
+
+.template-preview-products article > mark {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 3px;
+  color: white;
+  background: var(--retail-label);
+  border-radius: 2px;
+  font-size: 5px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-preview-products article > span {
+  overflow: hidden;
+  font-weight: 900;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-preview-products article > small {
+  overflow: hidden;
+  font-size: 5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-preview-page.density-editorial .template-preview-products {
+  gap: 7px;
+}
+
+.template-preview-page.density-editorial .template-preview-products article {
+  padding: 6px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.template-preview-page.density-editorial .template-preview-price strong {
+  font-size: 20px;
+}
+
+.template-preview-page.density-weekly .template-preview-price strong {
+  font-size: 15px;
+}
+
+.template-preview-page.density-compact {
+  gap: 3px;
+  padding: 8px;
+}
+
+.template-preview-page.density-compact header {
+  flex-basis: 10%;
+  padding: 5px;
+}
+
+.template-preview-page.density-compact .template-preview-products {
+  gap: 3px;
+}
+
+.template-preview-page.density-compact .template-preview-products article {
+  padding: 3px;
+  font-size: 6px;
+}
+
+.template-preview-page.density-compact .template-preview-price strong {
+  font-size: 10px;
+}
+
+.template-preview-page footer {
+  display: flex;
+  justify-content: space-between;
+  min-height: 8px;
+  overflow: hidden;
+  padding-top: 3px;
+  color: white;
+  font-size: 6px;
+  white-space: nowrap;
+}
+
+.template-preview-page.is-supermarket{position:relative;background:radial-gradient(circle at 92% 4%,color-mix(in srgb,var(--retail-price-panel) 22%,transparent) 0 12%,transparent 12.5%),linear-gradient(150deg,var(--template-primary),var(--template-background))}
+.template-preview-page.is-supermarket header{flex-basis:11%;border-radius:3px;border-bottom:1px solid #ffffff66;background:transparent}
+.template-preview-page.retail-header-burst header{padding-left:12px;background:linear-gradient(110deg,#ffffff18,transparent 65%)}
+.template-preview-page.retail-header-band header{border:0;border-top:4px solid var(--retail-price-panel);border-bottom:4px solid var(--retail-price-panel);border-radius:0;background:var(--template-background)}
+.template-preview-page.retail-header-minimal header{border:0;border-left:5px solid var(--retail-price-panel);border-radius:0;background:#00000012}
+.template-preview-page.is-supermarket .template-preview-products article{border:0;border-bottom:1px solid color-mix(in srgb,var(--retail-border) 48%,transparent);border-radius:3px;background:color-mix(in srgb,var(--retail-card) 90%,transparent);box-shadow:none}
+.template-preview-page.retail-card-shadow .template-preview-products article{border:0;box-shadow:0 3px 7px #43101c30}
+.template-preview-page.retail-card-outlined .template-preview-products article{border:1px solid color-mix(in srgb,var(--retail-border) 62%,transparent);border-radius:1px;background:color-mix(in srgb,var(--retail-card) 82%,transparent)}
+.template-preview-page.retail-card-rounded .template-preview-products article{border:0;border-radius:11px;background:var(--retail-card);box-shadow:0 2px 7px #43101c20}
+.template-preview-page.is-supermarket .template-preview-image{overflow:visible;background:radial-gradient(circle at 50% 70%,#ffffffa8,transparent 70%)}
+.template-preview-page.retail-image-cutout .template-preview-image{background:transparent;filter:drop-shadow(0 3px 2px #43101c30)}
+.template-preview-page.retail-image-photo .template-preview-image{padding:2px;border:1px solid #ffffffaa;background:white}
+.template-preview-page.is-supermarket .template-preview-price{width:88%;border-radius:2px;box-shadow:2px 2px 0 #43101c25}
+.template-preview-page.is-supermarket article:nth-child(3n+2) .template-preview-price{align-self:flex-end}
+.template-preview-page.is-supermarket article:nth-child(3n) .template-preview-price{width:82%}
+.template-preview-page.is-supermarket .template-preview-price b{padding:3px 4px;border:1px solid #ffffff88;box-shadow:0 1px 0 #43101c40}
+.template-preview-page.is-supermarket .template-preview-products article>mark{padding:0;color:var(--retail-label);background:transparent;border-radius:0;letter-spacing:.08em}
+.template-preview-page.density-editorial .template-preview-products article{border:0;background:color-mix(in srgb,var(--retail-card) 78%,transparent)}
+.template-preview-page.density-editorial .template-preview-products article:first-child{background:var(--retail-card);box-shadow:0 4px 9px #43101c35}
+.template-preview-page.density-editorial .template-preview-products article:first-child .template-preview-image{flex-basis:53%}
+.template-preview-page.density-editorial .template-preview-products article:first-child .template-preview-price strong{font-size:22px}
+.template-preview-page.density-editorial .template-preview-price b{font-size:7px}
+.template-preview-page.density-weekly .template-preview-products article{border-radius:3px}
+.template-preview-page.density-compact .template-preview-products article{border-right:1px solid color-mix(in srgb,var(--retail-border) 35%,transparent);border-bottom:1px solid color-mix(in srgb,var(--retail-border) 35%,transparent);border-radius:0;background:color-mix(in srgb,var(--retail-card) 86%,transparent)}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article{border:0;background:transparent;box-shadow:none}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article:first-child{background:radial-gradient(circle at 48% 42%,#ffffff24,transparent 68%)}
+.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article>span,.template-preview-page.density-editorial.retail-card-shadow .template-preview-products article>small{color:#fff;text-shadow:0 1px 1px #43101c55}
+.template-preview-page.density-editorial article:nth-child(3n+2) .template-preview-price{width:82%}
+.template-preview-page.density-editorial article:nth-child(3n) .template-preview-price{width:76%}
+.template-preview-page.density-weekly .template-preview-products,.template-preview-page.density-compact .template-preview-products{gap:0;padding:3px;background:color-mix(in srgb,var(--retail-card) 91%,transparent)}
+.template-preview-page.density-weekly.retail-card-shadow .template-preview-products article,.template-preview-page.density-compact.retail-card-shadow .template-preview-products article{border:0;border-right:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-bottom:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-radius:0;background:transparent;box-shadow:none}
 
 .template-source {
   display: inline-flex;

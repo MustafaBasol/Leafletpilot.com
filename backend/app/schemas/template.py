@@ -32,6 +32,16 @@ class TemplateConfig(BaseModel):
     page_format: Literal["a4_portrait", "a4_landscape"] = "a4_portrait"
     primary_color: Color = Field(default="#c1121f", pattern=r"^#[0-9A-Fa-f]{6}$")
     secondary_color: Color = Field(default="#fffaf0", pattern=r"^#[0-9A-Fa-f]{6}$")
+    background_start: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    background_end: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    card_background: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    card_border_color: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    price_panel_background: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    price_color: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    title_color: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    product_title_color: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    brand_label_background: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    brand_label_color: Color | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     show_header_title: bool = True
     show_market_name: bool = True
     show_old_price: bool = True
@@ -39,9 +49,16 @@ class TemplateConfig(BaseModel):
     show_product_image: bool = True
     show_product_name: bool = True
     show_package_size: bool = True
-    price_style: Literal["bold", "compact", "panel"] = "bold"
-    badge_style: Literal["pill", "square", "burst"] = "pill"
+    header_style: Literal["burst", "band", "minimal"] = "burst"
+    card_style: Literal["shadow", "outlined", "rounded"] = "shadow"
+    price_style: Literal["bold", "compact", "panel", "ticket", "split"] = "bold"
+    badge_style: Literal["pill", "square", "sticker", "burst", "ribbon"] = "pill"
+    image_treatment: Literal["stage", "cutout", "photo"] = "stage"
     show_footer: bool = True
+    show_payment_icons: bool = True
+    show_additional_logos: bool = True
+    show_stock_message: bool = True
+    show_footer_note: bool = True
 
     @model_validator(mode="before")
     @classmethod

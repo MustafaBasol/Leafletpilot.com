@@ -9,7 +9,7 @@ from app.core.roles import MarketRole
 from app.schemas.common import ListResponse
 from app.schemas.template import TemplateCreate, TemplatePreviewResponse, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
-from app.services.template_presets import FLYER_PRESETS
+from app.services.template_presets import FLYER_PRESETS, SUPERMARKET_PRESETS, SUPERMARKET_STYLE_OPTIONS
 from app.services.entitlements import resolve_plan_code
 from app.models import Market
 
@@ -20,13 +20,16 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 async def list_template_builder_presets() -> dict:
     """Return grid presets, page formats, price styles, and badge styles for the template builder."""
     return {
-        "items": list(FLYER_PRESETS.values()),
+        "items": [*FLYER_PRESETS.values(), *SUPERMARKET_PRESETS.values()],
         "page_formats": [
             {"value": "a4_portrait", "label": "A4 dikey"},
             {"value": "a4_landscape", "label": "A4 yatay"},
         ],
-        "price_styles": ["bold", "compact", "panel"],
-        "badge_styles": ["pill", "square", "burst"],
+        "price_styles": ["bold", "compact", *SUPERMARKET_STYLE_OPTIONS["price_style"]],
+        "badge_styles": ["pill", "square", "sticker", "burst", "ribbon"],
+        "header_styles": list(SUPERMARKET_STYLE_OPTIONS["header_style"]),
+        "card_styles": list(SUPERMARKET_STYLE_OPTIONS["card_style"]),
+        "image_treatments": list(SUPERMARKET_STYLE_OPTIONS["image_treatment"]),
     }
 
 
