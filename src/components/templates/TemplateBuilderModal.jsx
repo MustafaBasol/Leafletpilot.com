@@ -44,6 +44,14 @@ function buildInitialForm(template) {
   };
 }
 
+function previewMerchandisingRole(densityName, index) {
+  if (densityName === "editorial") return index === 0 ? "featured" : "secondary";
+  if (densityName === "weekly") return index === 0 ? "featured" : index < 3 ? "secondary" : "standard";
+  const secondary = new Set([0, 3, 8, 14]);
+  const compact = new Set([1, 4, 7, 10, 12, 15]);
+  return secondary.has(index) ? "secondary" : compact.has(index) ? "compact" : "standard";
+}
+
 export function TemplateBuilderModal({ template, presets, busy, error, onClose, onSave }) {
   const targetKey = template?.id ? `edit:${template.id}` : "create";
   const initial = useMemo(() => buildInitialForm(template), [targetKey]);
@@ -94,6 +102,7 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
         <div className="form-grid"><label className="field"><span>Sütun</span><input readOnly value={config.columns} /></label><label className="field"><span>Satır</span><input readOnly value={config.rows} /></label><label className="field"><span>Sayfa kapasitesi</span><input readOnly value={config.slot_count} /></label></div>
         <div className="form-grid"><label className="field"><span>Ana renk</span><input type="color" value={config.primary_color} onChange={(e) => configField("primary_color", e.target.value)} /></label><label className="field"><span>Arka plan</span><input type="color" value={config.secondary_color} onChange={(e) => configField("secondary_color", e.target.value)} /></label></div>
         {isSupermarket ? <fieldset className="retail-token-controls"><legend>Market görsel dili</legend>
+          <p className="retail-layout-hint">{"\u0130lk \u00fcr\u00fcn \u00f6ne \u00e7\u0131kar; kampanyada se\u00e7ilen \u00f6ne \u00e7\u0131kan \u00fcr\u00fcn bu hiyerar\u015fiyi devral\u0131r."}</p>
           <div className="form-grid retail-color-grid">
             <label className="field"><span>Promosyon rengi</span><input type="color" value={config.background_start} onChange={(e) => configField("background_start", e.target.value)} /></label>
             <label className="field"><span>Promosyon koyu tonu</span><input type="color" value={config.background_end} onChange={(e) => configField("background_end", e.target.value)} /></label>
@@ -118,7 +127,23 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
       <div className="template-live-preview" style={{ "--template-primary": isSupermarket ? config.background_start : config.primary_color, "--template-background": isSupermarket ? config.background_end : config.secondary_color, "--retail-card": config.card_background, "--retail-border": config.card_border_color, "--retail-price-panel": config.price_panel_background, "--retail-price": config.price_color, "--retail-label": config.brand_label_background }}>
         <div className={`template-preview-page ${isSupermarket ? `is-supermarket density-${densityName} retail-header-${config.header_style} retail-card-${config.card_style} retail-price-${previewPriceStyle} retail-badge-${previewBadgeStyle} retail-image-${config.image_treatment}` : "is-generic"}`} data-density-profile={isSupermarket ? densityName : undefined}>
           <header data-title-visible={String(config.show_header_title)} aria-label="Kampanya ust alani"><small>{config.show_market_name ? "MARKETİNİZ" : ""}</small>{config.show_header_title ? <strong>Haftanın Fırsatları</strong> : null}<em>07–13 Ağustos</em></header>
-          <div className="template-preview-products" style={{ gridTemplateColumns: `repeat(${config.columns}, 1fr)`, gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))` }}>{Array.from({ length: config.slot_count }, (_, index) => <article key={index} data-emphasis={densityName === "editorial" && index === 0 ? "featured" : "normal"} data-rhythm={["a", "b", "c"][index % 3]}>{config.show_product_image ? <div className="template-preview-image" data-image-stage={config.image_treatment}><span>{index % 3 === 0 ? "Şişe" : index % 3 === 1 ? "Paket" : "Kutu"}</span></div> : null}<div className="template-preview-price"><strong>49<sup>,90</sup><i>₺</i></strong>{config.show_discount_badge ? <b>FIRSAT</b> : null}{config.show_old_price ? <del>59,90 ₺</del> : null}</div><mark>MARKA</mark>{config.show_product_name ? <span>Ürün adı</span> : null}{config.show_package_size ? <small>500 g</small> : null}</article>)}</div>
+          <div className="template-preview-products" style={isSupermarket ? undefined : { gridTemplateColumns: `repeat(${config.columns}, 1fr)`, gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))` }}>
+            {Array.from({ length: config.slot_count }, (_, index) => {
+              const role = previewMerchandisingRole(densityName, index);
+              return <article
+                key={index}
+                data-emphasis={role === "featured" ? "featured" : "normal"}
+                data-merchandising-role={role}
+                data-rhythm={["a", "b", "c"][index % 3]}
+              >
+                {config.show_product_image ? <div className="template-preview-image" data-image-stage={config.image_treatment}><span>{index % 3 === 0 ? "Şişe" : index % 3 === 1 ? "Paket" : "Kutu"}</span></div> : null}
+                <div className="template-preview-price"><strong>49<sup>,90</sup><i>₺</i></strong>{config.show_discount_badge ? <b>FIRSAT</b> : null}{config.show_old_price ? <del>59,90 ₺</del> : null}</div>
+                <mark>MARKA</mark>
+                {config.show_product_name ? <span>Ürün adı</span> : null}
+                {config.show_package_size ? <small>500 g</small> : null}
+              </article>;
+            })}
+          </div>
           {config.show_footer ? <footer>{config.show_footer_note ? "Fiyatlar stoklarla sınırlıdır." : ""}<span>{config.show_payment_icons ? "VISA · MC" : ""}</span></footer> : null}
         </div>
         <small>Canlı önizleme · {config.page_format === "a4_landscape" ? "A4 yatay" : "A4 dikey"} · {config.slot_count} ürün{isSupermarket ? ` · ${densityName}` : ""}</small>

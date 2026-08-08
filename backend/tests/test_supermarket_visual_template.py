@@ -151,18 +151,23 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         generated_at=datetime.now(UTC),
     )
     assert 'border:0;border-bottom:1px solid color-mix' in html
-    assert 'data-emphasis="featured" data-rhythm="a"' in html
+    assert 'data-emphasis="featured" data-merchandising-role="featured"' in html
     assert html.count('<article class="product-card" data-emphasis="featured"') == 1
     assert 'data-rhythm="b"' in html and 'data-rhythm="c"' in html
 
     weekly = render_render_payload_html(
         {
             "template_slug": "supermarket-promo-9",
-            "items": [{"name": "Offer", "price": "9.99", "emphasis": "featured"}],
+            "items": [
+                {"name": "Standard first", "price": "9.99"},
+                {"name": "Explicit hero", "price": "7.99", "emphasis": "featured"},
+            ],
         },
         generated_at=datetime.now(UTC),
     )
-    assert 'data-emphasis="normal"' in weekly
+    assert weekly.index("Explicit hero") < weekly.index("Standard first")
+    assert weekly.count('<article class="product-card" data-emphasis="featured" data-merchandising-role="featured"') == 1
+    assert 'data-merchandising-role="secondary"' in weekly
 
 
 def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,27 @@ from app.services.preview_renderer import render_render_payload_html
 
 
 FIXED_TIME = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
+
+REFERENCE_EXPECTATIONS = {
+    4: {
+        "density": "editorial", "featured": 1, "min_width_tiers": 2,
+        "min_stage_delta": 500, "min_price_width_delta": 0.08,
+        "min_featured_area_ratio": 2.5, "min_featured_image_ratio": 4.0,
+        "min_featured_price_ratio": 1.45,
+    },
+    9: {
+        "density": "weekly", "featured": 1, "min_width_tiers": 2,
+        "min_stage_delta": 40, "min_price_width_delta": 0.06,
+        "min_featured_area_ratio": 1.55, "min_featured_image_ratio": 1.8,
+        "min_featured_price_ratio": 1.15,
+    },
+    16: {
+        "density": "compact", "featured": 0, "min_width_tiers": 2,
+        "min_stage_delta": 20, "min_price_width_delta": 0.06,
+        "min_featured_area_ratio": None, "min_featured_image_ratio": None,
+        "min_featured_price_ratio": None,
+    },
+}
 
 
 def _asset_bytes(kind: str) -> tuple[bytes, str]:
@@ -39,6 +61,12 @@ def _asset_bytes(kind: str) -> tuple[bytes, str]:
 
 def _fixture_items(tmp_path: Path) -> list[dict]:
     items: list[dict] = []
+    product_names = {
+        "portrait": "Extra virgin olive oil glass bottle",
+        "landscape": "Family-size frozen pizza carton",
+        "square": "Crispy breakfast cereal package",
+        "photo": "Fresh strawberry photo product",
+    }
     for kind in ("portrait", "landscape", "square", "photo"):
         content, mime_type = _asset_bytes(kind)
         asset = store_flyer_image(
@@ -48,12 +76,12 @@ def _fixture_items(tmp_path: Path) -> list[dict]:
         )
         items.append(
             {
-                "name": f"{kind.title()} packaging",
-                "brand": "Leaflet Fixture",
+                "name": product_names[kind],
+                "brand": ("Orchard", "Bakery", "Morning", "Produce")[len(items)],
                 "image_key": asset.storage_key,
                 "image_mime_type": asset.mime_type,
                 "image_has_alpha": asset.has_alpha,
-                "price": "12.99",
+                "price": ("12.99", "4.49", "2.79", "6.95")[len(items)],
                 "old_price": "17.49",
                 "currency": "EUR",
                 "quantity_label": "2 x 500g",
@@ -124,6 +152,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 pytest.skip(f"Playwright Chromium unavailable: {exc}")
             try:
                 page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=2)
+                page_errors: list[str] = []
+                console_errors: list[str] = []
+                page.on("pageerror", lambda error: page_errors.append(str(error)))
+                page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
                 page.set_content(html, wait_until="networkidle")
                 measurements = page.evaluate(
                     """() => {
@@ -137,6 +169,20 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                       const gridBox = rect(grid);
                       const footer = document.querySelector('.footer');
                       const cards = [...document.querySelectorAll('.product-card')];
+                      const stages = cards.map((card) => card.querySelector('.promo-card-image'));
+                      const panels = cards.map((card) => card.querySelector('.price-panel'));
+                      const featured = document.querySelector('[data-merchandising-role="featured"]');
+                      const supporting = cards.filter((card) => card !== featured);
+                      const area = (element) => {
+                        const box = rect(element);
+                        return (box.right - box.left) * (box.bottom - box.top);
+                      };
+                      const ratio = (numerator, denominator) => denominator ? numerator / denominator : null;
+                      const featuredStage = featured?.querySelector('.promo-card-image');
+                      const featuredPrice = featured?.querySelector('.price');
+                      const supportStageAreas = supporting.map((card) => area(card.querySelector('.promo-card-image')));
+                      const supportAreas = supporting.map(area);
+                      const supportPriceSizes = supporting.map((card) => parseFloat(getComputedStyle(card.querySelector('.price')).fontSize));
                       return {
                         viewport: {width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight},
                         cardCount: cards.length,
@@ -175,29 +221,52 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                         featuredCount: document.querySelectorAll('.product-card[data-emphasis="featured"]').length,
                         cutoutStageCount: document.querySelectorAll('.promo-card-image[data-image-stage="cutout"]').length,
                         cardTopBordersReduced: cards.every((card) => parseFloat(getComputedStyle(card).borderTopWidth) <= 1),
+                        heavyBorderSideCount: cards.reduce((total, card) => {
+                          const style = getComputedStyle(card);
+                          return total + ['Top', 'Right', 'Bottom', 'Left'].filter((side) => parseFloat(style[`border${side}Width`]) > 1).length;
+                        }, 0),
+                        roleCounts: cards.reduce((counts, card) => {
+                          const role = card.dataset.merchandisingRole;
+                          counts[role] = (counts[role] || 0) + 1;
+                          return counts;
+                        }, {}),
+                        cardWidthTiers: [...new Set(cards.map((card) => Math.round(rect(card).right - rect(card).left)))].length,
+                        stageHeightRange: Math.max(...stages.map((stage) => rect(stage).bottom - rect(stage).top)) - Math.min(...stages.map((stage) => rect(stage).bottom - rect(stage).top)),
+                        priceWidthRatios: panels.map((panel) => ratio(rect(panel).right - rect(panel).left, rect(panel.closest('.product-card')).right - rect(panel.closest('.product-card')).left)),
+                        featuredAreaRatio: featured ? ratio(area(featured), Math.max(...supportAreas)) : null,
+                        featuredImageRatio: featuredStage ? ratio(area(featuredStage), Math.max(...supportStageAreas)) : null,
+                        featuredPriceRatio: featuredPrice ? ratio(parseFloat(getComputedStyle(featuredPrice).fontSize), Math.max(...supportPriceSizes)) : null,
                       };
                     }"""
                 )
-                assert measurements == {
-                    "viewport": {"width": 1240, "height": 1754},
-                    "cardCount": count,
-                    "cardsInside": True,
-                    "gridInside": True,
-                    "footerAfterGrid": True,
-                    "noCardOverflow": True,
-                    "noStageTextCollision": True,
-                    "badgesInside": True,
-                    "pricesInside": True,
-                    "titlesClamped": True,
-                    "imagesLoaded": True,
-                    "imagesContained": True,
-                    "fallbackCount": 1,
-                    "densityProfile": {4: "editorial", 9: "weekly", 16: "compact"}[count],
-                    "compositionClass": {4: "composition-hero-offers", 9: "composition-weekly-grid", 16: "composition-catalogue-grid"}[count],
-                    "featuredCount": 1 if count == 4 else 0,
-                    "cutoutStageCount": {4: 3, 9: 6, 16: 12}[count],
-                    "cardTopBordersReduced": True,
-                }
+                reference = REFERENCE_EXPECTATIONS[count]
+                evidence = {"reference": reference, "measurements": measurements, "pageErrors": page_errors, "consoleErrors": console_errors}
+                (artifact_root / f"{slug}-geometry.json").write_text(
+                    json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+                assert measurements["viewport"] == {"width": 1240, "height": 1754}
+                assert measurements["cardCount"] == count
+                for safety_check in (
+                    "cardsInside", "gridInside", "footerAfterGrid", "noCardOverflow",
+                    "noStageTextCollision", "badgesInside", "pricesInside", "titlesClamped",
+                    "imagesLoaded", "imagesContained", "cardTopBordersReduced",
+                ):
+                    assert measurements[safety_check], safety_check
+                assert not page_errors and not console_errors
+                assert measurements["fallbackCount"] == 1
+                assert measurements["densityProfile"] == reference["density"]
+                assert measurements["featuredCount"] == reference["featured"]
+                assert measurements["cutoutStageCount"] == {4: 3, 9: 6, 16: 12}[count]
+                assert measurements["heavyBorderSideCount"] == 0
+                assert measurements["cardWidthTiers"] >= reference["min_width_tiers"]
+                assert measurements["stageHeightRange"] >= reference["min_stage_delta"]
+                assert min(measurements["priceWidthRatios"]) >= 0.55
+                assert max(measurements["priceWidthRatios"]) <= 0.98
+                assert max(measurements["priceWidthRatios"]) - min(measurements["priceWidthRatios"]) >= reference["min_price_width_delta"]
+                if reference["featured"]:
+                    assert measurements["featuredAreaRatio"] >= reference["min_featured_area_ratio"]
+                    assert measurements["featuredImageRatio"] >= reference["min_featured_image_ratio"]
+                    assert measurements["featuredPriceRatio"] >= reference["min_featured_price_ratio"]
                 page.screenshot(path=str(png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
                 page.screenshot(path=str(second_png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
                 page.pdf(path=str(pdf_path), format="A4", print_background=True, scale=0.635)

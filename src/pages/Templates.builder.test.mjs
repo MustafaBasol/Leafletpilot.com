@@ -92,7 +92,9 @@ test("builder exposes the constrained supermarket visual contract", () => {
   assert.match(builder, /template-preview-price/);
   assert.doesNotMatch(builder, /dangerouslySetInnerHTML/);
   assert.match(builder, /data-title-visible=\{String\(config\.show_header_title\)\}/);
-  assert.match(builder, /data-emphasis=\{densityName === "editorial"/);
+  assert.match(builder, /previewMerchandisingRole/);
+  assert.match(builder, /data-emphasis=\{role === "featured"/);
+  assert.match(builder, /data-merchandising-role=\{role\}/);
   assert.match(builder, /data-rhythm=/);
   assert.match(builder, /data-image-stage=\{config\.image_treatment\}/);
   assert.match(styles, /density-editorial .*article:first-child/);
