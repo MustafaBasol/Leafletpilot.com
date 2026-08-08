@@ -23,7 +23,7 @@ REFERENCE_EXPECTATIONS = {
         "min_stage_delta": 500, "min_price_width_delta": 0.08,
         "min_featured_area_ratio": 2.5, "min_featured_image_ratio": 4.0,
         "min_featured_price_ratio": 1.45, "min_stage_tiers": 3,
-        "min_price_patterns": 3,
+        "min_price_patterns": 3, "min_price_ratio": 0.55,
     },
     9: {
         "density": "weekly", "featured": 1, "min_width_tiers": 2,
@@ -31,13 +31,16 @@ REFERENCE_EXPECTATIONS = {
         "min_featured_area_ratio": 1.55, "min_featured_image_ratio": 1.8,
         "min_featured_price_ratio": 1.15, "min_stage_tiers": 3,
         "min_price_patterns": 3, "min_lower_width_tiers": 3,
+        "min_visual_price_treatments": 3, "min_perceptible_offsets": 5,
+        "min_price_ratio": 0.38,
     },
     16: {
         "density": "compact", "featured": 0, "min_width_tiers": 2,
         "min_stage_delta": 20, "min_price_width_delta": 0.06,
         "min_featured_area_ratio": None, "min_featured_image_ratio": None,
         "min_featured_price_ratio": None, "min_stage_tiers": 3,
-        "min_price_patterns": 3,
+        "min_price_patterns": 3, "min_visual_price_treatments": 4,
+        "min_perceptible_offsets": 8, "min_price_ratio": 0.38,
     },
 }
 
@@ -195,6 +198,15 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                       const supportStageAreas = supporting.map((card) => area(card.querySelector('.promo-card-image')));
                       const supportAreas = supporting.map(area);
                       const supportPriceSizes = supporting.map((card) => parseFloat(getComputedStyle(card.querySelector('.price')).fontSize));
+                      const logicalRowSize = Number(document.querySelector('.preview-document').dataset.layout.split('x')[0]);
+                      const logicalRows = Array.from(
+                        {length: Math.ceil(cards.length / logicalRowSize)},
+                        (_, row) => cards.slice(row * logicalRowSize, (row + 1) * logicalRowSize),
+                      );
+                      const topRange = (elements) => {
+                        const tops = elements.map((element) => rect(element).top);
+                        return Math.max(...tops) - Math.min(...tops);
+                      };
                       return {
                         viewport: {width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight},
                         cardCount: cards.length,
@@ -250,6 +262,24 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                           return `${card.dataset.priceAlign}:${Math.round(ratio(rect(panel).right - rect(panel).left, rect(card).right - rect(card).left) * 20)}`;
                         })).size,
                         imageStageHeightTiers: new Set(stages.map((stage) => Math.round((rect(stage).bottom - rect(stage).top) / 4))).size,
+                        imageTopTiers: new Set(stages.map((stage) => Math.round(rect(stage).top / 12))).size,
+                        imageTierCount: new Set(cards.map((card) => card.dataset.imageTier)).size,
+                        priceTreatmentCount: new Set(cards.map((card) => card.dataset.priceTreatment)).size,
+                        priceTreatmentGeometryCount: new Set(panels.map((panel) => {
+                          const style = getComputedStyle(panel);
+                          const card = panel.closest('.product-card');
+                          return [
+                            card.dataset.priceTreatment,
+                            style.backgroundColor,
+                            style.backgroundImage,
+                            Math.round(parseFloat(style.borderLeftWidth)),
+                            Math.round(ratio(rect(panel).right - rect(panel).left, rect(card).right - rect(card).left) * 10),
+                          ].join(':');
+                        })).size,
+                        perceptibleVerticalOffsetCount: cards.filter((card) => Number(card.dataset.verticalOffset) >= 12).length,
+                        logicalRowImageTopRanges: logicalRows.map((row) => topRange(row.map((card) => card.querySelector('.promo-card-image')))),
+                        logicalRowPriceTopRanges: logicalRows.map((row) => topRange(row.map((card) => card.querySelector('.price-panel')))),
+                        noCardCollisions: cards.every((card, index) => cards.slice(index + 1).every((other) => !overlaps(rect(card), rect(other)))),
                         fullSeparatorCount: cards.reduce((total, card) => {
                           const style = getComputedStyle(card);
                           const box = rect(card);
@@ -290,7 +320,7 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 for safety_check in (
                     "cardsInside", "gridInside", "footerAfterGrid", "noCardOverflow",
                     "noStageTextCollision", "badgesInside", "pricesInside", "titlesClamped",
-                    "imagesLoaded", "imagesContained", "cardTopBordersReduced",
+                    "imagesLoaded", "imagesContained", "cardTopBordersReduced", "noCardCollisions",
                 ):
                     assert measurements[safety_check], safety_check
                 assert not page_errors and not console_errors
@@ -301,7 +331,7 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 assert measurements["heavyBorderSideCount"] == 0
                 assert measurements["cardWidthTiers"] >= reference["min_width_tiers"]
                 assert measurements["stageHeightRange"] >= reference["min_stage_delta"]
-                assert min(measurements["priceWidthRatios"]) >= 0.55
+                assert min(measurements["priceWidthRatios"]) >= reference["min_price_ratio"]
                 assert max(measurements["priceWidthRatios"]) <= 0.98
                 assert max(measurements["priceWidthRatios"]) - min(measurements["priceWidthRatios"]) >= reference["min_price_width_delta"]
                 assert measurements["pricePatternCount"] >= reference["min_price_patterns"]
@@ -313,11 +343,28 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                     assert measurements["compositionGroups"] == 2
                 elif count == 9:
                     assert measurements["sharedSectionSurface"]
+                    assert measurements["imageTopTiers"] >= 3
+                    assert measurements["priceTreatmentCount"] >= reference["min_visual_price_treatments"]
+                    assert measurements["priceTreatmentGeometryCount"] >= reference["min_visual_price_treatments"]
+                    assert measurements["perceptibleVerticalOffsetCount"] >= reference["min_perceptible_offsets"]
+                    assert all(
+                        image_range >= 12 or price_range >= 12
+                        for image_range, price_range in zip(
+                            measurements["logicalRowImageTopRanges"],
+                            measurements["logicalRowPriceTopRanges"],
+                            strict=True,
+                        )
+                    )
                     assert measurements["lowerOpaqueCardCount"] == 0
                     assert measurements["lowerCardWidthTiers"] >= reference["min_lower_width_tiers"]
                     assert measurements["compositionGroups"] == 3
                 else:
                     assert measurements["sharedSectionSurface"]
+                    assert measurements["imageTierCount"] >= 3
+                    assert measurements["priceTreatmentCount"] >= reference["min_visual_price_treatments"]
+                    assert measurements["priceTreatmentGeometryCount"] >= reference["min_visual_price_treatments"]
+                    assert measurements["perceptibleVerticalOffsetCount"] >= reference["min_perceptible_offsets"]
+                    assert all(value >= 12 for value in measurements["logicalRowPriceTopRanges"])
                     assert measurements["opaqueCardCount"] == 0
                     assert measurements["compositionGroups"] == 4
                 if reference["featured"]:

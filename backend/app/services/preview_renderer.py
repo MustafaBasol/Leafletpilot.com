@@ -349,14 +349,44 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     price_align = ("start", "end", "start", "center")[index % 4]
     if density["name"] == "editorial":
         composition_group = "hero" if role == "featured" else "support"
+        price_treatment = "promo-panel"
+        image_tier = "hero" if role == "featured" else ("medium", "small", "large")[(index - 1) % 3]
+        vertical_offset = 0
     elif density["name"] == "weekly":
         composition_group = "lead-zone" if index < 3 else f"offer-cluster-{'a' if index < 6 else 'b'}"
+        price_treatment = (
+            "promo-panel", "compact-ticket", "surface-accent",
+            "side-block", "title-strip", "compact-ticket",
+            "surface-accent", "promo-panel", "title-strip",
+        )[index]
+        image_tier = ("hero", "small", "medium", "large", "small", "medium", "large", "medium", "small")[index]
+        vertical_offset = (0, 26, 10, 18, 2, 34, 8, 24, 14)[index]
     else:
-        composition_group = f"dense-band-{(index // 4) + 1}"
+        composition_group = (
+            "cluster-a", "cluster-a", "cluster-b", "cluster-b",
+            "cluster-a", "cluster-a", "cluster-b", "cluster-c",
+            "cluster-d", "cluster-d", "cluster-c", "cluster-c",
+            "cluster-d", "cluster-d", "cluster-c", "cluster-d",
+        )[index]
+        price_treatment = (
+            "promo-panel", "compact-ticket", "surface-accent", "side-block",
+            "title-strip", "surface-accent", "promo-panel", "compact-ticket",
+            "side-block", "title-strip", "compact-ticket", "surface-accent",
+            "promo-panel", "side-block", "title-strip", "compact-ticket",
+        )[index]
+        image_tier = (
+            "large", "small", "medium", "compact",
+            "medium", "large", "compact", "small",
+            "compact", "medium", "large", "small",
+            "medium", "compact", "small", "large",
+        )[index]
+        vertical_offset = (0, 20, 36, 10, 28, 4, 40, 16, 34, 12, 2, 30, 14, 38, 6, 24)[index]
     price_class = "price price-long" if len(major) + len(symbol) >= 8 else "price"
     return (
         f'<article class="product-card" data-emphasis="{emphasis}" data-merchandising-role="{role}" '
-        f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-composition-group="{composition_group}">'
+        f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-price-treatment="{price_treatment}" '
+        f'data-image-tier="{image_tier}" data-vertical-offset="{vertical_offset}" '
+        f'data-composition-group="{composition_group}" style="--vertical-offset:{vertical_offset}px">'
         f'{image}<div class="price-panel"><span class="{price_class}">{price}</span>{badge}{old}</div>{brand_html}{name}{package}</article>'
     )
 
@@ -485,4 +515,39 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .composition-catalogue-grid .brand-label{font-size:8px}
 .composition-weekly-grid.retail-card-outlined .product-card,.composition-catalogue-grid.retail-card-outlined .product-card{border:0;background:transparent}
 .composition-weekly-grid.retail-card-rounded .product-card,.composition-catalogue-grid.retail-card-rounded .product-card{border:0;border-radius:0;background:transparent;box-shadow:none}
+
+/* Deterministic merchandising geometry: retain safe grid placement while hiding its baselines. */
+.composition-hero-offers .product-card:not([data-merchandising-role="featured"]):not(:last-child):after{right:8%;width:34%;background:#ffffff20}
+.composition-weekly-grid .product-card{padding-top:calc(9px + var(--vertical-offset,0px))}
+.composition-weekly-grid .product-card:before{content:none}
+.composition-weekly-grid .product-card:nth-child(5),.composition-weekly-grid .product-card:nth-child(8){transform:translate(10px,0)}
+.composition-weekly-grid .product-card:nth-child(6),.composition-weekly-grid .product-card:nth-child(9){transform:translate(-7px,0)}
+.composition-weekly-grid .product-card[data-image-tier="small"] .promo-card-image{height:202px;flex-basis:202px}
+.composition-weekly-grid .product-card[data-image-tier="medium"] .promo-card-image{height:236px;flex-basis:236px}
+.composition-weekly-grid .product-card[data-image-tier="large"] .promo-card-image{height:270px;flex-basis:270px}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="promo-panel"] .price-panel{width:92%;background:var(--price-panel,#ffd928);box-shadow:5px 5px 0 #8e101c20}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="compact-ticket"] .price-panel{width:68%;min-height:64px;padding:5px 8px;background:var(--price-panel,#ffd928);box-shadow:3px 3px 0 #8e101c1c}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="surface-accent"] .price-panel{width:82%;min-height:58px;padding:3px 5px 3px 13px;border:0;border-left:9px solid var(--price-panel,#ffd928);border-radius:0;background:transparent;box-shadow:none}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="surface-accent"] .promo-badge{padding:4px 6px;border:0;box-shadow:none}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"]{display:grid;grid-template-columns:minmax(0,58%) minmax(0,42%);grid-template-rows:auto auto auto 1fr;column-gap:5px;align-content:start}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .promo-card-image{grid-column:1;grid-row:1/5;width:100%;margin:0}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .price-panel{grid-column:2;grid-row:1;width:100%;min-height:112px;margin:12px 0 8px;padding:7px 5px;border:0;border-left:10px solid color-mix(in srgb,var(--price-color,#c5161d) 72%,transparent);border-radius:0;background:var(--price-panel,#ffd928);box-shadow:none;grid-template-columns:1fr;grid-template-areas:"badge" "price" "old"}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .promo-badge{justify-self:start}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .brand-label,:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .product-name,:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="side-block"] .product-unit{grid-column:2}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="title-strip"] .price-panel{align-self:flex-end;width:58%;min-height:55px;padding:4px 6px;border:0;border-radius:0;background:linear-gradient(90deg,var(--price-panel,#ffd928) 0 72%,transparent 72%);box-shadow:none}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-price-treatment="title-strip"][data-price-align="start"] .price-panel{align-self:flex-start}
+.composition-catalogue-grid .product-card{height:calc(100% - 8px);padding:calc(5px + var(--vertical-offset,0px)) 7px 5px;margin:0;align-self:start}
+.composition-catalogue-grid .product-card[data-rhythm="b"]{margin:0;align-self:start;transform:translateX(3px)}
+.composition-catalogue-grid .product-card[data-rhythm="c"]{margin:0;align-self:start;transform:translateX(-3px)}
+.composition-catalogue-grid .product-card:after{content:none}
+.composition-catalogue-grid .product-card[data-image-tier="large"] .promo-card-image{height:190px;flex-basis:190px}
+.composition-catalogue-grid .product-card[data-image-tier="medium"] .promo-card-image{height:166px;flex-basis:166px}
+.composition-catalogue-grid .product-card[data-image-tier="small"] .promo-card-image{height:142px;flex-basis:142px}
+.composition-catalogue-grid .product-card[data-image-tier="compact"] .promo-card-image{height:122px;flex-basis:122px}
+.composition-catalogue-grid .product-card[data-price-treatment="compact-ticket"] .price-panel{min-height:50px}
+.composition-catalogue-grid .product-card[data-price-treatment="surface-accent"] .price-panel{min-height:48px}
+.composition-catalogue-grid .product-card[data-price-treatment="side-block"]{grid-template-columns:minmax(0,56%) minmax(0,44%)}
+.composition-catalogue-grid .product-card[data-price-treatment="side-block"] .price-panel{min-height:96px;margin-top:5px}
+.composition-catalogue-grid .product-card[data-price-treatment="side-block"] .price{font-size:22px}
+.composition-catalogue-grid .product-card[data-price-treatment="title-strip"] .price-panel{min-height:46px}
 """

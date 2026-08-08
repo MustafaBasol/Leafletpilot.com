@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import re
 
 import pytest
 
@@ -187,6 +188,10 @@ def test_weekly_and_compact_compositions_hide_the_safe_grid_with_grouped_whitesp
     assert ".composition-weekly-grid .product-card{grid-column:span 4;border:0;border-radius:0;background:transparent" in weekly
     assert ".composition-weekly-grid.retail-card-outlined .product-card" in weekly
     assert "border:0;background:transparent" in weekly
+    weekly_treatments = re.findall(r'<article[^>]+data-price-treatment="([^"]+)"', weekly)
+    assert len(weekly_treatments) == 9
+    assert len(set(weekly_treatments)) >= 5
+    assert len(re.findall(r'<article[^>]+data-vertical-offset="([^"]+)"', weekly)) == 9
 
     compact = render_render_payload_html(
         {
@@ -195,13 +200,19 @@ def test_weekly_and_compact_compositions_hide_the_safe_grid_with_grouped_whitesp
         },
         generated_at=datetime.now(UTC),
     )
-    for band in range(1, 5):
-        assert compact.count(f'data-composition-group="dense-band-{band}"') == 4
+    for cluster in ("a", "b", "c", "d"):
+        assert f'data-composition-group="cluster-{cluster}"' in compact
+    compact_treatments = re.findall(r'<article[^>]+data-price-treatment="([^"]+)"', compact)
+    compact_tiers = re.findall(r'<article[^>]+data-image-tier="([^"]+)"', compact)
+    compact_offsets = re.findall(r'<article[^>]+data-vertical-offset="([^"]+)"', compact)
+    assert len(set(compact_treatments)) == 5
+    assert len(set(compact_tiers)) == 4
+    assert len(set(compact_offsets)) == 16
     assert ".composition-catalogue-grid .product-grid{grid-template-columns:repeat(24" in compact
     assert "background:color-mix(in srgb,var(--card-bg,#fff8e7) 96%,#fff)" in compact
     assert ".composition-catalogue-grid .product-card{grid-column:span 5" in compact
     assert "border:0;border-radius:0;background:transparent" in compact
-    assert ".composition-catalogue-grid .product-card:nth-child(4n+2):after" in compact
+    assert ".composition-catalogue-grid .product-card:after{content:none}" in compact
 
 def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():
     html = render_render_payload_html(

@@ -2549,6 +2549,22 @@ tbody tr:hover {
 .template-preview-page.is-supermarket article[data-rhythm="c"] .template-preview-price{width:80%}
 .template-preview-page.density-editorial article[data-merchandising-role="featured"] .template-preview-price{width:90%}
 .template-preview-page.density-weekly.retail-card-shadow .template-preview-products article,.template-preview-page.density-weekly.retail-card-outlined .template-preview-products article,.template-preview-page.density-weekly.retail-card-rounded .template-preview-products article,.template-preview-page.density-compact.retail-card-shadow .template-preview-products article,.template-preview-page.density-compact.retail-card-outlined .template-preview-products article,.template-preview-page.density-compact.retail-card-rounded .template-preview-products article{border:0;border-radius:0;background:transparent;box-shadow:none}
+.template-preview-page.density-weekly .template-preview-products article,.template-preview-page.density-compact .template-preview-products article{padding-top:calc(2px + var(--vertical-offset,0px));border:0;background:transparent}
+.template-preview-page.density-weekly article[data-image-tier="small"] .template-preview-image{flex-basis:35%}
+.template-preview-page.density-weekly article[data-image-tier="medium"] .template-preview-image{flex-basis:43%}
+.template-preview-page.density-weekly article[data-image-tier="large"] .template-preview-image{flex-basis:50%}
+.template-preview-page.density-compact article[data-image-tier="compact"] .template-preview-image{flex-basis:27%}
+.template-preview-page.density-compact article[data-image-tier="small"] .template-preview-image{flex-basis:34%}
+.template-preview-page.density-compact article[data-image-tier="medium"] .template-preview-image{flex-basis:42%}
+.template-preview-page.density-compact article[data-image-tier="large"] .template-preview-image{flex-basis:50%}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="promo-panel"] .template-preview-price{width:92%;background:var(--retail-price-panel)}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="compact-ticket"] .template-preview-price{width:68%;padding:2px 3px;background:var(--retail-price-panel)}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="surface-accent"] .template-preview-price{width:82%;padding-left:5px;border:0;border-left:3px solid var(--retail-price-panel);background:transparent;box-shadow:none}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]{display:grid;grid-template-columns:58% 42%;grid-template-rows:auto auto auto 1fr;column-gap:2px}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"] .template-preview-image{grid-column:1;grid-row:1/5;width:100%}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"] .template-preview-price{grid-column:2;grid-row:1;width:100%;align-self:start;padding:2px;border-left:3px solid var(--retail-price);border-radius:0}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>mark,.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>span,.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>small{grid-column:2}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="title-strip"] .template-preview-price{align-self:flex-end;width:58%;background:linear-gradient(90deg,var(--retail-price-panel) 0 72%,transparent 72%);box-shadow:none}
 
 .template-source {
   display: inline-flex;

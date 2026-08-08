@@ -52,10 +52,24 @@ function previewMerchandisingRole(densityName, index) {
   return secondary.has(index) ? "secondary" : compact.has(index) ? "compact" : "standard";
 }
 
-function previewCompositionGroup(densityName, index) {
-  if (densityName === "editorial") return index === 0 ? "hero" : "support";
-  if (densityName === "weekly") return index < 3 ? "lead-zone" : index < 6 ? "offer-cluster-a" : "offer-cluster-b";
-  return `dense-band-${Math.floor(index / 4) + 1}`;
+const weeklyPriceTreatments = ["promo-panel", "compact-ticket", "surface-accent", "side-block", "title-strip", "compact-ticket", "surface-accent", "promo-panel", "title-strip"];
+const compactPriceTreatments = ["promo-panel", "compact-ticket", "surface-accent", "side-block", "title-strip", "surface-accent", "promo-panel", "compact-ticket", "side-block", "title-strip", "compact-ticket", "surface-accent", "promo-panel", "side-block", "title-strip", "compact-ticket"];
+const compactGroups = ["cluster-a", "cluster-a", "cluster-b", "cluster-b", "cluster-a", "cluster-a", "cluster-b", "cluster-c", "cluster-d", "cluster-d", "cluster-c", "cluster-c", "cluster-d", "cluster-d", "cluster-c", "cluster-d"];
+
+function previewCompositionData(densityName, index) {
+  if (densityName === "editorial") return { group: index === 0 ? "hero" : "support", price: "promo-panel", tier: index === 0 ? "hero" : ["medium", "small", "large"][(index - 1) % 3], offset: 0 };
+  if (densityName === "weekly") return {
+    group: index < 3 ? "lead-zone" : index < 6 ? "offer-cluster-a" : "offer-cluster-b",
+    price: weeklyPriceTreatments[index],
+    tier: ["hero", "small", "medium", "large", "small", "medium", "large", "medium", "small"][index],
+    offset: [0, 26, 10, 18, 2, 34, 8, 24, 14][index],
+  };
+  return {
+    group: compactGroups[index],
+    price: compactPriceTreatments[index],
+    tier: ["large", "small", "medium", "compact", "medium", "large", "compact", "small", "compact", "medium", "large", "small", "medium", "compact", "small", "large"][index],
+    offset: [0, 20, 36, 10, 28, 4, 40, 16, 34, 12, 2, 30, 14, 38, 6, 24][index],
+  };
 }
 export function TemplateBuilderModal({ template, presets, busy, error, onClose, onSave }) {
   const targetKey = template?.id ? `edit:${template.id}` : "create";
@@ -135,14 +149,18 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
           <div className="template-preview-products" style={isSupermarket ? undefined : { gridTemplateColumns: `repeat(${config.columns}, 1fr)`, gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))` }}>
             {Array.from({ length: config.slot_count }, (_, index) => {
               const role = previewMerchandisingRole(densityName, index);
-              const compositionGroup = previewCompositionGroup(densityName, index);
+              const composition = previewCompositionData(densityName, index);
               return <article
                 key={index}
                 data-emphasis={role === "featured" ? "featured" : "normal"}
                 data-merchandising-role={role}
                 data-rhythm={["a", "b", "c"][index % 3]}
                 data-price-align={["start", "end", "start", "center"][index % 4]}
-                data-composition-group={compositionGroup}
+                data-price-treatment={composition.price}
+                data-image-tier={composition.tier}
+                data-vertical-offset={composition.offset}
+                data-composition-group={composition.group}
+                style={{ "--vertical-offset": `${composition.offset * 0.18}px` }}
               >
                 {config.show_product_image ? <div className="template-preview-image" data-image-stage={config.image_treatment}><span>{index % 3 === 0 ? "Şişe" : index % 3 === 1 ? "Paket" : "Kutu"}</span></div> : null}
                 <div className="template-preview-price"><strong>49<sup>,90</sup><i>₺</i></strong>{config.show_discount_badge ? <b>FIRSAT</b> : null}{config.show_old_price ? <del>59,90 ₺</del> : null}</div>
