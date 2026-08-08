@@ -2474,8 +2474,8 @@ tbody tr:hover {
 }
 
 .template-preview-page.is-supermarket{position:relative;background:radial-gradient(circle at 92% 4%,color-mix(in srgb,var(--retail-price-panel) 22%,transparent) 0 12%,transparent 12.5%),linear-gradient(150deg,var(--template-primary),var(--template-background))}
-.template-preview-page.is-supermarket header{flex-basis:11%;border-radius:3px;border-bottom:1px solid #ffffff66;background:transparent}
-.template-preview-page.retail-header-burst header{padding-left:12px;background:linear-gradient(110deg,#ffffff18,transparent 65%)}
+.template-preview-page.is-supermarket header{flex-basis:10%;border-radius:0;border-bottom:1px solid #ffffff38;background:transparent}
+.template-preview-page.retail-header-burst header{padding-left:10px;background:linear-gradient(110deg,#ffffff0d,transparent 58%)}
 .template-preview-page.retail-header-band header{border:0;border-top:4px solid var(--retail-price-panel);border-bottom:4px solid var(--retail-price-panel);border-radius:0;background:var(--template-background)}
 .template-preview-page.retail-header-minimal header{border:0;border-left:5px solid var(--retail-price-panel);border-radius:0;background:#00000012}
 .template-preview-page.is-supermarket .template-preview-products article{border:0;border-bottom:1px solid color-mix(in srgb,var(--retail-border) 48%,transparent);border-radius:3px;background:color-mix(in srgb,var(--retail-card) 90%,transparent);box-shadow:none}
@@ -2504,6 +2504,67 @@ tbody tr:hover {
 .template-preview-page.density-editorial article:nth-child(3n) .template-preview-price{width:76%}
 .template-preview-page.density-weekly .template-preview-products,.template-preview-page.density-compact .template-preview-products{gap:0;padding:3px;background:color-mix(in srgb,var(--retail-card) 91%,transparent)}
 .template-preview-page.density-weekly.retail-card-shadow .template-preview-products article,.template-preview-page.density-compact.retail-card-shadow .template-preview-products article{border:0;border-right:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-bottom:1px solid color-mix(in srgb,var(--retail-border) 36%,transparent);border-radius:0;background:transparent;box-shadow:none}
+
+.retail-layout-hint{margin:0 0 10px;color:var(--neutral-600);font-size:12px;line-height:1.4}
+.template-preview-page.density-editorial .template-preview-products{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(3,minmax(0,1fr));gap:6px 8px;padding:0;background:transparent}
+.template-preview-page.density-editorial .template-preview-products article{border:0;border-radius:0;background:transparent;box-shadow:none}
+.template-preview-page.density-editorial .template-preview-products article[data-merchandising-role="featured"]{grid-column:1;grid-row:1/4;padding:7px;background:radial-gradient(circle at 48% 38%,#ffffff38,transparent 68%)}
+.template-preview-page.density-editorial .template-preview-products article:not([data-merchandising-role="featured"]){grid-column:2;padding:2px 4px 2px 1px;background:transparent}
+.template-preview-page.density-editorial .template-preview-products article:not([data-merchandising-role="featured"]):not(:last-child):after{content:"";position:absolute;right:4%;bottom:0;width:62%;height:1px;background:#ffffff35}
+.template-preview-page.density-editorial .template-preview-products article:nth-child(2){transform:translateX(-2px)}
+.template-preview-page.density-editorial .template-preview-products article:nth-child(3){transform:translateX(3px)}
+.template-preview-page.density-editorial article[data-merchandising-role="featured"] .template-preview-image{flex-basis:68%}
+.template-preview-page.density-editorial article:nth-child(2) .template-preview-image{flex-basis:46%}
+.template-preview-page.density-editorial article:nth-child(3) .template-preview-image{flex-basis:40%}
+.template-preview-page.density-editorial article:nth-child(4) .template-preview-image{flex-basis:50%}
+.template-preview-page.density-editorial article[data-merchandising-role="featured"] .template-preview-price strong{font-size:25px}
+.template-preview-page.density-editorial article:not([data-merchandising-role="featured"]) .template-preview-price strong{font-size:14px}
+.template-preview-page.density-weekly .template-preview-products{grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:1.08fr .96fr .96fr;column-gap:5px;row-gap:8px;padding:4px 5px;background:color-mix(in srgb,var(--retail-card) 96%,white);border-radius:5px 5px 2px 2px}
+.template-preview-page.density-weekly .template-preview-products article{grid-column:span 4;border:0;border-radius:0;background:transparent;box-shadow:none}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(1){grid-column:span 7;background:radial-gradient(circle at 48% 46%,#fff 0,#ffffff42 58%,transparent 76%)}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(2){grid-column:span 3}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(3){grid-column:span 2}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(4),.template-preview-page.density-weekly .template-preview-products article:nth-child(9){grid-column:span 5}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(5),.template-preview-page.density-weekly .template-preview-products article:nth-child(8){grid-column:span 4;transform:translateY(2px)}
+.template-preview-page.density-weekly .template-preview-products article:nth-child(6),.template-preview-page.density-weekly .template-preview-products article:nth-child(7){grid-column:span 3}
+.template-preview-page.density-weekly article[data-merchandising-role="featured"] .template-preview-image{flex-basis:52%}
+.template-preview-page.density-weekly article[data-merchandising-role="secondary"] .template-preview-image{flex-basis:43%}
+.template-preview-page.density-weekly article[data-rhythm="a"] .template-preview-image{flex-basis:48%}
+.template-preview-page.density-weekly article[data-rhythm="b"] .template-preview-image{flex-basis:40%}
+.template-preview-page.density-weekly article[data-rhythm="c"] .template-preview-image{flex-basis:45%}
+.template-preview-page.density-weekly article[data-merchandising-role="featured"] .template-preview-price strong{font-size:18px}
+.template-preview-page.density-compact .template-preview-products{grid-template-columns:repeat(24,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));column-gap:4px;row-gap:7px;padding:5px;background:color-mix(in srgb,var(--retail-card) 96%,white);border-radius:4px 4px 1px 1px}
+.template-preview-page.density-compact .template-preview-products article{grid-column:span 5;height:calc(100% - 3px);border:0;border-radius:0;background:transparent;box-shadow:none}
+.template-preview-page.density-compact .template-preview-products article[data-rhythm="b"]{align-self:end;margin-top:3px;transform:translateX(2px)}
+.template-preview-page.density-compact .template-preview-products article[data-rhythm="c"]{transform:translateX(-1px)}
+.template-preview-page.density-compact .template-preview-products article:nth-child(8n+1),.template-preview-page.density-compact .template-preview-products article:nth-child(8n+4),.template-preview-page.density-compact .template-preview-products article:nth-child(8n+6),.template-preview-page.density-compact .template-preview-products article:nth-child(8n+7){grid-column:span 7}
+.template-preview-page.density-compact article[data-merchandising-role="secondary"] .template-preview-image{flex-basis:49%}
+.template-preview-page.density-compact article[data-merchandising-role="standard"] .template-preview-image{flex-basis:42%}
+.template-preview-page.density-compact article[data-merchandising-role="compact"] .template-preview-image{flex-basis:35%}
+.template-preview-page.is-supermarket article[data-price-align="start"] .template-preview-price{align-self:flex-start}
+.template-preview-page.is-supermarket article[data-price-align="end"] .template-preview-price{align-self:flex-end}
+.template-preview-page.is-supermarket article[data-price-align="center"] .template-preview-price{align-self:center}
+.template-preview-page.is-supermarket article[data-rhythm="a"] .template-preview-price{width:90%}
+.template-preview-page.is-supermarket article[data-rhythm="b"] .template-preview-price{width:70%}
+.template-preview-page.is-supermarket article[data-rhythm="c"] .template-preview-price{width:80%}
+.template-preview-page.density-editorial article[data-merchandising-role="featured"] .template-preview-price{width:90%}
+.template-preview-page.density-weekly.retail-card-shadow .template-preview-products article,.template-preview-page.density-weekly.retail-card-outlined .template-preview-products article,.template-preview-page.density-weekly.retail-card-rounded .template-preview-products article,.template-preview-page.density-compact.retail-card-shadow .template-preview-products article,.template-preview-page.density-compact.retail-card-outlined .template-preview-products article,.template-preview-page.density-compact.retail-card-rounded .template-preview-products article{border:0;border-radius:0;background:transparent;box-shadow:none}
+.template-preview-page.density-weekly .template-preview-products article,.template-preview-page.density-compact .template-preview-products article{padding-top:calc(2px + var(--vertical-offset,0px));border:0;background:transparent}
+.template-preview-page.density-weekly article[data-image-tier="small"] .template-preview-image{flex-basis:35%}
+.template-preview-page.density-weekly article[data-image-tier="medium"] .template-preview-image{flex-basis:43%}
+.template-preview-page.density-weekly article[data-image-tier="large"] .template-preview-image{flex-basis:50%}
+.template-preview-page.density-compact article[data-image-tier="compact"] .template-preview-image{flex-basis:27%}
+.template-preview-page.density-compact article[data-image-tier="small"] .template-preview-image{flex-basis:34%}
+.template-preview-page.density-compact article[data-image-tier="medium"] .template-preview-image{flex-basis:42%}
+.template-preview-page.density-compact article[data-image-tier="large"] .template-preview-image{flex-basis:50%}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="promo-panel"] .template-preview-price{width:92%;background:var(--retail-price-panel)}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="compact-ticket"] .template-preview-price{width:68%;padding:2px 3px;background:var(--retail-price-panel)}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="surface-accent"] .template-preview-price{width:82%;padding-left:5px;border:0;border-left:3px solid var(--retail-price-panel);background:transparent;box-shadow:none}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]{display:grid;grid-template-columns:58% 42%;grid-template-rows:auto auto auto 1fr;column-gap:2px}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"] .template-preview-image{grid-column:1;grid-row:1/5;width:100%}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"] .template-preview-price{grid-column:2;grid-row:1;width:100%;align-self:start;padding:2px;border-left:3px solid var(--retail-price);border-radius:0}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>mark,.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>span,.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="side-block"]>small{grid-column:2}
+.template-preview-page:is(.density-weekly,.density-compact) article[data-price-treatment="title-strip"] .template-preview-price{align-self:flex-end;width:58%;background:linear-gradient(90deg,var(--retail-price-panel) 0 72%,transparent 72%);box-shadow:none}
 
 .template-source {
   display: inline-flex;

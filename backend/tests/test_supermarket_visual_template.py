@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import re
 
 import pytest
 
@@ -150,20 +151,68 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         },
         generated_at=datetime.now(UTC),
     )
-    assert 'border:0;border-bottom:1px solid color-mix' in html
-    assert 'data-emphasis="featured" data-rhythm="a"' in html
+    assert '.composition-hero-offers .product-card{border:0;border-radius:0;background:transparent' in html
+    assert html.count('data-composition-group="hero"') == 1
+    assert html.count('data-composition-group="support"') == 3
+    assert 'data-emphasis="featured" data-merchandising-role="featured"' in html
     assert html.count('<article class="product-card" data-emphasis="featured"') == 1
     assert 'data-rhythm="b"' in html and 'data-rhythm="c"' in html
 
     weekly = render_render_payload_html(
         {
             "template_slug": "supermarket-promo-9",
-            "items": [{"name": "Offer", "price": "9.99", "emphasis": "featured"}],
+            "items": [
+                {"name": "Standard first", "price": "9.99"},
+                {"name": "Explicit hero", "price": "7.99", "emphasis": "featured"},
+            ],
         },
         generated_at=datetime.now(UTC),
     )
-    assert 'data-emphasis="normal"' in weekly
+    assert weekly.index("Explicit hero") < weekly.index("Standard first")
+    assert weekly.count('<article class="product-card" data-emphasis="featured" data-merchandising-role="featured"') == 1
+    assert 'data-merchandising-role="secondary"' in weekly
 
+
+def test_weekly_and_compact_compositions_hide_the_safe_grid_with_grouped_whitespace():
+    weekly = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(9)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert weekly.count('data-composition-group="lead-zone"') == 3
+    assert weekly.count('data-composition-group="offer-cluster-a"') == 3
+    assert weekly.count('data-composition-group="offer-cluster-b"') == 3
+    assert ".composition-weekly-grid .product-card:nth-child(4),.composition-weekly-grid .product-card:nth-child(9){grid-column:span 5}" in weekly
+    assert ".composition-weekly-grid .product-card{grid-column:span 4;border:0;border-radius:0;background:transparent" in weekly
+    assert ".composition-weekly-grid.retail-card-outlined .product-card" in weekly
+    assert "border:0;background:transparent" in weekly
+    weekly_treatments = re.findall(r'<article[^>]+data-price-treatment="([^"]+)"', weekly)
+    assert len(weekly_treatments) == 9
+    assert len(set(weekly_treatments)) >= 5
+    assert len(re.findall(r'<article[^>]+data-vertical-offset="([^"]+)"', weekly)) == 9
+
+    compact = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-16",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(16)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    for cluster in ("a", "b", "c", "d"):
+        assert f'data-composition-group="cluster-{cluster}"' in compact
+    compact_treatments = re.findall(r'<article[^>]+data-price-treatment="([^"]+)"', compact)
+    compact_tiers = re.findall(r'<article[^>]+data-image-tier="([^"]+)"', compact)
+    compact_offsets = re.findall(r'<article[^>]+data-vertical-offset="([^"]+)"', compact)
+    assert len(set(compact_treatments)) == 5
+    assert len(set(compact_tiers)) == 4
+    assert len(set(compact_offsets)) == 16
+    assert ".composition-catalogue-grid .product-grid{grid-template-columns:repeat(24" in compact
+    assert "background:color-mix(in srgb,var(--card-bg,#fff8e7) 96%,#fff)" in compact
+    assert ".composition-catalogue-grid .product-card{grid-column:span 5" in compact
+    assert "border:0;border-radius:0;background:transparent" in compact
+    assert ".composition-catalogue-grid .product-card:after{content:none}" in compact
 
 def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():
     html = render_render_payload_html(
