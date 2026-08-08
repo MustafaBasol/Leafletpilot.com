@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html.parser import HTMLParser
 from uuid import uuid4
@@ -13,9 +14,21 @@ from app.api.deps import get_catalog_session, get_current_user
 from app.core.config import settings
 from app.core.database import Base
 from app.main import app
-from app.models import Brand, Campaign, CampaignItem, Market, MarketUser, Product, ProductImage, Template, User
+from app.models import (
+    Brand,
+    Campaign,
+    CampaignItem,
+    ExportJob,
+    Market,
+    MarketUser,
+    Product,
+    ProductImage,
+    Template,
+    User,
+)
 from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
+from app.services import campaign as campaign_service
 from app.services.campaign import recalculate_campaign_counts
 
 client = TestClient(app)
@@ -197,6 +210,69 @@ def test_campaign_count_recalculation_uses_non_excluded_items() -> None:
     assert campaign.matched_count == 2
     assert campaign.missing_count == 3
     assert campaign.low_confidence_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_export_job_is_retried_but_active_job_is_reused(monkeypatch) -> None:
+    market_id = uuid4()
+    campaign_id = uuid4()
+    now = datetime.now(UTC)
+    campaign = Campaign(id=campaign_id, market_id=market_id, title="Restart recovery", frozen_at=now)
+    existing = ExportJob(
+        id=uuid4(),
+        campaign_id=campaign_id,
+        market_id=market_id,
+        job_type="final_export",
+        status="running",
+        requested_formats=["pdf", "png"],
+        created_at=now - timedelta(minutes=10),
+        started_at=now - timedelta(minutes=10),
+    )
+    rendered_job_ids = []
+
+    class SessionDouble:
+        async def scalar(self, statement):
+            return existing
+
+        async def refresh(self, value):
+            return None
+
+    async def fake_get_campaign(session, requested_campaign_id, requested_market_id):
+        assert requested_campaign_id == campaign_id
+        assert requested_market_id == market_id
+        return campaign
+
+    async def fake_render_campaign_export(session, **kwargs):
+        rendered_job_ids.append(kwargs["export_job_id"])
+        existing.status = "completed"
+        return []
+
+    monkeypatch.setattr(campaign_service, "get_campaign", fake_get_campaign)
+    monkeypatch.setattr(campaign_service, "render_campaign_export", fake_render_campaign_export)
+
+    result = await campaign_service.create_export_job(
+        SessionDouble(),
+        campaign_id,
+        ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
+        market_id,
+    )
+
+    assert result is existing
+    assert rendered_job_ids == [existing.id]
+
+    existing.status = "running"
+    existing.started_at = datetime.now(UTC)
+    rendered_job_ids.clear()
+
+    result = await campaign_service.create_export_job(
+        SessionDouble(),
+        campaign_id,
+        ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
+        market_id,
+    )
+
+    assert result is existing
+    assert rendered_job_ids == []
 
 
 @pytest.mark.asyncio

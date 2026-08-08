@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +40,7 @@ from app.services.entitlements import has_capacity, resolve_capabilities, resolv
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
 LOW_CONFIDENCE_STATUS = "low_confidence"
+EXPORT_JOB_RECOVERY_AFTER = timedelta(minutes=5)
 
 
 def require_market_id(market_id: UUID | None) -> UUID:
@@ -480,9 +481,20 @@ async def create_export_job(
             ExportJob.job_type == (payload.job_type or "final_export"),
             ExportJob.status.in_(["queued", "running", "completed"]),
             ExportJob.requested_formats == formats,
-        ).order_by(ExportJob.created_at.desc())
+        ).order_by(ExportJob.created_at.desc()).with_for_update()
     )
     if existing is not None:
+        if existing.status == "completed" or not _export_job_is_stale(existing):
+            return existing
+        await render_campaign_export(
+            session,
+            market_id=campaign.market_id,
+            campaign_id=campaign.id,
+            requested_formats=formats,
+            export_job_id=existing.id,
+            commit=commit,
+        )
+        await session.refresh(existing)
         return existing
     market = campaign.market or await session.get(Market, campaign.market_id)
     capabilities = resolve_capabilities(market)
@@ -526,6 +538,15 @@ async def create_export_job(
     )
     await session.refresh(export_job)
     return export_job
+
+
+def _export_job_is_stale(export_job: ExportJob, *, now: datetime | None = None) -> bool:
+    reference = export_job.started_at or export_job.created_at
+    if reference is None:
+        return True
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+    return (now or datetime.now(UTC)) - reference >= EXPORT_JOB_RECOVERY_AFTER
 
 
 async def list_export_jobs(

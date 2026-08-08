@@ -105,7 +105,15 @@ async def render_campaign_export(
     export_job.attempts = (export_job.attempts or 0) + 1
     export_job.started_at = datetime.now(UTC)
     export_job.error_message = None
-    await session.flush()
+    export_job.completed_at = None
+    export_job.failed_at = None
+    export_job.result_file_ids = []
+    if commit:
+        # Persist the active claim before Chromium work. A container exit can
+        # then be distinguished from an in-flight request and safely retried.
+        await session.commit()
+    else:
+        await session.flush()
 
     created_files: list[CampaignFile] = []
     try:

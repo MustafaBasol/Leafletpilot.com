@@ -103,6 +103,7 @@ services:
     stop_grace_period: 30s
     networks:
       - app
+      - egress
 
   frontend:
     build:
@@ -203,4 +204,7 @@ volumes:
 networks:
   app:
     internal: true
+  egress:
+    driver: bridge
+    internal: false
 
