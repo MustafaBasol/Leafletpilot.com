@@ -60,7 +60,12 @@ function Page({ path, sessionVersion }) {
   if (!canAccessPilotPath(pathname)) return <Dashboard />;
   if (pathname === "/dashboard") return <Dashboard />;
   if (pathname === "/campaigns") return <Campaigns />;
-  if (pathname === "/campaigns/new") return <NewCampaign />;
+  if (pathname === "/campaigns/new") {
+    return <NewCampaign sourceCampaignId={new URLSearchParams(search).get("source") || ""} />;
+  }
+  if (pathname.startsWith("/campaigns/") && pathname.endsWith("/edit")) {
+    return <NewCampaign editCampaignId={pathname.slice("/campaigns/".length, -"/edit".length)} />;
+  }
   if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
   if (pathname === "/products") return <MarketCatalog action={action} />;
   if (path === "/categories") return <Categories />;

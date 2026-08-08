@@ -470,11 +470,15 @@ export async function resolveCampaignItem(campaignId, item, resolutionStatus, su
 export async function createCampaignExportJob(campaignId, requestedFormats = ["pdf", "png"]) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
-  return campaignApi.createExportJob(
+  const job = await campaignApi.createExportJob(
     campaignId,
     { job_type: "final_export", requested_formats: requestedFormats, status: "queued" },
     marketId,
   );
+  if (job?.status === "failed") {
+    throw new Error(job.error_message || "Çıktı üretilemedi. Lütfen tekrar deneyin.");
+  }
+  return job;
 }
 
 export async function downloadCampaignFile(campaignId, file) {

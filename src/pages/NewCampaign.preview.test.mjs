@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const page = readFileSync(new URL("./NewCampaign.jsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
 
 test("template gallery uses inert scaled thumbnails", () => {
   assert.match(page, /template-thumbnail/);
@@ -70,4 +71,13 @@ test("campaign product thumbnails use deterministic authenticated image cache ke
   assert.match(page, /imageUrl=\{product\.image_url\}/);
   assert.match(page, /refreshKey=\{product\.image_url\}/);
   assert.doesNotMatch(page, /refreshKey=\{(?:Math\.random|Date\.now)/);
+});
+
+test("saved drafts and frozen campaign revisions reopen in the shared builder", () => {
+  assert.match(app, /sourceCampaignId=\{new URLSearchParams\(search\)\.get\("source"\)/);
+  assert.match(app, /editCampaignId=\{pathname\.slice\("/);
+  assert.match(page, /campaignToLoad \? getCampaign\(campaignToLoad, selectedMarketId\)/);
+  assert.match(page, /setCampaignId\(isRevision \? "" : loadedCampaign\.id\)/);
+  assert.match(page, /window\.location\.hash = `#\/campaigns\/\$\{id\}\/edit`/);
+  assert.match(page, /Önceki kampanya yeni bir revizyon olarak yüklendi/);
 });

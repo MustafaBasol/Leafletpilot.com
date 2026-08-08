@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import { getSelectedMarket, getSelectedMarketId, getStoredMarkets } from "../api/authSession.js";
-import { createCampaign, createExportJob, finalizeCampaign, getCampaignBuilderOptions, getCampaignPreviewHtml, parseCampaignText, updateCampaign } from "../api/campaignApi.js";
+import { createCampaign, createExportJob, finalizeCampaign, getCampaign, getCampaignBuilderOptions, getCampaignPreviewHtml, parseCampaignText, updateCampaign } from "../api/campaignApi.js";
 import { getTemplatePreviewHtml } from "../api/templateApi.js";
 import { Button, Card, Input, PageHeader, ProductThumbnail, Stepper, Table } from "../components/ui/index.js";
 
@@ -21,7 +21,7 @@ function catalogItemToPayload(product, index) {
   return { raw_line: product.name, incoming_name: product.name, market_product_id: product.id, sort_order: index };
 }
 
-export function NewCampaign() {
+export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {}) {
   const selectedMarketId = getSelectedMarketId();
   const storedMarket = getSelectedMarket();
   const marketOptions = getStoredMarkets();
@@ -47,7 +47,7 @@ export function NewCampaign() {
   const [productCategory, setProductCategory] = useState("");
   const [productBrand, setProductBrand] = useState("");
   const [builderConfig, setBuilderConfig] = useState({ headline: "", subtitle: "", footer: "" });
-  const [campaignId, setCampaignId] = useState("");
+  const [campaignId, setCampaignId] = useState(editCampaignId);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
@@ -76,12 +76,64 @@ export function NewCampaign() {
     let mounted = true;
     setBuilderLoading(true);
     setBuilderLoadError("");
-    getCampaignBuilderOptions(selectedMarketId).then((response) => {
+    const campaignToLoad = editCampaignId || sourceCampaignId;
+    Promise.all([
+      getCampaignBuilderOptions(selectedMarketId),
+      campaignToLoad ? getCampaign(campaignToLoad, selectedMarketId) : Promise.resolve(null),
+    ]).then(([response, loadedCampaign]) => {
       if (!mounted) return;
       const templates = response?.templates || [];
+      const products = (response?.products || []).filter((product) => product.is_active !== false);
       setTemplateItems(templates);
-      setBuilderProducts( (response?.products || []).filter((product) => product.is_active !== false));
+      setBuilderProducts(products);
       setSelectedTemplate((current) => current && templates.some((template) => template.id === current) ? current : templates[0]?.id || "");
+      if (loadedCampaign) {
+        const isRevision = Boolean(sourceCampaignId);
+        const loadedTemplateId = templates.some((template) => template.id === loadedCampaign.template_id)
+          ? loadedCampaign.template_id
+          : templates[0]?.id || "";
+        const productById = new Map(products.map((product) => [product.id, product]));
+        const campaignItems = loadedCampaign.items || [];
+        const selected = campaignItems.map((item) => productById.get(item.market_product_id)).filter(Boolean);
+        const unavailableCount = campaignItems.filter((item) => item.market_product_id && !productById.has(item.market_product_id)).length;
+        const usesCatalog = loadedCampaign.source_type === "manual" && campaignItems.every((item) => item.market_product_id);
+        setCampaignName(isRevision ? `${loadedCampaign.title} - Revizyon` : loadedCampaign.title);
+        setCurrency(loadedCampaign.currency || "EUR");
+        setLanguage(loadedCampaign.language || "tr");
+        setChannel(loadedCampaign.channel || "panel");
+        setSelectedTemplate(loadedTemplateId);
+        setBuilderConfig(loadedCampaign.builder_config_json || { headline: "", subtitle: "", footer: "" });
+        setRawText(loadedCampaign.raw_input_text || "");
+        setCampaignId(isRevision ? "" : loadedCampaign.id);
+        if (usesCatalog) {
+          setInputMode("catalog");
+          setSelectedProducts(selected);
+          setParsedItems([]);
+        } else {
+          setInputMode("text");
+          setParsedItems(campaignItems.map((item) => ({
+            raw_line: item.raw_line,
+            incoming_name: item.incoming_name,
+            display_name: item.display_name,
+            price: item.price,
+            old_price: item.old_price,
+            currency: item.currency,
+            unit_label: item.unit_label,
+            quantity_label: item.quantity_label,
+            category_hint: item.category_hint,
+            sort_order: item.sort_order,
+            parsed_payload: item.parsed_payload || {},
+          })));
+          setSelectedProducts([]);
+        }
+        if (!templates.some((template) => template.id === loadedCampaign.template_id)) {
+          setApiError("Önceki şablon artık kullanılamıyor. Devam etmeden önce mevcut bir şablon seçin.");
+        } else if (unavailableCount) {
+          setApiError(`${unavailableCount} katalog ürünü artık kullanılamıyor. Devam etmeden önce yerine ürün seçin.`);
+        } else {
+          setNotice(isRevision ? "Önceki kampanya yeni bir revizyon olarak yüklendi." : "Kaydedilmiş taslak düzenleme için yüklendi.");
+        }
+      }
       Promise.all(templates.map(async (template) => {
         try { return [template.id, (await getTemplatePreviewHtml(template.id, selectedMarketId))?.html || ""]; } catch { return [template.id, ""]; }
       })).then((entries) => mounted && setTemplatePreviews(Object.fromEntries(entries)));
@@ -92,7 +144,7 @@ export function NewCampaign() {
       setBuilderLoadError(errorText(error));
     });
     return () => { mounted = false; };
-  }, [selectedMarketId, builderLoadAttempt]);
+  }, [selectedMarketId, builderLoadAttempt, editCampaignId, sourceCampaignId]);
 
   const clearMessages = () => { setApiError(""); setNotice(""); };
   const toggleProduct = (product) => setSelectedProducts((current) => current.some((item) => item.id === product.id) ? current.filter((item) => item.id !== product.id) : [...current, product]);
@@ -139,7 +191,17 @@ export function NewCampaign() {
   }
 
   async function saveDraft() {
-    try { setIsBusy(true); clearMessages(); const id = await persistDraft(); setNotice(`Taslak kaydedildi: ${id}`); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); }
+    try {
+      setIsBusy(true);
+      clearMessages();
+      const id = await persistDraft();
+      setNotice(`Taslak kaydedildi: ${id}`);
+      if (!editCampaignId) window.location.hash = `#/campaigns/${id}/edit`;
+    } catch (error) {
+      setApiError(errorText(error));
+    } finally {
+      setIsBusy(false);
+    }
   }
 
   async function finishCampaign() {
