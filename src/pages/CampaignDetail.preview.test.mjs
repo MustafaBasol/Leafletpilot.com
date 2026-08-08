@@ -5,6 +5,7 @@ import { test } from "node:test";
 const page = readFileSync(new URL("./CampaignDetail.jsx", import.meta.url), "utf8");
 const fileCard = readFileSync(new URL("../components/ui/FileCard.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../api/campaignApi.js", import.meta.url), "utf8");
+const dataSource = readFileSync(new URL("../data/dataSource.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
 test("authenticated PDF and PNG previews use the scoped file endpoint", () => {
@@ -49,4 +50,16 @@ test("preview remeasurement is reused without synthetic resize events", () => {
   assert.match(page, /window\.addEventListener\("resize", measurePreview\)/);
   assert.match(page, /requestAnimationFrame\(measurePreview\)/);
   assert.doesNotMatch(page, /dispatchEvent\(new Event\("resize"\)\)/);
+});
+
+test("frozen campaigns expose a revision route and hide rejected mutation actions", () => {
+  assert.match(page, /const canMutateCurrentCampaign = canEditCampaigns && !campaign\.frozenAt/);
+  assert.match(page, /campaign\.frozenAt \? `#\/campaigns\/new\?source=\$\{campaignId\}` : `#\/campaigns\/\$\{campaignId\}\/edit`/);
+  assert.match(page, /campaign\.frozenAt \? "Yeni Revizyon Oluştur" : "Broşürü Düzenle"/);
+  assert.match(page, /canMutateCurrentCampaign \? <MissingProductModal/);
+});
+
+test("failed export jobs surface an error instead of a success notice", () => {
+  assert.match(dataSource, /if \(job\?\.status === "failed"\)/);
+  assert.match(dataSource, /throw new Error\(job\.error_message \|\| "Çıktı üretilemedi/);
 });

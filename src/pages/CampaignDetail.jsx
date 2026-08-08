@@ -197,6 +197,7 @@ export function CampaignDetail({ campaignId }) {
   const [isSavingEdit, setSavingEdit] = useState(false);
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
+  const canMutateCurrentCampaign = canEditCampaigns && !campaign.frozenAt;
   const canGenerateExports = canCreateExports();
 
   const measurePreview = useCallback(() => {
@@ -409,10 +410,10 @@ export function CampaignDetail({ campaignId }) {
           <>
             {canEditCampaigns ? (
               <>
-                <Button onClick={() => setEditing(true)} disabled={isLoading}>
-                  Kampanyayı Düzenle
+                <Button href={campaign.frozenAt ? `#/campaigns/new?source=${campaignId}` : `#/campaigns/${campaignId}/edit`} disabled={isLoading}>
+                  {campaign.frozenAt ? "Yeni Revizyon Oluştur" : "Broşürü Düzenle"}
                 </Button>
-                <Button
+                {canMutateCurrentCampaign ? <Button
                   disabled={isLoading || actionLoading === "all-suggestions"}
                   onClick={() =>
                     isRealApiEnabled
@@ -425,10 +426,10 @@ export function CampaignDetail({ campaignId }) {
                   }
                 >
                   {actionLoading === "all-suggestions" ? "Öneriler üretiliyor..." : "Tüm Önerileri Üret"}
-                </Button>
+                </Button> : null}
               </>
             ) : null}
-            {canEditCampaigns && isRealApiEnabled && !campaign.frozenAt ? (
+            {canMutateCurrentCampaign && isRealApiEnabled ? (
               <Button variant="primary" disabled={isLoading || actionLoading === "finalize"} onClick={finalizeCurrentCampaign}>
                 {actionLoading === "finalize" ? "Donduruluyor..." : "Kampanyayı Dondur"}
               </Button>
@@ -522,7 +523,7 @@ export function CampaignDetail({ campaignId }) {
                   <small>{product.matchedProduct}</small>
                 </div>
                 <StatusBadge status={product.status} />
-                {canEditCampaigns ? (
+                {canMutateCurrentCampaign ? (
                   <div className="row-actions">
                     <Button onClick={() => setSelectedMissing(product)}>Eşleştir</Button>
                     {isRealApiEnabled ? (
@@ -559,9 +560,9 @@ export function CampaignDetail({ campaignId }) {
               "Kategori",
               "Eşleşme Skoru",
               "Durum",
-              canEditCampaigns ? "Sıra" : null,
-              canEditCampaigns ? "Öneriler" : null,
-              canEditCampaigns ? "Aksiyon" : null,
+              canMutateCurrentCampaign ? "Sıra" : null,
+              canMutateCurrentCampaign ? "Öneriler" : null,
+              canMutateCurrentCampaign ? "Aksiyon" : null,
             ].filter(Boolean)}
           >
             {rows.map((product, index) => (
@@ -574,7 +575,7 @@ export function CampaignDetail({ campaignId }) {
                 <td>{product.category}</td>
                 <td><Badge tone={scoreTone(product.score)}>{product.score ? `%${product.score}` : "-"}</Badge></td>
                 <td><StatusBadge status={product.status} /></td>
-                {canEditCampaigns ? (
+                {canMutateCurrentCampaign ? (
                   <>
                     <td>
                       <Button disabled={Boolean(campaign.frozenAt) || index === 0} onClick={() => moveRow(index, -1)}>↑</Button>
@@ -643,7 +644,7 @@ export function CampaignDetail({ campaignId }) {
         ) : null}
       </section>
 
-      {canEditCampaigns ? <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} /> : null}
+      {canMutateCurrentCampaign ? <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} /> : null}
       {previewFile ? (
         <Modal title={`${previewFile.name} önizleme`} onClose={() => setPreviewFile(null)} className="file-preview-modal">
           {previewFile.type === "application/pdf" ? (
@@ -653,7 +654,7 @@ export function CampaignDetail({ campaignId }) {
           )}
         </Modal>
       ) : null}
-      {isEditing ? (
+      {canMutateCurrentCampaign && isEditing ? (
         <CampaignEditModal
           campaign={campaign}
           isSaving={isSavingEdit}
