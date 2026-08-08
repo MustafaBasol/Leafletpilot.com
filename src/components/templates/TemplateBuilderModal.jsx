@@ -52,6 +52,11 @@ function previewMerchandisingRole(densityName, index) {
   return secondary.has(index) ? "secondary" : compact.has(index) ? "compact" : "standard";
 }
 
+function previewCompositionGroup(densityName, index) {
+  if (densityName === "editorial") return index === 0 ? "hero" : "support";
+  if (densityName === "weekly") return index < 3 ? "lead-zone" : index < 6 ? "offer-cluster-a" : "offer-cluster-b";
+  return `dense-band-${Math.floor(index / 4) + 1}`;
+}
 export function TemplateBuilderModal({ template, presets, busy, error, onClose, onSave }) {
   const targetKey = template?.id ? `edit:${template.id}` : "create";
   const initial = useMemo(() => buildInitialForm(template), [targetKey]);
@@ -130,11 +135,14 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
           <div className="template-preview-products" style={isSupermarket ? undefined : { gridTemplateColumns: `repeat(${config.columns}, 1fr)`, gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))` }}>
             {Array.from({ length: config.slot_count }, (_, index) => {
               const role = previewMerchandisingRole(densityName, index);
+              const compositionGroup = previewCompositionGroup(densityName, index);
               return <article
                 key={index}
                 data-emphasis={role === "featured" ? "featured" : "normal"}
                 data-merchandising-role={role}
                 data-rhythm={["a", "b", "c"][index % 3]}
+                data-price-align={["start", "end", "start", "center"][index % 4]}
+                data-composition-group={compositionGroup}
               >
                 {config.show_product_image ? <div className="template-preview-image" data-image-stage={config.image_treatment}><span>{index % 3 === 0 ? "Şişe" : index % 3 === 1 ? "Paket" : "Kutu"}</span></div> : null}
                 <div className="template-preview-price"><strong>49<sup>,90</sup><i>₺</i></strong>{config.show_discount_badge ? <b>FIRSAT</b> : null}{config.show_old_price ? <del>59,90 ₺</del> : null}</div>

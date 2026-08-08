@@ -347,23 +347,30 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     emphasis = "featured" if role == "featured" else "normal"
     rhythm = ("a", "b", "c")[index % 3]
     price_align = ("start", "end", "start", "center")[index % 4]
+    if density["name"] == "editorial":
+        composition_group = "hero" if role == "featured" else "support"
+    elif density["name"] == "weekly":
+        composition_group = "lead-zone" if index < 3 else f"offer-cluster-{'a' if index < 6 else 'b'}"
+    else:
+        composition_group = f"dense-band-{(index // 4) + 1}"
     price_class = "price price-long" if len(major) + len(symbol) >= 8 else "price"
     return (
         f'<article class="product-card" data-emphasis="{emphasis}" data-merchandising-role="{role}" '
-        f'data-rhythm="{rhythm}" data-price-align="{price_align}">{image}<div class="price-panel"><span class="{price_class}">{price}</span>{badge}{old}</div>{brand_html}{name}{package}</article>'
+        f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-composition-group="{composition_group}">'
+        f'{image}<div class="price-panel"><span class="{price_class}">{price}</span>{badge}{old}</div>{brand_html}{name}{package}</article>'
     )
 
 SUPERMARKET_ART_DIRECTION_CSS = """
 .preview-document{position:relative;background:linear-gradient(150deg,var(--promo-start,#ef3b24),var(--promo-end,#a40e1a))}
-.hero{border-radius:8px;background:transparent;border-bottom:2px solid #ffffff55}
-.retail-header-burst .hero{padding-left:34px;background:linear-gradient(110deg,#ffffff16,transparent 62%)}
-.retail-header-burst .hero:before{content:"";position:absolute;left:-70px;bottom:-150px;width:310px;height:310px;border-radius:50%;background:var(--price-panel,#ffd928);opacity:.2}
-.retail-header-burst .hero:after{right:-72px;top:-190px;width:470px;height:470px;background:var(--price-panel,#ffd928);opacity:.24}
+.hero{border-radius:0;background:transparent;border-bottom:1px solid #ffffff38}
+.retail-header-burst .hero{padding-left:26px;background:linear-gradient(110deg,#ffffff0e,transparent 55%)}
+.retail-header-burst .hero:before{content:"";position:absolute;left:-86px;bottom:-190px;width:280px;height:280px;border-radius:50%;background:var(--price-panel,#ffd928);opacity:.1}
+.retail-header-burst .hero:after{right:-96px;top:-230px;width:410px;height:410px;background:var(--price-panel,#ffd928);opacity:.12}
 .retail-header-band .hero{border:0;border-radius:0;border-top:14px solid var(--price-panel,#ffd928);border-bottom:14px solid var(--price-panel,#ffd928);background:var(--promo-end,#a40e1a)}
 .retail-header-band .eyebrow{display:inline-block;padding:4px 14px;color:var(--promo-end,#a40e1a);background:var(--price-panel,#ffd928)}
 .retail-header-minimal .hero{border:0;border-left:14px solid var(--price-panel,#ffd928);background:#00000013}
 .retail-header-minimal .eyebrow{color:#fff;letter-spacing:.18em}
-.section-title{position:relative;border-bottom:1px solid #ffffff70;letter-spacing:.08em}
+.section-title{position:relative;border:0;letter-spacing:.08em}
 .product-grid{position:relative}
 .product-card{position:relative;border:0;border-bottom:1px solid color-mix(in srgb,var(--card-border,#f1b900) 48%,transparent);border-radius:8px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 93%,transparent);box-shadow:none}
 .retail-card-shadow .product-card{border:0;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,transparent);box-shadow:0 10px 24px #4b08152b}
@@ -375,7 +382,7 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .retail-image-photo .promo-card-image,.promo-card-image[data-image-stage="photo"]{padding:7px;border:1px solid #ffffff90;background:#fff}
 .product-image.photo{padding:3px;border:0;border-radius:8px;background:#fff}
 .product-image.cutout{filter:drop-shadow(0 12px 10px #4b071f38)}
-.image-placeholder{border:1px dashed color-mix(in srgb,var(--card-border,#f1b900) 65%,transparent);border-radius:8px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 76%,transparent)}
+.image-placeholder{border:1px dashed color-mix(in srgb,var(--card-border,#f1b900) 28%,transparent);border-radius:6px;background:#ffffff45;color:color-mix(in srgb,var(--product-title,#4c2430) 52%,transparent);font-weight:700;opacity:.66}
 .price-panel{align-self:flex-start;width:88%;border:0;border-radius:4px;box-shadow:5px 5px 0 #8e101c20}
 .product-card[data-rhythm="b"] .price-panel{align-self:flex-end}
 .product-card[data-rhythm="c"] .price-panel{width:82%}
@@ -410,12 +417,18 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .density-compact .eyebrow{margin:0;font-size:12px}
 .density-compact h1{font-size:27px;line-height:.94}
 .density-compact .meta{font-size:12px}
-.composition-hero-offers .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(3,minmax(0,1fr));gap:18px 24px}
-.composition-hero-offers .product-card{border:0;border-radius:5px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 82%,transparent);box-shadow:none}
+.composition-hero-offers .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(3,minmax(0,1fr));gap:22px 30px}
+.composition-hero-offers .product-card{border:0;border-radius:0;background:transparent;box-shadow:none}
 .composition-hero-offers .product-card[data-merchandising-role="featured"]{grid-column:1;grid-row:1/4;padding:24px;background:radial-gradient(circle at 48% 38%,#ffffff38,transparent 68%)}
-.composition-hero-offers .product-card:not([data-merchandising-role="featured"]){grid-column:2;padding:10px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 91%,transparent)}
+.composition-hero-offers .product-card:not([data-merchandising-role="featured"]){grid-column:2;padding:8px 16px 8px 4px;background:transparent}
+.composition-hero-offers .product-card:not([data-merchandising-role="featured"]):not(:last-child):after{content:"";position:absolute;right:5%;bottom:0;width:62%;height:1px;background:#ffffff36}
+.composition-hero-offers .product-card:nth-child(2){transform:translateX(-5px)}
+.composition-hero-offers .product-card:nth-child(3){transform:translateX(13px)}
+.composition-hero-offers .product-card:nth-child(4){transform:translateX(2px)}
 .composition-hero-offers .product-card[data-merchandising-role="featured"] .promo-card-image{height:930px;flex-basis:930px}
-.composition-hero-offers .product-card:not([data-merchandising-role="featured"]) .promo-card-image{height:250px;flex-basis:250px;margin-bottom:4px}
+.composition-hero-offers .product-card:nth-child(2) .promo-card-image{height:242px;flex-basis:242px;margin-bottom:4px}
+.composition-hero-offers .product-card:nth-child(3) .promo-card-image{height:220px;flex-basis:220px;margin:8px 0 4px}
+.composition-hero-offers .product-card:nth-child(4) .promo-card-image{height:258px;flex-basis:258px;margin-bottom:4px}
 .composition-hero-offers .product-card[data-merchandising-role="featured"] .price-panel{width:88%;min-height:140px;padding:12px 18px}
 .composition-hero-offers .product-card[data-merchandising-role="featured"] .price{font-size:80px}
 .composition-hero-offers .product-card[data-merchandising-role="featured"] .price.price-long{font-size:56px}
@@ -430,36 +443,46 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .composition-hero-offers .product-card:not([data-merchandising-role="featured"]) .product-name{font-size:21px}
 .composition-hero-offers.retail-card-shadow .product-name,.composition-hero-offers.retail-card-shadow .product-unit{color:#fff;text-shadow:0 1px 1px #4f071f66}
 .composition-hero-offers.retail-card-shadow .brand-label{color:var(--price-panel,#ffd928)}
-.composition-weekly-grid .product-grid{grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:1.08fr .96fr .96fr;gap:14px 12px;padding:6px 3px;background:transparent}
-.composition-weekly-grid .product-card{grid-column:span 4;border:0;border-radius:5px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 88%,transparent);box-shadow:none}
-.composition-weekly-grid .product-card:nth-child(1){grid-column:span 6}
-.composition-weekly-grid .product-card:nth-child(2),.composition-weekly-grid .product-card:nth-child(3){grid-column:span 3}
-.composition-weekly-grid .product-card:nth-child(n+4){border-top:1px solid color-mix(in srgb,var(--card-border,#f1b900) 45%,transparent)}
-.composition-weekly-grid .product-card[data-merchandising-role="featured"]{background:color-mix(in srgb,var(--card-bg,#fff8e7) 98%,transparent)}
-.composition-weekly-grid .product-card[data-merchandising-role="featured"] .promo-card-image{height:304px;flex-basis:304px}
+.composition-weekly-grid .product-grid{grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:1.08fr .96fr .96fr;column-gap:18px;row-gap:30px;padding:18px 20px 20px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 95%,#fff);border-radius:18px 18px 6px 6px}
+.composition-weekly-grid .product-card{grid-column:span 4;border:0;border-radius:0;background:transparent;box-shadow:none}
+.composition-weekly-grid .product-card:nth-child(1){grid-column:span 7}
+.composition-weekly-grid .product-card:nth-child(2){grid-column:span 3}
+.composition-weekly-grid .product-card:nth-child(3){grid-column:span 2}
+.composition-weekly-grid .product-card:nth-child(4),.composition-weekly-grid .product-card:nth-child(9){grid-column:span 5}
+.composition-weekly-grid .product-card:nth-child(5),.composition-weekly-grid .product-card:nth-child(8){grid-column:span 4}
+.composition-weekly-grid .product-card:nth-child(6),.composition-weekly-grid .product-card:nth-child(7){grid-column:span 3}
+.composition-weekly-grid .product-card:nth-child(4):before,.composition-weekly-grid .product-card:nth-child(7):before{content:"";position:absolute;left:0;top:-15px;width:64%;height:2px;background:color-mix(in srgb,var(--card-border,#f1b900) 42%,transparent)}
+.composition-weekly-grid .product-card:nth-child(5),.composition-weekly-grid .product-card:nth-child(8){transform:translateY(8px)}
+.composition-weekly-grid .product-card:nth-child(6){transform:translateY(-5px)}
+.composition-weekly-grid .product-card:nth-child(9){transform:translateY(-3px)}
+.composition-weekly-grid .product-card[data-merchandising-role="featured"]{background:radial-gradient(circle at 48% 46%,#ffffff 0,#ffffff42 58%,transparent 76%)}
+.composition-weekly-grid .product-card[data-merchandising-role="featured"] .promo-card-image{height:320px;flex-basis:320px}
 .composition-weekly-grid .product-card[data-merchandising-role="secondary"] .promo-card-image{height:224px;flex-basis:224px}
-.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="a"] .promo-card-image{height:238px;flex-basis:238px}
-.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="b"] .promo-card-image{height:226px;flex-basis:226px}
-.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="c"] .promo-card-image{height:246px;flex-basis:246px}
-.composition-weekly-grid .price-panel{width:86%}
-.composition-weekly-grid .product-card[data-rhythm="b"] .price-panel{width:78%}
-.composition-weekly-grid .product-card[data-rhythm="c"] .price-panel{width:82%}
+.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="a"] .promo-card-image{height:252px;flex-basis:252px}
+.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="b"] .promo-card-image{height:216px;flex-basis:216px}
+.composition-weekly-grid .product-card[data-merchandising-role="standard"][data-rhythm="c"] .promo-card-image{height:238px;flex-basis:238px}
+.composition-weekly-grid .price-panel{width:90%}
+.composition-weekly-grid .product-card[data-rhythm="b"] .price-panel{width:72%}
+.composition-weekly-grid .product-card[data-rhythm="c"] .price-panel{width:81%}
 .composition-weekly-grid .product-card[data-merchandising-role="featured"] .price{font-size:46px}
 .composition-weekly-grid .product-card .price.price-long{font-size:27px}
-.composition-catalogue-grid .product-grid{grid-template-columns:repeat(24,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));column-gap:8px;row-gap:18px;padding:8px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 72%,transparent)}
-.composition-catalogue-grid .product-card{grid-column:span 5;height:calc(100% - 8px);border:0;border-radius:3px;background:transparent;box-shadow:none}
-.composition-catalogue-grid .product-card[data-rhythm="b"]{align-self:end;margin-top:8px}
-.composition-catalogue-grid .product-card[data-rhythm="c"]{align-self:start;margin-bottom:8px}
+.composition-catalogue-grid .product-grid{grid-template-columns:repeat(24,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));column-gap:13px;row-gap:25px;padding:20px 18px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 96%,#fff);border-radius:16px 16px 5px 5px}
+.composition-catalogue-grid .product-card{grid-column:span 5;height:calc(100% - 10px);padding-left:7px;padding-right:7px;border:0;border-radius:0;background:transparent;box-shadow:none}
+.composition-catalogue-grid .product-card[data-rhythm="b"]{align-self:end;margin-top:10px;transform:translateX(5px)}
+.composition-catalogue-grid .product-card[data-rhythm="c"]{align-self:start;margin-bottom:10px;transform:translateX(-4px)}
 .composition-catalogue-grid .product-card:nth-child(8n+1),.composition-catalogue-grid .product-card:nth-child(8n+4),.composition-catalogue-grid .product-card:nth-child(8n+6),.composition-catalogue-grid .product-card:nth-child(8n+7){grid-column:span 7}
-.composition-catalogue-grid .product-card[data-merchandising-role="secondary"]{background:#ffffff42}
-.composition-catalogue-grid .product-card[data-merchandising-role="secondary"] .promo-card-image{height:184px;flex-basis:184px}
-.composition-catalogue-grid .product-card[data-merchandising-role="standard"] .promo-card-image{height:174px;flex-basis:174px}
-.composition-catalogue-grid .product-card[data-merchandising-role="compact"] .promo-card-image{height:162px;flex-basis:162px}
-.composition-catalogue-grid .price-panel{width:88%;box-shadow:3px 3px 0 #6f102119}
-.composition-catalogue-grid .product-card[data-rhythm="b"] .price-panel{width:78%}
-.composition-catalogue-grid .product-card[data-rhythm="c"] .price-panel{width:84%}
+.composition-catalogue-grid .product-card:nth-child(4n+2):after,.composition-catalogue-grid .product-card:nth-child(4n+4):after{content:"";position:absolute;right:0;top:14%;width:1px;height:46%;background:color-mix(in srgb,var(--card-border,#f1b900) 25%,transparent)}
+.composition-catalogue-grid .product-card[data-merchandising-role="secondary"]{background:transparent}
+.composition-catalogue-grid .product-card[data-merchandising-role="secondary"] .promo-card-image{height:194px;flex-basis:194px}
+.composition-catalogue-grid .product-card[data-merchandising-role="standard"] .promo-card-image{height:170px;flex-basis:170px}
+.composition-catalogue-grid .product-card[data-merchandising-role="compact"] .promo-card-image{height:148px;flex-basis:148px}
+.composition-catalogue-grid .product-card:nth-child(4n+2) .promo-card-image{transform:translateY(7px)}
+.composition-catalogue-grid .product-card:nth-child(4n+3) .product-name{margin-top:11px}
+.composition-catalogue-grid .price-panel{width:92%;box-shadow:3px 3px 0 #6f102119}
+.composition-catalogue-grid .product-card[data-rhythm="b"] .price-panel{width:70%}
+.composition-catalogue-grid .product-card[data-rhythm="c"] .price-panel{width:80%}
 .composition-catalogue-grid .product-card .price.price-long{font-size:20px}
 .composition-catalogue-grid .brand-label{font-size:8px}
-.composition-weekly-grid.retail-card-outlined .product-card,.composition-catalogue-grid.retail-card-outlined .product-card{border:1px solid color-mix(in srgb,var(--card-border,#f1b900) 48%,transparent);background:#ffffff28}
-.composition-weekly-grid.retail-card-rounded .product-card,.composition-catalogue-grid.retail-card-rounded .product-card{border:0;border-radius:14px;background:#ffffff55;box-shadow:0 4px 10px #4c0b181c}
+.composition-weekly-grid.retail-card-outlined .product-card,.composition-catalogue-grid.retail-card-outlined .product-card{border:0;background:transparent}
+.composition-weekly-grid.retail-card-rounded .product-card,.composition-catalogue-grid.retail-card-rounded .product-card{border:0;border-radius:0;background:transparent;box-shadow:none}
 """

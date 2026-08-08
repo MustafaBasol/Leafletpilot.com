@@ -150,7 +150,9 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         },
         generated_at=datetime.now(UTC),
     )
-    assert 'border:0;border-bottom:1px solid color-mix' in html
+    assert '.composition-hero-offers .product-card{border:0;border-radius:0;background:transparent' in html
+    assert html.count('data-composition-group="hero"') == 1
+    assert html.count('data-composition-group="support"') == 3
     assert 'data-emphasis="featured" data-merchandising-role="featured"' in html
     assert html.count('<article class="product-card" data-emphasis="featured"') == 1
     assert 'data-rhythm="b"' in html and 'data-rhythm="c"' in html
@@ -169,6 +171,37 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
     assert weekly.count('<article class="product-card" data-emphasis="featured" data-merchandising-role="featured"') == 1
     assert 'data-merchandising-role="secondary"' in weekly
 
+
+def test_weekly_and_compact_compositions_hide_the_safe_grid_with_grouped_whitespace():
+    weekly = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(9)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    assert weekly.count('data-composition-group="lead-zone"') == 3
+    assert weekly.count('data-composition-group="offer-cluster-a"') == 3
+    assert weekly.count('data-composition-group="offer-cluster-b"') == 3
+    assert ".composition-weekly-grid .product-card:nth-child(4),.composition-weekly-grid .product-card:nth-child(9){grid-column:span 5}" in weekly
+    assert ".composition-weekly-grid .product-card{grid-column:span 4;border:0;border-radius:0;background:transparent" in weekly
+    assert ".composition-weekly-grid.retail-card-outlined .product-card" in weekly
+    assert "border:0;background:transparent" in weekly
+
+    compact = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-16",
+            "items": [{"name": f"Offer {index}", "price": "9.99"} for index in range(16)],
+        },
+        generated_at=datetime.now(UTC),
+    )
+    for band in range(1, 5):
+        assert compact.count(f'data-composition-group="dense-band-{band}"') == 4
+    assert ".composition-catalogue-grid .product-grid{grid-template-columns:repeat(24" in compact
+    assert "background:color-mix(in srgb,var(--card-bg,#fff8e7) 96%,#fff)" in compact
+    assert ".composition-catalogue-grid .product-card{grid-column:span 5" in compact
+    assert "border:0;border-radius:0;background:transparent" in compact
+    assert ".composition-catalogue-grid .product-card:nth-child(4n+2):after" in compact
 
 def test_image_stage_price_badge_and_header_contracts_are_semantic_and_safe():
     html = render_render_payload_html(

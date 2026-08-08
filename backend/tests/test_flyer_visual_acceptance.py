@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from pypdf import PdfReader
 
 from app.core.config import settings
@@ -22,19 +22,22 @@ REFERENCE_EXPECTATIONS = {
         "density": "editorial", "featured": 1, "min_width_tiers": 2,
         "min_stage_delta": 500, "min_price_width_delta": 0.08,
         "min_featured_area_ratio": 2.5, "min_featured_image_ratio": 4.0,
-        "min_featured_price_ratio": 1.45,
+        "min_featured_price_ratio": 1.45, "min_stage_tiers": 3,
+        "min_price_patterns": 3,
     },
     9: {
         "density": "weekly", "featured": 1, "min_width_tiers": 2,
         "min_stage_delta": 40, "min_price_width_delta": 0.06,
         "min_featured_area_ratio": 1.55, "min_featured_image_ratio": 1.8,
-        "min_featured_price_ratio": 1.15,
+        "min_featured_price_ratio": 1.15, "min_stage_tiers": 3,
+        "min_price_patterns": 3, "min_lower_width_tiers": 3,
     },
     16: {
         "density": "compact", "featured": 0, "min_width_tiers": 2,
         "min_stage_delta": 20, "min_price_width_delta": 0.06,
         "min_featured_area_ratio": None, "min_featured_image_ratio": None,
-        "min_featured_price_ratio": None,
+        "min_featured_price_ratio": None, "min_stage_tiers": 3,
+        "min_price_patterns": 3,
     },
 }
 
@@ -157,6 +160,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
                 page.set_content(html, wait_until="networkidle")
+                page.evaluate("""async () => {
+                  await Promise.all([...document.images].map((image) => image.decode().catch(() => {})));
+                  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                }""")
                 measurements = page.evaluate(
                     """() => {
                       const rect = (element) => {
@@ -178,6 +185,11 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                         return (box.right - box.left) * (box.bottom - box.top);
                       };
                       const ratio = (numerator, denominator) => denominator ? numerator / denominator : null;
+                      const hasVisibleSurface = (element) => {
+                        const style = getComputedStyle(element);
+                        return style.backgroundImage !== 'none' ||
+                          !['rgba(0, 0, 0, 0)', 'transparent'].includes(style.backgroundColor);
+                      };
                       const featuredStage = featured?.querySelector('.promo-card-image');
                       const featuredPrice = featured?.querySelector('.price');
                       const supportStageAreas = supporting.map((card) => area(card.querySelector('.promo-card-image')));
@@ -233,6 +245,35 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                         cardWidthTiers: [...new Set(cards.map((card) => Math.round(rect(card).right - rect(card).left)))].length,
                         stageHeightRange: Math.max(...stages.map((stage) => rect(stage).bottom - rect(stage).top)) - Math.min(...stages.map((stage) => rect(stage).bottom - rect(stage).top)),
                         priceWidthRatios: panels.map((panel) => ratio(rect(panel).right - rect(panel).left, rect(panel.closest('.product-card')).right - rect(panel.closest('.product-card')).left)),
+                        pricePatternCount: new Set(panels.map((panel) => {
+                          const card = panel.closest('.product-card');
+                          return `${card.dataset.priceAlign}:${Math.round(ratio(rect(panel).right - rect(panel).left, rect(card).right - rect(card).left) * 20)}`;
+                        })).size,
+                        imageStageHeightTiers: new Set(stages.map((stage) => Math.round((rect(stage).bottom - rect(stage).top) / 4))).size,
+                        fullSeparatorCount: cards.reduce((total, card) => {
+                          const style = getComputedStyle(card);
+                          const box = rect(card);
+                          const horizontal = (box.right - box.left) / (gridBox.right - gridBox.left);
+                          const vertical = (box.bottom - box.top) / (gridBox.bottom - gridBox.top);
+                          return total +
+                            (parseFloat(style.borderTopWidth) > 0 && horizontal > .7 ? 1 : 0) +
+                            (parseFloat(style.borderBottomWidth) > 0 && horizontal > .7 ? 1 : 0) +
+                            (parseFloat(style.borderLeftWidth) > 0 && vertical > .7 ? 1 : 0) +
+                            (parseFloat(style.borderRightWidth) > 0 && vertical > .7 ? 1 : 0);
+                        }, 0),
+                        enclosingBorderCount: cards.filter((card) => {
+                          const style = getComputedStyle(card);
+                          return ['Top', 'Right', 'Bottom', 'Left'].every((side) => parseFloat(style[`border${side}Width`]) > 0);
+                        }).length,
+                        secondaryEnclosingBorderCount: supporting.filter((card) => {
+                          const style = getComputedStyle(card);
+                          return ['Top', 'Right', 'Bottom', 'Left'].some((side) => parseFloat(style[`border${side}Width`]) > 0);
+                        }).length,
+                        sharedSectionSurface: hasVisibleSurface(grid),
+                        opaqueCardCount: cards.filter(hasVisibleSurface).length,
+                        lowerOpaqueCardCount: cards.slice(3).filter(hasVisibleSurface).length,
+                        lowerCardWidthTiers: new Set(cards.slice(3).map((card) => Math.round(rect(card).right - rect(card).left))).size,
+                        compositionGroups: new Set(cards.map((card) => card.dataset.compositionGroup)).size,
                         featuredAreaRatio: featured ? ratio(area(featured), Math.max(...supportAreas)) : null,
                         featuredImageRatio: featuredStage ? ratio(area(featuredStage), Math.max(...supportStageAreas)) : null,
                         featuredPriceRatio: featuredPrice ? ratio(parseFloat(getComputedStyle(featuredPrice).fontSize), Math.max(...supportPriceSizes)) : null,
@@ -263,6 +304,22 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 assert min(measurements["priceWidthRatios"]) >= 0.55
                 assert max(measurements["priceWidthRatios"]) <= 0.98
                 assert max(measurements["priceWidthRatios"]) - min(measurements["priceWidthRatios"]) >= reference["min_price_width_delta"]
+                assert measurements["pricePatternCount"] >= reference["min_price_patterns"]
+                assert measurements["imageStageHeightTiers"] >= reference["min_stage_tiers"]
+                assert measurements["fullSeparatorCount"] == 0
+                assert measurements["enclosingBorderCount"] == 0
+                if count == 4:
+                    assert measurements["secondaryEnclosingBorderCount"] == 0
+                    assert measurements["compositionGroups"] == 2
+                elif count == 9:
+                    assert measurements["sharedSectionSurface"]
+                    assert measurements["lowerOpaqueCardCount"] == 0
+                    assert measurements["lowerCardWidthTiers"] >= reference["min_lower_width_tiers"]
+                    assert measurements["compositionGroups"] == 3
+                else:
+                    assert measurements["sharedSectionSurface"]
+                    assert measurements["opaqueCardCount"] == 0
+                    assert measurements["compositionGroups"] == 4
                 if reference["featured"]:
                     assert measurements["featuredAreaRatio"] >= reference["min_featured_area_ratio"]
                     assert measurements["featuredImageRatio"] >= reference["min_featured_image_ratio"]
@@ -275,7 +332,8 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
     except ImportError as exc:
         pytest.skip(f"Playwright unavailable: {exc}")
 
-    assert png_path.read_bytes() == second_png_path.read_bytes()
+    with Image.open(png_path).convert("RGBA") as first, Image.open(second_png_path).convert("RGBA") as second:
+        assert ImageChops.difference(first, second).getbbox() is None
     with Image.open(png_path) as png:
         assert png.size == (2480, 3508)
     pdf = PdfReader(str(pdf_path))
