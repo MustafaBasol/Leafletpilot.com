@@ -27,7 +27,9 @@ REFERENCE_EXPECTATIONS = {
         "min_featured_area_ratio": 2.5,
         "min_featured_image_ratio": 4.0,
         "min_featured_price_ratio": 1.45,
-        "min_stage_tiers": 3,
+        # Large-quad intentionally pairs one dominant hero stage with balanced support stages.
+        "min_featured_stage_height_ratio": 3.0,
+        "max_support_stage_height_range": 4.0,
         "min_price_patterns": 3,
         "min_price_ratio": 0.55,
     },
@@ -235,6 +237,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                       const featuredStage = featured?.querySelector('.promo-card-image');
                       const featuredPrice = featured?.querySelector('.price');
                       const supportStageAreas = supporting.map((card) => area(card.querySelector('.promo-card-image')));
+                      const supportStageHeights = supporting.map((card) => {
+                        const box = rect(card.querySelector('.promo-card-image'));
+                        return box.bottom - box.top;
+                      });
                       const supportAreas = supporting.map(area);
                       const supportPriceSizes = supporting.map((card) => parseFloat(getComputedStyle(card.querySelector('.price')).fontSize));
                       const logicalRowSize = Number(document.querySelector('.preview-document').dataset.layout.split('x')[0]);
@@ -346,6 +352,8 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                         featuredAreaRatio: featured ? ratio(area(featured), Math.max(...supportAreas)) : null,
                         featuredImageRatio: featuredStage ? ratio(area(featuredStage), Math.max(...supportStageAreas)) : null,
                         featuredPriceRatio: featuredPrice ? ratio(parseFloat(getComputedStyle(featuredPrice).fontSize), Math.max(...supportPriceSizes)) : null,
+                        featuredStageHeightRatio: featuredStage ? ratio(rect(featuredStage).bottom - rect(featuredStage).top, Math.max(...supportStageHeights)) : null,
+                        supportStageHeightRange: Math.max(...supportStageHeights) - Math.min(...supportStageHeights),
                       };
                     }"""
                 )
@@ -392,13 +400,21 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                     >= reference["min_price_width_delta"]
                 )
                 assert measurements["pricePatternCount"] >= reference["min_price_patterns"]
-                assert measurements["imageStageHeightTiers"] >= reference["min_stage_tiers"]
                 assert measurements["fullSeparatorCount"] == 0
                 assert measurements["enclosingBorderCount"] == 0
                 if count == 4:
                     assert measurements["secondaryEnclosingBorderCount"] == 0
                     assert measurements["compositionGroups"] == 2
+                    assert (
+                        measurements["featuredStageHeightRatio"]
+                        >= reference["min_featured_stage_height_ratio"]
+                    )
+                    assert (
+                        measurements["supportStageHeightRange"]
+                        <= reference["max_support_stage_height_range"]
+                    )
                 elif count == 9:
+                    assert measurements["imageStageHeightTiers"] >= reference["min_stage_tiers"]
                     assert measurements["sharedSectionSurface"]
                     assert measurements["imageTopTiers"] >= 3
                     assert (
@@ -426,6 +442,7 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                     assert measurements["compositionGroups"] == 3
                 else:
                     assert measurements["sharedSectionSurface"]
+                    assert measurements["imageStageHeightTiers"] >= reference["min_stage_tiers"]
                     assert measurements["imageTierCount"] >= 3
                     assert (
                         measurements["priceTreatmentCount"]
