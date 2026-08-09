@@ -195,6 +195,21 @@ async def test_edit_loop_remove_title_simplify_and_unknown_product(monkeypatch) 
     )
     assert campaign.builder_config_json["visual_density"] == "simple"
     assert campaign.builder_config_json["header_style"] == "minimal"
+    assert campaign.builder_config_json["layout_strategy"] == "simplified_grid"
+    assert campaign.builder_config_json["show_discount_badge"] is False
+    assert campaign.builder_config_json["show_footer"] is False
+
+    await service._apply_flyer_edit(
+        session,
+        state,
+        FlyerEditIntent(FlyerEditKind.ADJUST_VISUAL_DENSITY, value="eye_catching"),
+        client,
+    )
+    assert campaign.builder_config_json["visual_density"] == "expressive"
+    assert campaign.builder_config_json["layout_strategy"] == "hero_focused"
+    assert campaign.builder_config_json["hero_treatment"] == "strong"
+    assert campaign.builder_config_json["price_prominence"] == "high"
+    assert campaign.builder_config_json["smart_composition"] is True
 
     render.reset_mock()
     await service._apply_flyer_edit(

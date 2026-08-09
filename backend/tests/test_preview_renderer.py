@@ -3,8 +3,8 @@ from decimal import Decimal
 from uuid import uuid4
 
 from app.models import Brand, Campaign, CampaignItem, Market, Product, ProductImage, Template
-from app.services.preview_renderer import render_campaign_preview_html, render_render_payload_html
 from app.services.campaign_rendering import render_campaign_snapshot_html
+from app.services.preview_renderer import render_campaign_preview_html, render_render_payload_html
 
 
 def test_preview_renderer_escapes_user_generated_text_and_hides_diagnostics() -> None:
@@ -306,3 +306,54 @@ def _campaign_with_items(title: str, match_status: str) -> Campaign:
         ),
     ]
     return campaign
+
+
+def test_supermarket_small_campaigns_use_dedicated_large_card_strategies() -> None:
+    expected = {
+        1: ("single-poster", "1x1"),
+        2: ("split-pair", "2x1"),
+        3: ("hero-trio", "2x2"),
+        4: ("large-quad", "2x2"),
+    }
+
+    for count, (strategy, grid) in expected.items():
+        html = render_render_payload_html(
+            {
+                "template_slug": "supermarket-promo-4",
+                "items": [
+                    {"id": str(index), "name": f"Product {index}", "price": "1.99", "currency": "EUR"}
+                    for index in range(count)
+                ],
+            },
+            generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+        )
+
+        assert f'data-refinement-strategy="{strategy}"' in html
+        assert f'data-layout="{grid}"' in html
+        assert f"small-layout-{strategy}" in html
+
+
+def test_missing_image_uses_honest_price_led_fallback() -> None:
+    html = render_render_payload_html(
+        {
+            "template_slug": "supermarket-promo-9",
+            "items": [
+                {
+                    "id": str(index),
+                    "name": f"Fallback Product {index}",
+                    "price": "4.99",
+                    "old_price": "5.99",
+                    "currency": "EUR",
+                }
+                for index in range(6)
+            ],
+        },
+        generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+    assert 'data-refinement-strategy="price-led"' in html
+    assert 'data-image-coverage="image-poor"' in html
+    assert html.count('data-image-available="false"') == 6
+    assert html.count('class="image-placeholder"') == 6
+    assert '<img class="product-image' not in html
+    assert "Gorsel mevcut degil" in html

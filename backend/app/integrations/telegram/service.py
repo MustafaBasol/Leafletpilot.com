@@ -422,11 +422,15 @@ async def _apply_flyer_edit(
             config.update(
                 {
                     "visual_density": "simple",
+                    "layout_strategy": "simplified_grid",
                     "header_style": "minimal",
                     "card_style": "outlined",
                     "badge_style": "pill",
+                    "image_treatment": "stage",
+                    "show_discount_badge": False,
                     "show_additional_logos": False,
                     "show_payment_icons": False,
+                    "show_stock_message": False,
                     "show_footer_note": False,
                     "show_footer": False,
                 }
@@ -436,10 +440,14 @@ async def _apply_flyer_edit(
             config.update(
                 {
                     "visual_density": "expressive",
+                    "layout_strategy": "hero_focused",
                     "header_style": "burst",
                     "card_style": "shadow",
                     "badge_style": "burst",
                     "headline_emphasis": "high",
+                    "hero_treatment": "strong",
+                    "price_prominence": "high",
+                    "smart_composition": True,
                     "show_additional_logos": True,
                 }
             )
