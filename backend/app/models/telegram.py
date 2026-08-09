@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -110,6 +121,8 @@ class TelegramConversationState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     export_photo_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     export_files_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     export_delivery_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_edit_intent_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     last_error: Mapped[str | None] = mapped_column(String(1000))
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
