@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Campaign, CampaignItem, MatchingSuggestion, Product
 from app.services.campaign import recalculate_campaign_counts, require_market_id
+from app.services.product_identity import normalize_product_text as canonical_normalize_product_text
 
 TURKISH_TRANSLATION = str.maketrans(
     {
@@ -60,14 +61,7 @@ class CampaignSuggestionSummary:
 
 
 def normalize_product_text(value: str) -> str:
-    normalized = value.strip().translate(TURKISH_TRANSLATION).lower()
-    normalized = normalized.replace("/", " ").replace("-", " ")
-    normalized = PUNCTUATION_RE.sub(" ", normalized)
-    normalized = SPACES_RE.sub(" ", normalized).strip()
-    for pattern, replacement in UNIT_REPLACEMENTS:
-        normalized = pattern.sub(replacement, normalized)
-    normalized = re.sub(r"\b(\d+)\s+(kg|g|l)\b", r"\1\2", normalized)
-    return SPACES_RE.sub(" ", normalized).strip()
+    return canonical_normalize_product_text(value)
 
 
 def normalize_barcode(value: str | None) -> str | None:

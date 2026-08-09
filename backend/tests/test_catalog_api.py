@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import app.models  # noqa: F401
+import app.models
 from app.api.deps import get_catalog_session, get_current_user
 from app.api.routes.catalog import router as catalog_router
 from app.core.config import settings
@@ -59,7 +59,7 @@ def test_slug_generation_works() -> None:
 
 
 def test_alias_normalization_works() -> None:
-    assert normalize_alias("  SÜT, 1L!!  ") == "süt 1l"
+    assert normalize_alias("  SÜT, 1L!!  ") == "sut 1000ml"
 
 
 @pytest.mark.asyncio

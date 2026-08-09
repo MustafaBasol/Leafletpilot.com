@@ -43,8 +43,8 @@ def _product(
 
 
 def test_normalize_product_text_handles_turkish_punctuation_whitespace_and_units() -> None:
-    assert normalize_product_text("  ŞEKER--1 Kilogram!! ") == "seker 1kg"
-    assert normalize_product_text("Süt, 1 litre") == "sut 1l"
+    assert normalize_product_text("  ŞEKER--1 Kilogram!! ") == "seker 1000g"
+    assert normalize_product_text("Süt, 1 litre") == "sut 1000ml"
     assert normalize_product_text("ÇİKOLATA\t100 gr.") == "cikolata 100g"
     assert normalize_barcode(" 869-123 45 ") == "86912345"
     assert normalize_barcode("abc") is None
