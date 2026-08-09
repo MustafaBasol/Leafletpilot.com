@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,8 +8,14 @@ import pytest
 
 from app.integrations.telegram import service
 from app.integrations.telegram.edit_intents import FlyerEditIntent, FlyerEditKind
-from app.models import Campaign, CampaignItem, TelegramConversationState
+from app.models import Campaign, CampaignItem, Market, TelegramConversationState, Template
+from app.services.campaign_intelligence import CampaignIntelligenceEngine
 from app.services.campaign_parser import parse_campaign_text
+from app.services.campaign_rendering import (
+    build_campaign_render_payload,
+    render_campaign_snapshot_html,
+)
+from app.services.preview_renderer import _live_payload, render_campaign_preview_html
 
 
 class MessageClient:
@@ -94,7 +101,13 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
     analyze = AsyncMock()
     apply = AsyncMock()
     render = AsyncMock()
+    template = Template(id=uuid4(), name="Supermarket Promo 4", slug="supermarket-promo-4")
     monkeypatch.setattr(service, "_require_selected_mutation_membership", AsyncMock(return_value=membership))
+    monkeypatch.setattr(
+        service.template_service,
+        "resolve_automatic_supermarket_template",
+        AsyncMock(return_value=template),
+    )
     monkeypatch.setattr(service.campaign_service, "create_campaign_from_text", create)
     monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", analyze)
     monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", apply)
@@ -107,12 +120,186 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
     assert payload.title == "Demo Market Firsatlari"
     assert payload.generate_suggestions is True
     assert payload.raw_text == text
+    assert payload.template_id == template.id
     assert state.campaign_id == campaign_id
     assert state.revision_count == 0
     analyze.assert_awaited_once_with(session, campaign_id, state.selected_market_id)
     apply.assert_awaited_once_with(session, campaign_id, state.selected_market_id)
     render.assert_awaited_once()
     assert not any("basligini" in message.lower() for message in client.messages)
+
+
+@pytest.mark.asyncio
+async def test_direct_three_product_route_uses_refinement_and_conversational_geometry(
+    monkeypatch,
+) -> None:
+    state = _state(status="awaiting_product_list")
+    client = MessageClient()
+    session = SimpleNamespace(commit=AsyncMock())
+    market = Market(
+        id=state.selected_market_id,
+        name="Demo Market",
+        slug=f"demo-{state.selected_market_id}",
+        currency="EUR",
+        language="tr",
+    )
+    membership = SimpleNamespace(
+        market_id=state.selected_market_id,
+        market=market,
+        role="market_staff",
+    )
+    template = Template(
+        id=uuid4(),
+        name="Supermarket Promo 4",
+        slug="supermarket-promo-4",
+        template_type="supermarket",
+        is_global=True,
+        is_active=True,
+        status="published",
+        config_json={"layout": "supermarket-promo-4"},
+    )
+    campaign = Campaign(
+        id=uuid4(),
+        market_id=market.id,
+        title="Demo Market Firsatlari",
+        channel="telegram",
+        source_type="text",
+        currency="EUR",
+        language="tr",
+        template_id=template.id,
+        template=template,
+        market=market,
+        builder_config_json={},
+    )
+    text = "Coca Cola 1L - 29,90\nEti Bur\u00e7ak - 44,90\nS\u00fcta\u015f Yo\u011furt - 74,90"
+    parsed = parse_campaign_text(text)
+    campaign.items = [
+        CampaignItem(
+            id=uuid4(),
+            market_id=market.id,
+            raw_line=item.raw_line,
+            incoming_name=item.incoming_name,
+            display_name=item.display_name,
+            price=item.price,
+            currency=item.currency,
+            sort_order=index,
+            match_status="not_found",
+        )
+        for index, item in enumerate(parsed)
+    ]
+
+    async def create_campaign(_session, payload, market_id):
+        assert market_id == market.id
+        assert payload.template_id == template.id
+        return SimpleNamespace(
+            campaign_id=campaign.id,
+            missing_count=3,
+            low_confidence_count=0,
+        )
+
+    async def analyze_campaign(_session, campaign_id, market_id):
+        assert (campaign_id, market_id) == (campaign.id, market.id)
+        payload = _live_payload(campaign, campaign.template, include_applied_intelligence=False)
+        campaign.intelligence_json = CampaignIntelligenceEngine().analyze(
+            str(campaign.id),
+            list(payload["items"]),
+        )
+
+    async def apply_intelligence(_session, campaign_id, market_id):
+        assert (campaign_id, market_id) == (campaign.id, market.id)
+        campaign.builder_config_json = {
+            **(campaign.builder_config_json or {}),
+            "smart_composition": True,
+            "campaign_intelligence": campaign.intelligence_json,
+        }
+
+    rendered_html: list[str] = []
+
+    async def capture_render(*_args, **_kwargs):
+        rendered_html.append(
+            render_campaign_preview_html(
+                campaign,
+                campaign.template,
+                generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+            )
+        )
+
+    monkeypatch.setattr(service, "_require_selected_mutation_membership", AsyncMock(return_value=membership))
+    monkeypatch.setattr(
+        service.template_service,
+        "resolve_automatic_supermarket_template",
+        AsyncMock(return_value=template),
+    )
+    monkeypatch.setattr(service.campaign_service, "create_campaign_from_text", create_campaign)
+    monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", analyze_campaign)
+    monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", apply_intelligence)
+    monkeypatch.setattr(service.campaign_service, "get_campaign", AsyncMock(return_value=campaign))
+    monkeypatch.setattr(service, "_render_and_send_flyer", capture_render)
+
+    await service._create_and_send_flyer(session, state, text, parsed, client)
+
+    default_html = rendered_html[-1]
+    assert "preview-supermarket-promo-4" in default_html
+    assert 'data-refinement-strategy="balanced-trio"' in default_html
+    assert "small-layout-balanced-trio" in default_html
+    assert 'data-layout="2x2"' in default_html
+    assert "layout-3x1" not in default_html
+    assert "Gorsel mevcut degil" in default_html
+
+    await service._apply_flyer_edit(
+        session,
+        state,
+        FlyerEditIntent(FlyerEditKind.CHANGE_HERO_PRODUCT, product_reference="Coca Cola"),
+        client,
+    )
+    hero_html = rendered_html[-1]
+    assert 'data-refinement-strategy="hero-trio"' in hero_html
+    assert 'data-visual-weight="dominant"' in hero_html
+    assert 'data-smart-role="hero"' in hero_html
+    assert hero_html != default_html
+
+    await service._apply_flyer_edit(
+        session,
+        state,
+        FlyerEditIntent(FlyerEditKind.ADJUST_VISUAL_DENSITY, value="simpler"),
+        client,
+    )
+    simple_html = rendered_html[-1]
+    assert 'data-visual-mode="simple"' in simple_html
+    assert 'data-refinement-strategy="simplified-grid"' in simple_html
+    assert "composition-simplified-grid" in simple_html
+    assert simple_html != hero_html
+
+    snapshot = build_campaign_render_payload(campaign, campaign.template)
+    snapshot_html = render_campaign_snapshot_html(
+        snapshot,
+        generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+    snapshot_preview_html = snapshot_html.replace(
+        "<body>",
+        '<body data-output-format="pdf" data-preview-width="1240" data-preview-height="1754">',
+        1,
+    )
+    assert snapshot_preview_html == simple_html
+
+    legacy_template = Template(
+        id=uuid4(),
+        name="Legacy Promo 4",
+        slug="promo-4",
+        template_type="flyer",
+        is_global=False,
+        is_active=True,
+        status="published",
+        config_json={"layout": "promo-4"},
+    )
+    legacy_html = render_campaign_preview_html(
+        campaign,
+        legacy_template,
+        generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+    assert "template-promo-4" in legacy_html
+    assert "layout-3x1" in legacy_html
+    assert "data-refinement-strategy" not in legacy_html
 
 
 @pytest.mark.asyncio

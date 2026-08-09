@@ -378,7 +378,7 @@ def _apply_output_format(html: str, output_format: str | None) -> str:
 
 
 def _render_refinement_profile(
-    items: list[dict[str, Any]], builder_config: dict[str, Any], roles: list[str]
+    items: list[dict[str, Any]], builder_config: dict[str, Any]
 ) -> dict[str, str]:
     """Choose one bounded, deterministic visual refinement before rendering."""
     count = len(items)
@@ -386,18 +386,20 @@ def _render_refinement_profile(
     image_coverage = "image-poor" if count and image_count / count < 0.5 else "image-rich"
     density_override = str(builder_config.get("visual_density") or "")
     visual_mode = {"simple": "simple", "expressive": "eye-catching"}.get(density_override, "default")
-    has_hero = any(role in {"hero", "featured"} for role in roles)
+    # Intelligence may recommend a hero for ordering, but only an explicit
+    # campaign-item hero should switch low-count geometry to hero-trio.
+    has_hero = any(bool(item.get("is_hero")) for item in items)
 
     if count == 1:
         layout = "single-poster"
     elif count == 2:
         layout = "split-pair"
+    elif visual_mode == "simple":
+        layout = "simplified-grid"
     elif count == 3:
         layout = "hero-trio" if has_hero else "balanced-trio"
     elif count == 4:
         layout = "large-quad"
-    elif visual_mode == "simple":
-        layout = "simplified-grid"
     elif image_coverage == "image-poor":
         layout = "price-led"
     else:
@@ -452,7 +454,7 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
         **dict(payload.get("template_config") or {}),
         **dict(payload.get("builder_config") or {}),
     }
-    refinement = _render_refinement_profile(items, refinement_config, merchandising_roles)
+    refinement = _render_refinement_profile(items, refinement_config)
     composition = "simplified-grid" if refinement["visual_mode"] == "simple" else density["composition"]
     header = payload.get("header") or {}
     title = payload.get("title") or "Campaign"
@@ -773,6 +775,13 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .small-layout-split-pair .price-panel{width:96%;min-height:135px;padding:14px 18px}
 .small-layout-split-pair .price{font-size:72px!important}
 .small-layout-split-pair .product-name{font-size:34px!important}
+
+.small-layout-balanced-trio .product-grid{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:1fr;gap:26px;padding:28px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
+.small-layout-balanced-trio .product-card{grid-column:auto!important;grid-row:1!important;height:100%;padding:22px;border-radius:20px;outline:0!important;transform:none!important}
+.small-layout-balanced-trio .promo-card-image{height:720px!important;flex-basis:720px!important;margin-bottom:18px}
+.small-layout-balanced-trio .price-panel{width:100%!important;min-height:125px;padding:12px 14px}
+.small-layout-balanced-trio .price{font-size:62px!important}
+.small-layout-balanced-trio .product-name{font-size:29px!important;line-height:1.04}
 
 .small-layout-hero-trio .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:28px;padding:24px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
 .small-layout-hero-trio .product-card{grid-column:2!important;grid-row:auto!important;padding:18px;border-radius:18px}

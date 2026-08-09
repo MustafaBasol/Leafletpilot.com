@@ -2,6 +2,7 @@ import re
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.preview_renderer import render_render_payload_html
 from app.services.template_presets import (
@@ -9,6 +10,31 @@ from app.services.template_presets import (
     SUPERMARKET_PRESETS,
     SUPERMARKET_VISUAL_DEFAULTS,
 )
+from app.services.templates import automatic_supermarket_template_slug
+
+
+@pytest.mark.parametrize(
+    ("count", "slug"),
+    [
+        (1, "supermarket-promo-4"),
+        (3, "supermarket-promo-4"),
+        (4, "supermarket-promo-4"),
+        (5, "supermarket-promo-9"),
+        (9, "supermarket-promo-9"),
+        (10, "supermarket-promo-16"),
+        (16, "supermarket-promo-16"),
+    ],
+)
+def test_automatic_supermarket_template_uses_smallest_supported_preset(count, slug):
+    assert automatic_supermarket_template_slug(count) == slug
+
+
+@pytest.mark.parametrize("count", [0, 17])
+def test_automatic_supermarket_template_rejects_unsupported_counts(count):
+    with pytest.raises(HTTPException) as exc:
+        automatic_supermarket_template_slug(count)
+
+    assert exc.value.status_code == 422
 
 
 @pytest.mark.parametrize(

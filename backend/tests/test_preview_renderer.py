@@ -312,7 +312,7 @@ def test_supermarket_small_campaigns_use_dedicated_large_card_strategies() -> No
     expected = {
         1: ("single-poster", "1x1"),
         2: ("split-pair", "2x1"),
-        3: ("hero-trio", "2x2"),
+        3: ("balanced-trio", "2x2"),
         4: ("large-quad", "2x2"),
     }
 
