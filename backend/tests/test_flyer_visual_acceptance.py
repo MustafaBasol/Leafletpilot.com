@@ -509,7 +509,7 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
 
 @pytest.mark.parametrize(
     ("count", "strategy"),
-    [(1, "single-poster"), (2, "split-pair"), (3, "hero-trio")],
+    [(1, "single-poster"), (2, "split-pair"), (3, "balanced-trio")],
 )
 def test_real_chromium_small_campaign_layouts_fill_the_page_without_collisions(
     count: int, strategy: str

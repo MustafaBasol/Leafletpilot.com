@@ -1,25 +1,81 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, and_, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Campaign, CampaignItem, Market, Product, Template
 from app.schemas.template import TemplateCreate, TemplateUpdate
-from app.services.entitlements import has_capacity, require_capability, resolve_capabilities, resolve_plan_code
-from app.services.preview_renderer import render_campaign_preview_html
 from app.services.catalog import resolve_market_scope, slugify
+from app.services.entitlements import (
+    has_capacity,
+    require_capability,
+    resolve_capabilities,
+)
+from app.services.preview_renderer import render_campaign_preview_html
 from app.services.rendering import storage_path_for_key
+from app.services.template_presets import SUPERMARKET_PRESETS
 
 THUMBNAIL_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 THUMBNAIL_SIGNATURES = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
 THUMBNAIL_LIMIT = 10 * 1024 * 1024
+
+
+def automatic_supermarket_template_slug(item_count: int) -> str:
+    """Return the smallest supported supermarket preset for an automated flyer."""
+    if item_count < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Automated supermarket flyers require at least one product.",
+        )
+    preset = next(
+        (
+            SUPERMARKET_PRESETS[capacity]
+            for capacity in sorted(SUPERMARKET_PRESETS)
+            if item_count <= capacity
+        ),
+        None,
+    )
+    if preset is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Automated supermarket flyers support at most 16 products.",
+        )
+    return str(preset["slug"])
+
+
+async def resolve_automatic_supermarket_template(
+    session: AsyncSession,
+    market_id: UUID,
+    item_count: int,
+) -> Template:
+    """Resolve the canonical published preset for a newly automated flyer."""
+    slug = automatic_supermarket_template_slug(item_count)
+    template = await session.scalar(
+        select(Template)
+        .where(
+            Template.slug == slug,
+            Template.is_active.is_(True),
+            Template.status == "published",
+            or_(Template.market_id == market_id, Template.market_id.is_(None)),
+        )
+        # Production bootstraps the global canonical preset. A published market
+        # copy is a safe fallback when a tenant is intentionally self-contained.
+        .order_by(Template.market_id.is_(None).desc())
+        .limit(1)
+    )
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Published template {slug} is required for automated flyers.",
+        )
+    return template
 
 
 def apply_template_scope(

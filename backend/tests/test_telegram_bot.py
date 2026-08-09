@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,9 +30,12 @@ from app.models import (
     TelegramAccount,
     TelegramConversationState,
     TelegramUpdate,
+    Template,
     User,
 )
 from app.models.base import utc_now
+from app.services import campaign as campaign_service
+from app.services.preview_renderer import render_campaign_preview_html
 from scripts import link_telegram_account
 
 
@@ -675,6 +678,121 @@ async def test_telegram_export_send_failure_retries_existing_files_when_test_dat
         assert len(export_calls) == 1
         assert len(fake.documents) == 1
         assert len(fake.photos) == 1
+    finally:
+        await _cleanup_telegram_test_app(engine)
+
+
+@pytest.mark.asyncio
+async def test_direct_telegram_flyer_uses_supermarket_renderer_for_create_and_edits_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed Telegram tests skipped.")
+
+    engine, session_factory, _ = await _install_telegram_test_app(monkeypatch)
+    rendered_html: list[str] = []
+
+    async def capture_render(
+        session,
+        state,
+        market_id,
+        client,
+        *,
+        acknowledgement,
+        file_format="png",
+    ):
+        campaign = await campaign_service.get_campaign(session, state.campaign_id, market_id)
+        rendered_html.append(
+            render_campaign_preview_html(
+                campaign,
+                campaign.template,
+                generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+            )
+        )
+
+    monkeypatch.setattr(
+        "app.integrations.telegram.service._render_and_send_flyer",
+        capture_render,
+    )
+    try:
+        telegram_user_id, market_id, _ = await _seed_linked_user(
+            session_factory,
+            role="market_staff",
+        )
+        async with session_factory() as session:
+            session.add(
+                Template(
+                    name="Supermarket Promo 4",
+                    slug="supermarket-promo-4",
+                    template_type="supermarket",
+                    is_global=True,
+                    is_active=True,
+                    status="published",
+                    visibility="shared",
+                    config_json={"layout": "supermarket-promo-4"},
+                )
+            )
+            await session.commit()
+
+        headers = {"X-Telegram-Bot-Api-Secret-Token": settings.telegram_webhook_secret}
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            created = await client.post(
+                "/api/integrations/telegram/webhook",
+                headers=headers,
+                json=_message_update(
+                    1300,
+                    telegram_user_id,
+                    telegram_user_id,
+                    "Coca Cola 1L - 29,90\nEti Bur\u00e7ak - 44,90\nS\u00fcta\u015f Yo\u011furt - 74,90",
+                ),
+            )
+            hero = await client.post(
+                "/api/integrations/telegram/webhook",
+                headers=headers,
+                json=_message_update(
+                    1301,
+                    telegram_user_id,
+                    telegram_user_id,
+                    "Coca Cola'y\u0131 \u00f6ne \u00e7\u0131kar",
+                ),
+            )
+            simpler = await client.post(
+                "/api/integrations/telegram/webhook",
+                headers=headers,
+                json=_message_update(
+                    1302,
+                    telegram_user_id,
+                    telegram_user_id,
+                    "Daha sade yap",
+                ),
+            )
+
+        assert [created.status_code, hero.status_code, simpler.status_code] == [200, 200, 200]
+        assert len(rendered_html) == 3
+        default_html, hero_html, simple_html = rendered_html
+        assert "preview-supermarket-promo-4" in default_html
+        assert 'data-refinement-strategy="balanced-trio"' in default_html
+        assert "layout-3x1" not in default_html
+        assert 'data-refinement-strategy="hero-trio"' in hero_html
+        assert 'data-visual-weight="dominant"' in hero_html
+        assert 'data-visual-mode="simple"' in simple_html
+        assert 'data-refinement-strategy="simplified-grid"' in simple_html
+
+        async with session_factory() as session:
+            campaign = await session.scalar(
+                select(Campaign)
+                .where(Campaign.market_id == market_id)
+                .order_by(Campaign.created_at.desc())
+            )
+            template = await session.get(Template, campaign.template_id)
+
+        assert campaign.channel == "telegram"
+        assert template.slug == "supermarket-promo-4"
+        assert default_html != hero_html
+        assert hero_html != simple_html
     finally:
         await _cleanup_telegram_test_app(engine)
 

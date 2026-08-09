@@ -36,6 +36,7 @@ from app.models.base import utc_now
 from app.schemas.campaign import RAW_TEXT_MAX_LENGTH, CampaignCreateFromTextRequest
 from app.schemas.export import ExportJobCreate
 from app.services import campaign as campaign_service
+from app.services import templates as template_service
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.rendering import storage_path_for_key
 
@@ -328,11 +329,17 @@ async def _create_and_send_flyer(
     state.parsed_summary = _parsed_summary(parsed)
     state.pending_title = title
     await client.send_message(chat_id, "Listenizi aldim. Brosur hazirlaniyor...")
+    template = await template_service.resolve_automatic_supermarket_template(
+        session,
+        membership.market_id,
+        len([item for item in parsed if item.incoming_name.strip()]),
+    )
     payload = CampaignCreateFromTextRequest(
         title=title,
         raw_text=text,
         channel="telegram",
         source_type="text",
+        template_id=template.id,
         currency=membership.market.currency,
         language=membership.market.language,
         generate_suggestions=True,
