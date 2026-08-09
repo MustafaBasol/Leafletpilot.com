@@ -1,8 +1,8 @@
 import re
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 from urllib.parse import urlparse
+from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, or_, select
@@ -17,6 +17,7 @@ from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
 from app.services.image_pipeline import store_flyer_image
+from app.services.product_identity import normalize_product_text
 
 PUNCTUATION_RE = re.compile(r"[!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-]+")
 SPACES_RE = re.compile(r"\s+")
@@ -30,10 +31,7 @@ def slugify(value: str) -> str:
 
 
 def normalize_alias(value: str) -> str:
-    # Turkish characters are intentionally preserved for MVP matching fidelity.
-    normalized = value.strip().lower()
-    normalized = PUNCTUATION_RE.sub(" ", normalized)
-    return SPACES_RE.sub(" ", normalized).strip()
+    return normalize_product_text(value)
 
 
 def resolve_market_scope(is_global: bool, market_id: UUID | None) -> UUID | None:
@@ -299,6 +297,20 @@ async def create_product_alias(
     product = await get_product(session, product_id, market_id)
     if product.is_global:
         raise _global_mutation_forbidden()
+    normalized_alias = normalize_alias(payload.alias)
+    duplicate = await session.scalar(
+        select(ProductAlias)
+        .join(Product, Product.id == ProductAlias.product_id)
+        .where(
+            Product.market_id == product.market_id,
+            ProductAlias.normalized_alias == normalized_alias,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A catalog alias with this normalized identity already exists in this market.",
+        )
     alias = _build_alias(payload)
     product.aliases.append(alias)
     await _persist(session, product)

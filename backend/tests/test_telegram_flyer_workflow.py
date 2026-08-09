@@ -111,6 +111,11 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
     monkeypatch.setattr(service.campaign_service, "create_campaign_from_text", create)
     monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", analyze)
     monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", apply)
+    monkeypatch.setattr(
+        service,
+        "resolve_campaign_product_images",
+        AsyncMock(return_value=SimpleNamespace(unresolved_names=("Coca Cola 2L",))),
+    )
     monkeypatch.setattr(service, "_render_and_send_flyer", render)
 
     text = "Coca Cola 2L - 2,49\nEti Burcak - 1,25"
@@ -234,6 +239,11 @@ async def test_direct_three_product_route_uses_refinement_and_conversational_geo
     monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", analyze_campaign)
     monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", apply_intelligence)
     monkeypatch.setattr(service.campaign_service, "get_campaign", AsyncMock(return_value=campaign))
+    monkeypatch.setattr(
+        service,
+        "resolve_campaign_product_images",
+        AsyncMock(return_value=SimpleNamespace(unresolved_names=tuple(item.incoming_name for item in campaign.items))),
+    )
     monkeypatch.setattr(service, "_render_and_send_flyer", capture_render)
 
     await service._create_and_send_flyer(session, state, text, parsed, client)

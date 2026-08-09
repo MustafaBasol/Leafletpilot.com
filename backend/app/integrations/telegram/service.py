@@ -38,6 +38,7 @@ from app.schemas.export import ExportJobCreate
 from app.services import campaign as campaign_service
 from app.services import templates as template_service
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
+from app.services.product_image_resolution import resolve_campaign_product_images
 from app.services.rendering import storage_path_for_key
 
 logger = logging.getLogger(__name__)
@@ -352,11 +353,22 @@ async def _create_and_send_flyer(
     state.state = TelegramState.GENERATING_EXPORTS.value
     await session.commit()
 
+    image_resolution = await resolve_campaign_product_images(
+        session,
+        membership.market_id,
+        result.campaign_id,
+    )
     await campaign_service.analyze_campaign_intelligence(session, result.campaign_id, membership.market_id)
     await campaign_service.apply_campaign_intelligence(session, result.campaign_id, membership.market_id)
     warning = ""
-    if result.missing_count or result.low_confidence_count:
-        warning = f" {result.missing_count + result.low_confidence_count} urun gorsel/eslesme uyarisiyla devam edildi."
+    if image_resolution.unresolved_names:
+        visible_names = ", ".join(image_resolution.unresolved_names[:3])
+        extra = len(image_resolution.unresolved_names) - 3
+        suffix = f" ve {extra} urun daha" if extra > 0 else ""
+        warning = (
+            f" Guvenilir gorsel bulunamadi: {visible_names}{suffix}. "
+            "LP yedegi kullanildi; katalogdan gorsel yukleyebilirsiniz."
+        )
     await _render_and_send_flyer(
         session,
         state,
