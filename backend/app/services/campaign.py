@@ -585,15 +585,17 @@ async def create_export_job(
         if template is not None:
             await finalize_campaign(session, campaign.id, campaign.market_id)
             campaign = await get_campaign(session, campaign_id, market_id)
-    existing = await session.scalar(
-        select(ExportJob).where(
-            ExportJob.campaign_id == campaign.id,
-            ExportJob.market_id == campaign.market_id,
-            ExportJob.job_type == (payload.job_type or "final_export"),
-            ExportJob.status.in_(["queued", "running", "completed"]),
-            ExportJob.requested_formats == formats,
-        ).order_by(ExportJob.created_at.desc()).with_for_update()
-    )
+    existing = None
+    if payload.job_type == "final_export":
+        existing = await session.scalar(
+            select(ExportJob).where(
+                ExportJob.campaign_id == campaign.id,
+                ExportJob.market_id == campaign.market_id,
+                ExportJob.job_type == payload.job_type,
+                ExportJob.status.in_(["queued", "running", "completed"]),
+                ExportJob.requested_formats == formats,
+            ).order_by(ExportJob.created_at.desc()).with_for_update()
+        )
     if existing is not None:
         if existing.status == "completed" or not _export_job_is_stale(existing):
             return existing

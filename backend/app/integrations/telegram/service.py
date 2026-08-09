@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -13,11 +13,19 @@ from sqlalchemy.orm import selectinload
 from app.core.lifecycle import inactive_market_message, market_allows_mutations
 from app.core.roles import MARKET_MUTATION_ROLES
 from app.integrations.telegram.client import TelegramClientError, TelegramClientProtocol
-from app.integrations.telegram.schemas import InlineKeyboardMarkup, TelegramUpdate as TelegramUpdatePayload
+from app.integrations.telegram.edit_intents import (
+    FlyerEditIntent,
+    FlyerEditKind,
+    normalize_for_match,
+    parse_flyer_edit_intent,
+)
+from app.integrations.telegram.schemas import InlineKeyboardMarkup
+from app.integrations.telegram.schemas import TelegramUpdate as TelegramUpdatePayload
 from app.integrations.telegram.state_machine import TelegramState
 from app.models import (
-    CampaignFile,
     Campaign,
+    CampaignFile,
+    CampaignItem,
     ExportJob,
     MarketUser,
     TelegramAccount,
@@ -25,7 +33,7 @@ from app.models import (
     TelegramUpdate,
 )
 from app.models.base import utc_now
-from app.schemas.campaign import CampaignCreateFromTextRequest, RAW_TEXT_MAX_LENGTH
+from app.schemas.campaign import RAW_TEXT_MAX_LENGTH, CampaignCreateFromTextRequest
 from app.schemas.export import ExportJobCreate
 from app.services import campaign as campaign_service
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
@@ -41,9 +49,10 @@ HELP_TEXT = (
     "/status - mevcut durumu goster\n"
     "/cancel - mevcut akisi iptal et\n"
     "/help - yardim\n\n"
-    "Liste formati: Her satira bir urun yazin. Ornek:\n"
+    "Dogrudan urun listenizi gonderebilirsiniz. Ornek:\n"
     "Sut 1L - 1.29\n"
-    "Coca Cola 2L old 1.99 new 1.59"
+    "Coca Cola 2L old 1.99 new 1.59\n\n"
+    "Sonra 'Coca Cola'yi buyut', 'Daha sade yap' veya 'PDF gonder' yazabilirsiniz."
 )
 PROCESSING_LEASE = timedelta(minutes=5)
 
@@ -212,20 +221,30 @@ async def _handle_plain_text(
     client: TelegramClientProtocol,
 ) -> None:
     chat_id = _chat_id(state)
-    if state.state == TelegramState.AWAITING_PRODUCT_LIST.value:
+    intent = parse_flyer_edit_intent(text) if state.campaign_id is not None else None
+    if intent is not None:
+        await _apply_flyer_edit(session, state, intent, client)
+        return
+
+    if state.state != TelegramState.AWAITING_TITLE.value:
         if len(text) > RAW_TEXT_MAX_LENGTH:
             await client.send_message(chat_id, "Liste cok uzun. Lutfen daha kisa bir liste gonderin.")
             return
         parsed = parse_campaign_text(text)
         usable = [item for item in parsed if item.incoming_name.strip()]
-        if not usable:
-            await client.send_message(chat_id, "Kullanilabilir urun satiri bulunamadi. Listeyi tekrar gonderin.")
+        priced = [item for item in parsed if item.incoming_name.strip() and item.price is not None]
+        if priced:
+            if len(usable) > 16:
+                await client.send_message(chat_id, "Tek brosurde en fazla 16 urun kullanin; listeyi bolerek tekrar gonderin.")
+                return
+            await _create_and_send_flyer(session, state, text, parsed, client)
             return
-        state.pending_raw_text = text
-        state.parsed_summary = _parsed_summary(parsed)
-        state.state = TelegramState.AWAITING_TITLE.value
-        await client.send_message(chat_id, _summary_text(parsed) + "\n\nKampanya basligini gonderin.")
-        return
+        if state.state == TelegramState.AWAITING_PRODUCT_LIST.value:
+            await client.send_message(
+                chat_id,
+                "Fiyatli bir urun satiri bulamadim. Ornek: Sut 1L - 1,29",
+            )
+            return
 
     if state.state == TelegramState.AWAITING_TITLE.value:
         if state.campaign_id is not None:
@@ -267,10 +286,293 @@ async def _handle_plain_text(
         return
 
     if state.state == TelegramState.AWAITING_CONFIRMATION.value and state.campaign_id is not None:
-        await client.send_message(chat_id, "Bu kampanya basligi zaten islendi.")
+        await client.send_message(
+            chat_id,
+            "Bu kampanya aktif. 'Daha sade yap', 'bir urunu buyut' veya yeni bir fiyat listesi gonderebilirsiniz.",
+        )
         return
 
-    await client.send_message(chat_id, "Yeni kampanya icin /new yazin veya yardim icin /help kullanin.")
+    await client.send_message(
+        chat_id,
+        "Fiyatli urun listenizi dogrudan gonderin. Ornek: Sut 1L - 1,29",
+    )
+
+
+async def _create_and_send_flyer(
+    session: AsyncSession,
+    state: TelegramConversationState,
+    text: str,
+    parsed: list[ParsedCampaignLine],
+    client: TelegramClientProtocol,
+) -> None:
+    chat_id = _chat_id(state)
+    membership = await _require_selected_mutation_membership(session, state)
+    if membership is None:
+        memberships = await _active_memberships(session, state.user_id)
+        eligible = [item for item in memberships if item.role in MARKET_MUTATION_ROLES and market_allows_mutations(item.market)]
+        if len(eligible) == 1:
+            membership = eligible[0]
+            state.selected_market_id = membership.market_id
+        else:
+            await client.send_message(chat_id, "Once /markets ile kampanyanin marketini secin.")
+            return
+
+    title = f"{membership.market.name} Firsatlari"[:255]
+    state.pending_raw_text = text
+    state.parsed_summary = _parsed_summary(parsed)
+    state.pending_title = title
+    await client.send_message(chat_id, "Listenizi aldim. Brosur hazirlaniyor...")
+    payload = CampaignCreateFromTextRequest(
+        title=title,
+        raw_text=text,
+        channel="telegram",
+        source_type="text",
+        currency=membership.market.currency,
+        language=membership.market.language,
+        generate_suggestions=True,
+    )
+    result = await campaign_service.create_campaign_from_text(session, payload, membership.market_id)
+    state.campaign_id = result.campaign_id
+    state.revision_count = 0
+    state.last_edit_intent_json = None
+    state.export_job_id = None
+    state.state = TelegramState.GENERATING_EXPORTS.value
+    await session.commit()
+
+    await campaign_service.analyze_campaign_intelligence(session, result.campaign_id, membership.market_id)
+    await campaign_service.apply_campaign_intelligence(session, result.campaign_id, membership.market_id)
+    warning = ""
+    if result.missing_count or result.low_confidence_count:
+        warning = f" {result.missing_count + result.low_confidence_count} urun gorsel/eslesme uyarisiyla devam edildi."
+    await _render_and_send_flyer(
+        session,
+        state,
+        membership.market_id,
+        client,
+        acknowledgement=f"Brosurunuz hazir.{warning}",
+    )
+
+
+async def _apply_flyer_edit(
+    session: AsyncSession,
+    state: TelegramConversationState,
+    intent: FlyerEditIntent,
+    client: TelegramClientProtocol,
+) -> None:
+    chat_id = _chat_id(state)
+    membership = await _require_selected_mutation_membership(session, state)
+    if membership is None or state.campaign_id is None:
+        await client.send_message(chat_id, "Duzenlenecek aktif bir brosur bulunamadi. Fiyatli urun listenizi gonderin.")
+        return
+    campaign = await campaign_service.get_campaign(session, state.campaign_id, membership.market_id)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        await client.send_message(chat_id, "Bu brosur sonlandirilmis. Yeni bir fiyat listesiyle yeni brosur baslatin.")
+        return
+
+    item = None
+    product_intents = {
+        FlyerEditKind.CHANGE_HERO_PRODUCT,
+        FlyerEditKind.REDUCE_PRODUCT_EMPHASIS,
+        FlyerEditKind.REMOVE_PRODUCT,
+    }
+    if intent.product_reference and intent.kind in product_intents:
+        item, ambiguous = _find_campaign_item(campaign.items, intent.product_reference)
+        if ambiguous:
+            await client.send_message(chat_id, "Birden fazla urun eslesti. Urun adini biraz daha acik yazin.")
+            return
+        if item is None:
+            await client.send_message(chat_id, f"'{intent.product_reference}' aktif brosurde bulunamadi.")
+            return
+
+    rerun_intelligence = False
+    acknowledgement = "Degisiklik uygulandi."
+    config = dict(campaign.builder_config_json or {})
+    if intent.kind == FlyerEditKind.CHANGE_HERO_PRODUCT and item is not None:
+        for candidate in campaign.items:
+            candidate.is_hero = candidate.id == item.id
+        reduced = [value for value in config.get("reduced_emphasis_item_ids", []) if value != str(item.id)]
+        config["reduced_emphasis_item_ids"] = reduced
+        rerun_intelligence = True
+        acknowledgement = f"{item.display_name or item.incoming_name} one cikarildi."
+    elif intent.kind == FlyerEditKind.REDUCE_PRODUCT_EMPHASIS and item is not None:
+        item.is_hero = False
+        reduced = {str(value) for value in config.get("reduced_emphasis_item_ids", [])}
+        reduced.add(str(item.id))
+        config["reduced_emphasis_item_ids"] = sorted(reduced)
+        rerun_intelligence = True
+        acknowledgement = f"{item.display_name or item.incoming_name} vurgusu azaltildi."
+    elif intent.kind == FlyerEditKind.REMOVE_PRODUCT and item is not None:
+        item.match_status = "excluded"
+        item.is_hero = False
+        campaign_service.recalculate_campaign_counts(campaign)
+        rerun_intelligence = True
+        acknowledgement = f"{item.display_name or item.incoming_name} brosurden kaldirildi."
+    elif intent.kind == FlyerEditKind.SET_TITLE and intent.value:
+        campaign.title = intent.value
+        config["headline"] = intent.value
+        acknowledgement = "Baslik degistirildi."
+    elif intent.kind == FlyerEditKind.ADJUST_VISUAL_DENSITY:
+        if intent.value == "simpler":
+            config.update(
+                {
+                    "visual_density": "simple",
+                    "header_style": "minimal",
+                    "card_style": "outlined",
+                    "badge_style": "pill",
+                    "show_additional_logos": False,
+                    "show_payment_icons": False,
+                    "show_footer_note": False,
+                    "show_footer": False,
+                }
+            )
+            acknowledgement = "Tasarim sadelestirildi."
+        else:
+            config.update(
+                {
+                    "visual_density": "expressive",
+                    "header_style": "burst",
+                    "card_style": "shadow",
+                    "badge_style": "burst",
+                    "headline_emphasis": "high",
+                    "show_additional_logos": True,
+                }
+            )
+            acknowledgement = "Tasarim daha dikkat cekici hale getirildi."
+    elif intent.kind == FlyerEditKind.INCREASE_PRICE_PROMINENCE:
+        config.update({"price_prominence": "high", "price_style": "panel", "show_old_price": True})
+        acknowledgement = "Fiyat vurgusu artirildi."
+    elif intent.kind == FlyerEditKind.REGROUP_PRODUCTS:
+        grouped = _regroup_campaign_items(campaign.items, intent.product_reference)
+        if intent.product_reference and grouped == 0:
+            await client.send_message(chat_id, f"'{intent.product_reference}' aktif brosurde bulunamadi.")
+            return
+        config.pop("campaign_intelligence", None)
+        config["smart_composition"] = False
+        config["manual_grouping"] = intent.product_reference or "similar_products"
+        acknowledgement = "Urunler birlikte gruplanacak sekilde siralandi."
+    elif intent.kind == FlyerEditKind.CHANGE_FORMAT:
+        if intent.value == "pdf":
+            await _render_and_send_flyer(
+                session,
+                state,
+                membership.market_id,
+                client,
+                acknowledgement="PDF hazir.",
+                file_format="pdf",
+            )
+            return
+        config["output_format"] = intent.value
+        acknowledgement = "Yeni format uygulandi."
+    elif intent.kind != FlyerEditKind.RERENDER_CURRENT_CAMPAIGN:
+        await client.send_message(chat_id, "Bu degisiklik henuz desteklenmiyor.")
+        return
+
+    campaign.builder_config_json = config
+    state.last_edit_intent_json = intent.as_dict()
+    state.revision_count = (state.revision_count or 0) + 1
+    state.export_job_id = None
+    state.export_files_sent_at = None
+    state.export_photo_sent_at = None
+    state.export_document_sent_at = None
+    await session.commit()
+    if rerun_intelligence:
+        await campaign_service.analyze_campaign_intelligence(session, campaign.id, membership.market_id)
+        await campaign_service.apply_campaign_intelligence(session, campaign.id, membership.market_id)
+    await _render_and_send_flyer(
+        session,
+        state,
+        membership.market_id,
+        client,
+        acknowledgement=acknowledgement,
+    )
+
+
+async def _render_and_send_flyer(
+    session: AsyncSession,
+    state: TelegramConversationState,
+    market_id: UUID,
+    client: TelegramClientProtocol,
+    *,
+    acknowledgement: str,
+    file_format: str = "png",
+) -> None:
+    if state.campaign_id is None:
+        raise RuntimeError("Telegram flyer campaign is missing.")
+    job_type = "preview" if state.revision_count == 0 else "regenerate_preview"
+    if file_format == "pdf":
+        job_type = "send_files"
+
+    async def remember_export_job(created_job: ExportJob) -> None:
+        created_job.requested_by_user_id = state.user_id
+        state.export_job_id = created_job.id
+
+    job = await campaign_service.create_export_job(
+        session,
+        state.campaign_id,
+        ExportJobCreate(job_type=job_type, requested_formats=[file_format]),
+        market_id,
+        commit=False,
+        after_flush=remember_export_job,
+    )
+    files = await _ready_export_files(session, job.result_file_ids or [])
+    rendered = _find_file(files, file_format)
+    if rendered is None:
+        state.state = TelegramState.COMPLETED.value
+        state.last_error = f"{file_format.upper()} preview was not produced."
+        await client.send_message(_chat_id(state), "Brosur su anda olusturulamadi. Lutfen tekrar deneyin.")
+        return
+    try:
+        if file_format == "pdf":
+            await client.send_document(_chat_id(state), _safe_file_path(rendered), caption=acknowledgement)
+            state.export_document_sent_at = utc_now()
+        else:
+            await client.send_message(_chat_id(state), acknowledgement)
+            await client.send_photo(
+                _chat_id(state),
+                _safe_file_path(rendered),
+                caption="Ilk taslak hazir. 'Daha sade yap' veya 'bir urunu buyut' diyebilirsiniz.",
+            )
+            state.export_photo_sent_at = utc_now()
+    except TelegramClientError as exc:
+        state.last_error = _safe_error(exc)
+        await client.send_message(_chat_id(state), "Brosur Telegram'a gonderilemedi. Tekrar deneyebilirsiniz.")
+        return
+    state.state = TelegramState.COMPLETED.value
+    state.export_files_sent_at = utc_now()
+    state.last_error = None
+    await session.flush()
+
+
+def _find_campaign_item(items: list[CampaignItem], reference: str) -> tuple[CampaignItem | None, bool]:
+    needle = normalize_for_match(reference)
+    active = [item for item in items if item.match_status != "excluded"]
+    exact = [item for item in active if needle in {normalize_for_match(item.incoming_name), normalize_for_match(item.display_name or "")}]
+    matches = exact or [
+        item
+        for item in active
+        if needle and needle in normalize_for_match(f"{item.display_name or ''} {item.incoming_name}")
+    ]
+    return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
+
+
+def _regroup_campaign_items(items: list[CampaignItem], reference: str | None) -> int:
+    needle = normalize_for_match(reference or "")
+    active = [item for item in items if item.match_status != "excluded"]
+
+    def key(item: CampaignItem) -> tuple[str, int]:
+        haystack = normalize_for_match(f"{item.display_name or ''} {item.incoming_name}")
+        if needle:
+            return ("0" if needle in haystack else "1", item.sort_order)
+        group = normalize_for_match(item.category_hint or "") or normalize_for_match(item.incoming_name).split(" ")[0]
+        return (group, item.sort_order)
+
+    for index, item in enumerate(sorted(active, key=key)):
+        item.sort_order = index
+    return sum(
+        1
+        for item in active
+        if not needle or needle in normalize_for_match(f"{item.display_name or ''} {item.incoming_name}")
+    )
 
 
 async def _handle_callback(
@@ -569,6 +871,8 @@ async def _status_text(session: AsyncSession, state: TelegramConversationState) 
         lines.append(f"Kampanya ID: {state.campaign_id}")
     if state.export_job_id:
         lines.append(f"Export ID: {state.export_job_id}")
+    if state.campaign_id:
+        lines.append(f"Revizyon: {state.revision_count or 0}")
     return "\n".join(lines)
 
 
@@ -648,6 +952,8 @@ def _reset_draft(state: TelegramConversationState) -> None:
     state.export_photo_sent_at = None
     state.export_files_sent_at = None
     state.export_delivery_started_at = None
+    state.revision_count = 0
+    state.last_edit_intent_json = None
     state.last_error = None
 
 
