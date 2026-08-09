@@ -276,8 +276,8 @@ async def test_direct_three_product_route_uses_refinement_and_conversational_geo
     )
     simple_html = rendered_html[-1]
     assert 'data-visual-mode="simple"' in simple_html
-    assert 'data-refinement-strategy="simplified-grid"' in simple_html
-    assert "composition-simplified-grid" in simple_html
+    assert 'data-refinement-strategy="balanced-trio"' in simple_html
+    assert "composition-hero-offers" in simple_html
     assert simple_html != hero_html
 
     snapshot = build_campaign_render_payload(campaign, campaign.template)

@@ -12,7 +12,9 @@ from app.services.catalog import resolve_effective_product
 from app.services.image_pipeline import stored_flyer_image_has_alpha
 from app.services.merchandising import create_composition_plan
 from app.services.template_presets import (
+    FILL_BOOST_CONFIG_KEY,
     SUPERMARKET_PRESETS,
+    apply_density_fill_boost,
     supermarket_density_profile,
     supermarket_visual_config,
 )
@@ -394,10 +396,11 @@ def _render_refinement_profile(
         layout = "single-poster"
     elif count == 2:
         layout = "split-pair"
-    elif visual_mode == "simple":
-        layout = "simplified-grid"
     elif count == 3:
-        layout = "hero-trio" if has_hero else "balanced-trio"
+        # "Simple" flattens visual hero dominance (balanced-trio's CSS already
+        # overrides composition-level sizing with !important), but never
+        # touches item.is_hero data/order.
+        layout = "hero-trio" if has_hero and visual_mode != "simple" else "balanced-trio"
     elif count == 4:
         layout = "large-quad"
     elif image_coverage == "image-poor":
@@ -454,8 +457,10 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
         **dict(payload.get("template_config") or {}),
         **dict(payload.get("builder_config") or {}),
     }
+    if refinement_config.get(FILL_BOOST_CONFIG_KEY):
+        density = apply_density_fill_boost(density)
     refinement = _render_refinement_profile(items, refinement_config)
-    composition = "simplified-grid" if refinement["visual_mode"] == "simple" else density["composition"]
+    composition = density["composition"]
     header = payload.get("header") or {}
     title = payload.get("title") or "Campaign"
     validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
