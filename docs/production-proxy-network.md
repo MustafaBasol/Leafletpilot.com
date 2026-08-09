@@ -4,7 +4,7 @@ LeafletPilot production services use the private Docker network:
 
 - leafletpilot_app
 
-The following services must remain only on this application network:
+The following services remain on this application network:
 
 - backend
 - frontend
@@ -38,6 +38,10 @@ Expected results:
 ## Network architecture
 
 - backend, frontend, and postgres remain on leafletpilot_app.
+- backend is additionally connected to the dedicated leafletpilot_egress bridge
+  so Docker's embedded resolver can reach upstream DNS and outbound HTTPS.
+- leafletpilot_egress is not shared with another Coolify application; frontend
+  and postgres remain isolated from outbound container traffic.
 - coolify-proxy is additionally connected to leafletpilot_app.
 - LeafletPilot application containers must not join another application's Coolify UUID network.
 - Traefik routes use traefik.docker.network=leafletpilot_app.

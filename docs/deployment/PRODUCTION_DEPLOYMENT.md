@@ -113,6 +113,16 @@ to a real server and does not include production credentials.
     docker compose --env-file .env.production -f docker-compose.production.yml exec backend python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health/db').read().decode())"
     ```
 
+    Verify that the dedicated backend egress network preserves internal service
+    discovery and restores public DNS before testing integrations or exports:
+
+    ```bash
+    docker compose --env-file .env.production -f docker-compose.production.yml exec backend getent hosts frontend
+    docker compose --env-file .env.production -f docker-compose.production.yml exec backend getent hosts postgres
+    docker compose --env-file .env.production -f docker-compose.production.yml exec backend getent hosts leafletpilot.com
+    docker compose --env-file .env.production -f docker-compose.production.yml exec backend getent hosts api.leafletpilot.com
+    ```
+
 20. Open `https://${APP_DOMAIN}` and log in as the created admin.
 21. Generate a test brochure PDF and PNG.
 22. Restart the backend and verify the exported file still downloads:
