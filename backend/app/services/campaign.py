@@ -1,3 +1,5 @@
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -9,38 +11,57 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, MatchingSuggestion, Product, Template, MarketProduct, Market
+from app.models import (
+    Campaign,
+    CampaignFile,
+    CampaignItem,
+    ExportJob,
+    Market,
+    MarketProduct,
+    MatchingSuggestion,
+    Product,
+    Template,
+)
 from app.schemas.campaign import (
+    CampaignBuilderOptions,
     CampaignCreate,
     CampaignCreateFromTextRequest,
     CampaignCreateFromTextResponse,
+    CampaignFinalizeResponse,
+    CampaignIntelligenceEnvelope,
+    CampaignIntelligenceResult,
     CampaignItemCreate,
     CampaignItemResolveMatch,
     CampaignItemUpdate,
     CampaignPreviewHtml,
     CampaignUpdate,
-    CampaignBuilderOptions,
-    CampaignFinalizeResponse,
     MatchingSuggestionCreate,
 )
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
+from app.services.campaign_intelligence import CampaignIntelligenceEngine
+from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
+from app.services.campaign_rendering import campaign_render_load_options
+from app.services.catalog import list_my_market_products, resolved_market_product
+from app.services.entitlements import has_capacity, resolve_capabilities, resolve_plan_code
+from app.services.preview_renderer import (
+    DEFAULT_TEMPLATE_NAME,
+    DEFAULT_TEMPLATE_SLUG,
+    render_campaign_preview_html,
+)
 from app.services.rendering import (
     FORMAT_MEDIA_TYPES,
     normalize_requested_formats,
     render_campaign_export,
     storage_path_for_key,
 )
-from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
-from app.services.campaign_rendering import campaign_render_load_options
-from app.services.preview_renderer import DEFAULT_TEMPLATE_NAME, DEFAULT_TEMPLATE_SLUG, render_campaign_preview_html
-from app.services.catalog import list_my_market_products, resolved_market_product
 from app.services.templates import list_templates
-from app.services.entitlements import has_capacity, resolve_capabilities, resolve_plan_code
 
 MATCHED_STATUSES = {"matched", "manual_selected"}
 MISSING_STATUSES = {"not_found", "new_product_needed", "use_without_image"}
 LOW_CONFIDENCE_STATUS = "low_confidence"
 EXPORT_JOB_RECOVERY_AFTER = timedelta(minutes=5)
+logger = logging.getLogger(__name__)
+
 
 
 def require_market_id(market_id: UUID | None) -> UUID:
@@ -63,6 +84,13 @@ def recalculate_campaign_counts(campaign: Campaign) -> Campaign:
         1 for item in active_items if item.match_status == LOW_CONFIDENCE_STATUS
     )
     return campaign
+
+
+def _clear_applied_intelligence(campaign: Campaign) -> None:
+    config = dict(campaign.builder_config_json or {})
+    if "campaign_intelligence" in config:
+        config.pop("campaign_intelligence", None)
+        campaign.builder_config_json = config
 
 
 async def list_campaigns(
@@ -241,6 +269,85 @@ async def get_campaign_preview_html(
     )
 
 
+async def analyze_campaign_intelligence(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+) -> CampaignIntelligenceEnvelope:
+    started = time.perf_counter()
+    campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.snapshot_json:
+        payload = campaign.snapshot_json
+    else:
+        from app.services.preview_renderer import _live_payload
+        payload = _live_payload(campaign, campaign.template, include_applied_intelligence=False)
+
+    result = CampaignIntelligenceEngine().analyze(str(campaign.id), list(payload.get("items") or []))
+    validated = CampaignIntelligenceResult.model_validate(result)
+    analyzed_at = datetime.now(UTC).replace(microsecond=0)
+    campaign.intelligence_json = validated.model_dump(mode="json")
+    campaign.intelligence_analyzed_at = analyzed_at
+    await _persist(session, campaign)
+    logger.info(
+        "Campaign intelligence analysis completed.",
+        extra={
+            "campaign_id": str(campaign.id),
+            "market_id": str(campaign.market_id),
+            "product_count": len(validated.products),
+            "strategy": validated.strategy.composition,
+            "engine_version": validated.engineVersion,
+            "duration_ms": round((time.perf_counter() - started) * 1000),
+            "fallback_state": not bool(validated.products),
+        },
+    )
+    return CampaignIntelligenceEnvelope(
+        result=validated,
+        analyzedAt=analyzed_at,
+        applied=False,
+    )
+
+
+async def get_campaign_intelligence(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+) -> CampaignIntelligenceEnvelope:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    if not campaign.intelligence_json or not campaign.intelligence_analyzed_at:
+        raise HTTPException(status_code=404, detail="Campaign intelligence has not been analyzed.")
+    result = CampaignIntelligenceResult.model_validate(campaign.intelligence_json)
+    applied = (campaign.builder_config_json or {}).get("campaign_intelligence") == campaign.intelligence_json
+    return CampaignIntelligenceEnvelope(
+        result=result,
+        analyzedAt=campaign.intelligence_analyzed_at,
+        applied=applied,
+    )
+
+
+async def apply_campaign_intelligence(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+) -> CampaignIntelligenceEnvelope:
+    campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    if not campaign.intelligence_json or not campaign.intelligence_analyzed_at:
+        raise HTTPException(status_code=409, detail="Analyze campaign intelligence before applying it.")
+    result = CampaignIntelligenceResult.model_validate(campaign.intelligence_json)
+    campaign.builder_config_json = {
+        **(campaign.builder_config_json or {}),
+        "smart_composition": True,
+        "campaign_intelligence": result.model_dump(mode="json"),
+    }
+    await _persist(session, campaign)
+    return CampaignIntelligenceEnvelope(
+        result=result,
+        analyzedAt=campaign.intelligence_analyzed_at,
+        applied=True,
+    )
+
+
 async def update_campaign(
     session: AsyncSession,
     campaign_id: UUID,
@@ -270,6 +377,7 @@ async def update_campaign(
             for item in item_payloads
         ]
         recalculate_campaign_counts(campaign)
+        _clear_applied_intelligence(campaign)
     if "status" in updates:
         now = datetime.now(UTC)
         if campaign.status == "approved" and campaign.approved_at is None:
@@ -309,6 +417,7 @@ async def add_campaign_item(
     )
     campaign.items.append(item)
     recalculate_campaign_counts(campaign)
+    _clear_applied_intelligence(campaign)
     await _persist(session, campaign)
     return item
 
@@ -333,6 +442,7 @@ async def update_campaign_item(
     for key, value in updates.items():
         setattr(item, key, value)
     recalculate_campaign_counts(campaign)
+    _clear_applied_intelligence(campaign)
     await _persist(session, campaign)
     return item
 
@@ -354,9 +464,9 @@ async def reorder_campaign_items(session: AsyncSession, campaign_id: UUID, item_
         )
     for index, item_id in enumerate(requested_ids):
         current[item_id].sort_order = index
+    _clear_applied_intelligence(campaign)
     await _persist(session, campaign)
     return await get_campaign(session, campaign.id, campaign.market_id)
-
 
 async def resolve_campaign_item_match(
     session: AsyncSession,
@@ -386,6 +496,7 @@ async def resolve_campaign_item_match(
     if payload.notes is not None:
         item.matching_notes = payload.notes
     recalculate_campaign_counts(campaign)
+    _clear_applied_intelligence(campaign)
     await _persist(session, campaign)
     return item
 

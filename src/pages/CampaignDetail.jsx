@@ -4,6 +4,8 @@ import { isRealApiEnabled } from "../api/config.js";
 import { campaignProducts, findCampaignById, generatedFiles } from "../data/mockData.js";
 import {
   createCampaignExportJob,
+  analyzeCampaignIntelligence,
+  applyCampaignIntelligence,
   downloadCampaignFile,
   finalizeCampaign,
   generateCampaignDetailSuggestions,
@@ -397,6 +399,41 @@ export function CampaignDetail({ campaignId }) {
     setNotice("Ürün kampanyadan çıkarıldı.");
   }
 
+  async function analyzeIntelligence() {
+    await runRealAction(
+      "campaign-intelligence-analyze",
+      () => analyzeCampaignIntelligence(campaignId),
+      "Kampanya analizi g\u00fcncellendi.",
+    );
+  }
+
+  async function applyIntelligence() {
+    await runRealAction(
+      "campaign-intelligence-apply",
+      () => applyCampaignIntelligence(campaignId),
+      "Kampanya plan\u0131 \u00f6nizleme ve \u00e7\u0131kt\u0131lara uyguland\u0131.",
+    );
+    await loadPreview();
+  }
+
+  const intelligence = campaign.intelligence;
+  const intelligenceProducts = intelligence?.products || [];
+  const heroRecommendation = intelligenceProducts.find((product) => product.role === "hero");
+  const productName = (productId) =>
+    rows.find((row) => row.id === productId)?.matchedProduct
+    || rows.find((row) => row.id === productId)?.incomingName
+    || "\u00dcr\u00fcn";
+  const intelligenceBadgeLabel = (product) => {
+    if (product.recommendedBadge === "save_percent" && product.discountPercent) {
+      return `\u00d6nerilen rozet: %${product.discountPercent} indirim`;
+    }
+    if (product.recommendedBadge === "save_amount" && product.absoluteSaving) {
+      return `\u00d6nerilen rozet: ${product.absoluteSaving} tasarruf`;
+    }
+    if (product.recommendedBadge === "special") return "\u00d6nerilen rozet: \u00d6zel teklif";
+    if (product.recommendedBadge === "best_value") return "\u00d6nerilen rozet: Avantajl\u0131";
+    return "";
+  };
   const missingRows = rows.filter((row) => needsAttention(row.status));
   const files = isRealApiEnabled ? (campaign.files || []).map(mapFileForPanel) : generatedFiles;
   const exportJobs = campaign.exportJobs || [];
@@ -476,6 +513,41 @@ export function CampaignDetail({ campaignId }) {
       </section>
 
       <section className="dashboard-grid">
+        <Card title={"Kampanya Zek\u00e2s\u0131"} className="span-12">
+          <div className="intelligence-panel">
+            <div className="intelligence-toolbar">
+              <div>
+                <strong>{intelligence ? "Yap\u0131land\u0131r\u0131lm\u0131\u015f kampanya plan\u0131 haz\u0131r" : "Kampanyan\u0131z\u0131 analiz ederek \u00fcr\u00fcn \u00f6nceliklerini belirleyin"}</strong>
+                <small>{campaign.intelligenceAnalyzedAt ? `Son analiz: ${formatDateTime(campaign.intelligenceAnalyzedAt)} - ${intelligence?.engineVersion}` : "Analiz kampanya verileriyle \u00e7evrimd\u0131\u015f\u0131 ve deterministik \u00e7al\u0131\u015f\u0131r."}</small>
+              </div>
+              {canMutateCurrentCampaign ? <div className="page-actions">
+                <Button disabled={Boolean(campaign.frozenAt) || actionLoading === "campaign-intelligence-analyze"} onClick={analyzeIntelligence}>
+                  {actionLoading === "campaign-intelligence-analyze" ? "Analiz ediliyor..." : intelligence ? "Yeniden Analiz Et" : "Kampanyay\u0131 Analiz Et"}
+                </Button>
+                <Button variant="primary" disabled={!intelligence || Boolean(campaign.frozenAt) || actionLoading === "campaign-intelligence-apply"} onClick={applyIntelligence}>
+                  {actionLoading === "campaign-intelligence-apply" ? "Uygulan\u0131yor..." : campaign.intelligenceApplied ? "Plan Uyguland\u0131" : "Plan\u0131 Uygula"}
+                </Button>
+              </div> : null}
+            </div>
+            {intelligence ? <>
+              <dl className="summary-grid intelligence-summary">
+                <div><dt>Kompozisyon</dt><dd>{({ hero_plus_grid: "Hero + \u00fcr\u00fcn \u0131zgaras\u0131", balanced_grid: "Dengeli \u00fcr\u00fcn \u0131zgaras\u0131", dense_value_grid: "Yo\u011fun f\u0131rsat \u0131zgaras\u0131" })[intelligence.strategy.composition] || intelligence.strategy.composition}</dd></div>
+                <div><dt>{"Yo\u011funluk"}</dt><dd>{intelligence.strategy.density === "dense" ? "Yo\u011fun" : "Dengeli"}</dd></div>
+                <div><dt>Odak</dt><dd>{intelligence.strategy.campaignType === "discount_led" ? "\u0130ndirim" : intelligence.strategy.campaignType === "price_led" ? "Fiyat" : "\u00dcr\u00fcn g\u00f6rseli"}</dd></div>
+                <div><dt>{"Hero \u00fcr\u00fcn"}</dt><dd>{heroRecommendation ? productName(heroRecommendation.productId) : "\u00d6neri yok"}</dd></div>
+              </dl>
+                <div><dt>Gruplar</dt><dd>{(intelligence.groups || []).map((group) => `${group.key} (${group.productCount})`).join(", ") || "-"}</dd></div>
+              <div className="intelligence-products">
+                {intelligenceProducts.slice(0, 6).map((product) => <article key={product.productId}>
+                  <div><strong>{productName(product.productId)}</strong><small>{[...product.reasons.slice(0, 3), intelligenceBadgeLabel(product)].filter(Boolean).join(" - ")}</small></div>
+                  <Badge tone={product.role === "hero" ? "success" : "neutral"}>{product.role === "hero" ? "Hero" : product.role === "featured" ? "\u00d6ne \u00e7\u0131kan" : "Standart"} - {product.priorityScore}</Badge>
+                </article>)}
+              </div>
+              {(intelligence.warnings || []).length ? <div className="intelligence-warnings"><strong>Kontrol edilmesi gerekenler</strong>{intelligence.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+            </> : <p className="catalog-empty">{"Hen\u00fcz bir analiz yok. \u00d6neriler kampanyay\u0131 siz onaylayana kadar \u00fcr\u00fcnleri veya \u00f6nizlemeyi de\u011fi\u015ftirmez."}</p>}
+          </div>
+        </Card>
+
         <Card title="Broşür Önizleme" className="span-8">
           {isRealApiEnabled ? (
             <div className="real-preview-panel">

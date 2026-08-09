@@ -26,7 +26,11 @@ from app.models import (
     Template,
     User,
 )
-from app.schemas.campaign import CampaignCreate, CampaignCreateFromTextRequest, CampaignItemResolveMatch
+from app.schemas.campaign import (
+    CampaignCreate,
+    CampaignCreateFromTextRequest,
+    CampaignItemResolveMatch,
+)
 from app.schemas.export import CampaignFileCreate, ExportJobCreate
 from app.services import campaign as campaign_service
 from app.services.campaign import recalculate_campaign_counts
@@ -128,6 +132,9 @@ def test_openapi_schema_contains_campaign_routes() -> None:
     assert "/api/campaigns/{campaign_id}/items/{item_id}/resolve-match" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/items/{item_id}/generate-suggestions" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/generate-suggestions" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/intelligence" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/intelligence/analyze" in schema["paths"]
+    assert "/api/campaigns/{campaign_id}/intelligence/apply" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/files" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/files/{file_id}/download" in schema["paths"]
     assert "/api/campaigns/{campaign_id}/export-jobs" in schema["paths"]
@@ -146,6 +153,12 @@ def test_campaign_routes_reject_missing_token_before_database_session_is_used() 
 
     preview_response = client.get(f"/api/campaigns/{uuid4()}/preview-html")
     assert preview_response.status_code == 401
+    intelligence_get = client.get(f"/api/campaigns/{uuid4()}/intelligence")
+    assert intelligence_get.status_code == 401
+    intelligence_analyze = client.post(f"/api/campaigns/{uuid4()}/intelligence/analyze")
+    assert intelligence_analyze.status_code == 401
+    intelligence_apply = client.post(f"/api/campaigns/{uuid4()}/intelligence/apply")
+    assert intelligence_apply.status_code == 401
 
     export_response = client.post(
         f"/api/campaigns/{uuid4()}/export-jobs",

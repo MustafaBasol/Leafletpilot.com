@@ -4418,3 +4418,57 @@ tbody tr:hover {
   font-size: 2rem;
   font-weight: 800;
 }
+.intelligence-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.intelligence-toolbar,
+.intelligence-products article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.intelligence-toolbar small,
+.intelligence-products small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.intelligence-summary {
+  margin: 0;
+}
+
+.intelligence-products {
+  display: grid;
+  gap: 8px;
+}
+
+.intelligence-products article {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.intelligence-warnings {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.intelligence-warnings p {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 720px) {
+  .intelligence-toolbar,
+  .intelligence-products article {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

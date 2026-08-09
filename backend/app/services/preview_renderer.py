@@ -58,6 +58,73 @@ MERCHANDISING_ROLE_PATTERNS = {
 }
 
 
+def _intelligence_badge(item: dict[str, Any], recommendation: dict[str, Any]) -> str | None:
+    if item.get("badge"):
+        return str(item["badge"])
+    badge = recommendation.get("recommendedBadge")
+    if badge == "save_percent" and recommendation.get("discountPercent"):
+        return f"%{recommendation['discountPercent']} indirim"
+    if badge == "save_amount" and recommendation.get("absoluteSaving"):
+        return f"{recommendation['absoluteSaving']} {item.get('currency') or ''} tasarruf".strip()
+    if badge == "best_value":
+        return "Best value"
+    return None
+
+
+def _apply_campaign_intelligence(
+    items: list[dict[str, Any]],
+    builder_config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str], str] | None:
+    plan = builder_config.get("campaign_intelligence")
+    if not isinstance(plan, dict) or plan.get("engineVersion") != "campaign-intelligence-v1":
+        return None
+    recommendations = plan.get("products")
+    if not isinstance(recommendations, list):
+        return None
+    by_id = {str(item.get("id")): item for item in items}
+    ordered: list[dict[str, Any]] = []
+    roles: list[str] = []
+    seen: set[str] = set()
+    for recommendation in recommendations:
+        if not isinstance(recommendation, dict):
+            continue
+        product_id = str(recommendation.get("productId") or "")
+        item = by_id.get(product_id)
+        if item is None:
+            continue
+        role = str(recommendation.get("role") or "standard")
+        if role not in {"hero", "featured", "standard", "support"}:
+            role = "standard"
+        if item.get("is_hero") or item.get("emphasis") == "featured":
+            role = "hero"
+        size = str(recommendation.get("recommendedSize") or "md")
+        merchandising = {
+            "role": role,
+            "emphasis_score": recommendation.get("priorityScore"),
+            "price_treatment": "promo-panel" if role == "hero" else "surface-accent",
+            "image_treatment": {"xl": "hero", "lg": "large", "md": "medium"}.get(size, "medium"),
+            "group_key": recommendation.get("groupKey"),
+            "position_hint": len(ordered),
+            "engine_version": plan.get("engineVersion"),
+        }
+        ordered.append({**item, "badge": _intelligence_badge(item, recommendation), "_merchandising": merchandising})
+        roles.append(role)
+        seen.add(product_id)
+    for item in items:
+        if str(item.get("id")) not in seen:
+            ordered.append(item)
+            roles.append("featured" if item.get("emphasis") == "featured" else "standard")
+    explicit = next((index for index, item in enumerate(ordered) if item.get("is_hero") or item.get("emphasis") == "featured"), None)
+    if explicit not in (None, 0):
+        ordered.insert(0, ordered.pop(explicit))
+        roles.insert(0, roles.pop(explicit))
+        roles[0] = "hero"
+    composition = str((plan.get("strategy") or {}).get("composition") or "balanced_grid")
+    if composition not in {"hero_plus_grid", "balanced_grid", "dense_value_grid"}:
+        composition = "balanced_grid"
+    return ordered, roles, composition
+
+
 def _merchandising_sequence(
     items: list[dict[str, Any]], density_name: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -162,7 +229,12 @@ def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetim
 *{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:#fffaf0;color:#16202a;font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:38px;display:flex;flex-direction:column;overflow:hidden}}.hero{{height:190px;display:flex;justify-content:space-between;padding:24px 28px;border-radius:12px;background:linear-gradient(135deg,{accent},{dark});color:#fff;overflow:hidden}}.logos{{display:flex;gap:8px;align-items:center;height:38px;margin-bottom:10px}}.market-logo,.header-logo,.payment-icon{{max-height:34px;max-width:140px;object-fit:contain;background:#fff;padding:3px;border-radius:4px}}.market-name{{font-size:18px;font-weight:900}}.eyebrow{{margin:0 0 6px;color:#ffe8b7;font-size:13px;font-weight:700;text-transform:uppercase}}h1{{margin:0;font-size:42px;line-height:44px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.meta{{max-width:260px;text-align:right;font-size:15px;font-weight:700;overflow-wrap:anywhere}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:17px}}.stock{{margin-top:8px;font-size:12px;line-height:14px}}.section-title{{height:38px;display:flex;justify-content:space-between;align-items:end;margin-top:16px;color:{dark};font-size:20px;font-weight:800}}.product-grid{{height:{grid}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},max-content);align-content:start;align-items:start;gap:{gap}px;margin-top:12px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;align-self:start;min-width:0;height:max-content;min-height:0;padding:{pad}px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 5px 14px #0f172a14}}.template-compact-weekly .product-card{{border-radius:6px;box-shadow:none;border-top:4px solid {accent}}}.template-premium-market .product-card{{border-radius:18px;box-shadow:0 10px 24px #0f172a1c}}.product-stage{{width:100%;height:{image}px;flex:0 0 {image}px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:9px;background:#fff}}.product-image,.image-placeholder{{display:block;width:100%;height:100%;object-fit:contain;object-position:center;border-radius:7px;background:#fff}}.product-image.photo{{padding:4px;border:1px solid #eef0f2}}.product-image.cutout{{filter:drop-shadow(0 8px 7px #0f172a20)}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:{soft};color:#64748b;font-size:12px;font-weight:700}}.product-brand,.product-name,.product-unit,.product-stock{{overflow-wrap:anywhere;word-break:break-word}}.product-brand{{margin:8px 0 0;color:{accent};font-size:10px;line-height:14px;font-weight:800;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}}.product-name{{margin:4px 0 0;font-size:{name_size}px;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.product-unit,.product-stock{{margin:4px 0 0;color:#64748b;font-size:11px;line-height:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.price-row{{display:flex;min-width:0;width:100%;align-items:flex-start;flex-direction:column;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}}.price{{color:{accent};font-size:{price_size}px;line-height:1.05;font-weight:900;display:block;width:100%;min-width:0;max-width:100%;white-space:normal;overflow:hidden;overflow-wrap:anywhere;word-break:break-all}}.price-secondary{{display:flex;align-items:center;gap:6px;max-width:100%;min-height:18px}}.old-price{{color:#64748b;font-size:12px;text-decoration:line-through;white-space:nowrap}}.promo-badge{{padding:3px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.empty-state{{grid-column:1/-1;display:flex;align-items:center;justify-content:center;color:#64748b}}.footer{{height:46px;display:flex;justify-content:space-between;margin-top:auto;padding-top:10px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;overflow:hidden}}.footer-note{{height:28px;line-height:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:6px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)} {template_class}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">{_text(header.get("promo_title") or payload.get("template_name") or "Premium Market")}</p><h1 data-clamp-enabled="true" data-clamp-lines="2">{_text(title)}</h1></div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{f'<div class="stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(stock)}</div>' if stock else ''}</div></header><div class="section-title"><strong>{_text(copy["offers"])}</strong><span>{len(items)} {_text(copy["products"])}</span></div><section class="product-grid">{cards}</section><footer class="footer"><span class="footer-note" data-clamp-enabled="true" data-clamp-lines="2">{_text(footer)}</span><span class="payment-icons">{payments}</span></footer></main></body></html>'''
 
 
-def _live_payload(campaign: Campaign, template: Template | None) -> dict[str, Any]:
+def _live_payload(
+    campaign: Campaign,
+    template: Template | None,
+    *,
+    include_applied_intelligence: bool = True,
+) -> dict[str, Any]:
     config = dict(template.config_json or {}) if template else {}
     market = campaign.market
     builder_config = dict(campaign.builder_config_json or {})
@@ -193,6 +265,9 @@ def _live_payload(campaign: Campaign, template: Template | None) -> dict[str, An
             is_hero=bool(item.is_hero),
             emphasis="featured" if item.is_hero else None,
         )
+    applied = _apply_campaign_intelligence(result["items"], builder_config) if include_applied_intelligence else None
+    if applied is not None:
+        result["items"], _, result["intelligence_strategy"] = applied
     return result
 
 
@@ -309,8 +384,13 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
         raise ValueError(f"{slug} accepts at most {limit} products")
     density = supermarket_density_profile(slug)
     smart_composition = bool((payload.get("builder_config") or {}).get("smart_composition"))
+    applied_intelligence = bool(items and items[0].get("_merchandising"))
     strategy = density["composition"]
-    if smart_composition:
+    if applied_intelligence:
+        smart_composition = True
+        strategy = str(payload.get("intelligence_strategy") or "balanced_grid")
+        merchandising_roles = [item.get("_merchandising", {}).get("role", "standard") for item in items]
+    elif smart_composition:
         plan = create_composition_plan(
             items,
             campaign_key=str(payload.get("campaign_id") or payload.get("title") or slug),
