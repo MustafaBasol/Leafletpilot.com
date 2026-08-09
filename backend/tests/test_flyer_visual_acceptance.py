@@ -13,34 +13,54 @@ from pypdf import PdfReader
 from app.core.config import settings
 from app.services.image_pipeline import store_flyer_image
 from app.services.preview_renderer import render_render_payload_html
-
+from app.services.rendering import render_html_to_pdf_sync, render_html_to_png_sync
 
 FIXED_TIME = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 
 REFERENCE_EXPECTATIONS = {
     4: {
-        "density": "editorial", "featured": 1, "min_width_tiers": 2,
-        "min_stage_delta": 500, "min_price_width_delta": 0.08,
-        "min_featured_area_ratio": 2.5, "min_featured_image_ratio": 4.0,
-        "min_featured_price_ratio": 1.45, "min_stage_tiers": 3,
-        "min_price_patterns": 3, "min_price_ratio": 0.55,
+        "density": "editorial",
+        "featured": 1,
+        "min_width_tiers": 2,
+        "min_stage_delta": 500,
+        "min_price_width_delta": 0.08,
+        "min_featured_area_ratio": 2.5,
+        "min_featured_image_ratio": 4.0,
+        "min_featured_price_ratio": 1.45,
+        "min_stage_tiers": 3,
+        "min_price_patterns": 3,
+        "min_price_ratio": 0.55,
     },
     9: {
-        "density": "weekly", "featured": 1, "min_width_tiers": 2,
-        "min_stage_delta": 40, "min_price_width_delta": 0.06,
-        "min_featured_area_ratio": 1.55, "min_featured_image_ratio": 1.8,
-        "min_featured_price_ratio": 1.15, "min_stage_tiers": 3,
-        "min_price_patterns": 3, "min_lower_width_tiers": 3,
-        "min_visual_price_treatments": 3, "min_perceptible_offsets": 5,
+        "density": "weekly",
+        "featured": 1,
+        "min_width_tiers": 2,
+        "min_stage_delta": 40,
+        "min_price_width_delta": 0.06,
+        "min_featured_area_ratio": 1.55,
+        "min_featured_image_ratio": 1.8,
+        "min_featured_price_ratio": 1.15,
+        "min_stage_tiers": 3,
+        "min_price_patterns": 3,
+        "min_lower_width_tiers": 3,
+        "min_visual_price_treatments": 3,
+        "min_perceptible_offsets": 5,
         "min_price_ratio": 0.38,
     },
     16: {
-        "density": "compact", "featured": 0, "min_width_tiers": 2,
-        "min_stage_delta": 20, "min_price_width_delta": 0.06,
-        "min_featured_area_ratio": None, "min_featured_image_ratio": None,
-        "min_featured_price_ratio": None, "min_stage_tiers": 3,
-        "min_price_patterns": 3, "min_visual_price_treatments": 4,
-        "min_perceptible_offsets": 8, "min_price_ratio": 0.38,
+        "density": "compact",
+        "featured": 1,
+        "min_width_tiers": 2,
+        "min_stage_delta": 20,
+        "min_price_width_delta": 0.06,
+        "min_featured_area_ratio": 0.99,
+        "min_featured_image_ratio": 1.0,
+        "min_featured_price_ratio": 1.0,
+        "min_stage_tiers": 3,
+        "min_price_patterns": 3,
+        "min_visual_price_treatments": 4,
+        "min_perceptible_offsets": 8,
+        "min_price_ratio": 0.38,
     },
 }
 
@@ -97,11 +117,14 @@ def _fixture_items(tmp_path: Path) -> list[dict]:
     return items
 
 
-@pytest.mark.parametrize(("slug", "count"), [
-    ("supermarket-promo-4", 4),
-    ("supermarket-promo-9", 9),
-    ("supermarket-promo-16", 16),
-])
+@pytest.mark.parametrize(
+    ("slug", "count"),
+    [
+        ("supermarket-promo-4", 4),
+        ("supermarket-promo-9", 9),
+        ("supermarket-promo-16", 16),
+    ],
+)
 def test_real_chromium_flyers_fit_a4_without_collisions(
     slug: str, count: int, tmp_path: Path, monkeypatch
 ) -> None:
@@ -119,7 +142,9 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
         )
         item["currency"] = currencies[index % len(currencies)]
         if index == 1:
-            item["quantity_label"] = "Extra long family package label 12 x 750 mL recyclable bottles"
+            item["quantity_label"] = (
+                "Extra long family package label 12 x 750 mL recyclable bottles"
+            )
         if index == 2:
             item.pop("old_price", None)
         if index == count - 1:
@@ -135,6 +160,7 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
         "market_name": "Fixture Market",
         "title": "Professional weekly offers",
         "header": {"validity_text": "07–13 August 2026"},
+        "builder_config": {"smart_composition": True},
         "items": items,
     }
     html = render_render_payload_html(payload, generated_at=FIXED_TIME)
@@ -145,11 +171,15 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
     png_path = artifact_root / f"{slug}-after.png"
     second_png_path = artifact_root / f"{slug}-after-repeat.png"
     pdf_path = artifact_root / f"{slug}.pdf"
+    export_png_path = artifact_root / f"{slug}-export.png"
+    repeat_export_png_path = artifact_root / f"{slug}-export-repeat.png"
+    export_pdf_path = artifact_root / f"{slug}-export.pdf"
     html_path = artifact_root / f"{slug}.html"
     html_path.write_text(html, encoding="utf-8")
 
     try:
-        from playwright.sync_api import Error as PlaywrightError, sync_playwright
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
             try:
@@ -157,12 +187,21 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
             except PlaywrightError as exc:
                 pytest.skip(f"Playwright Chromium unavailable: {exc}")
             try:
-                page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=2)
+                page = browser.new_page(
+                    viewport={"width": 1240, "height": 1754}, device_scale_factor=2
+                )
                 page_errors: list[str] = []
                 console_errors: list[str] = []
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
-                page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+                failed_requests: list[str] = []
+                page.on(
+                    "console",
+                    lambda message: (
+                        console_errors.append(message.text) if message.type == "error" else None
+                    ),
+                )
                 page.set_content(html, wait_until="networkidle")
+                page.on("requestfailed", lambda request: failed_requests.append(request.url))
                 page.evaluate("""async () => {
                   await Promise.all([...document.images].map((image) => image.decode().catch(() => {})));
                   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -311,19 +350,34 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                     }"""
                 )
                 reference = REFERENCE_EXPECTATIONS[count]
-                evidence = {"reference": reference, "measurements": measurements, "pageErrors": page_errors, "consoleErrors": console_errors}
+                evidence = {
+                    "reference": reference,
+                    "measurements": measurements,
+                    "pageErrors": page_errors,
+                    "consoleErrors": console_errors,
+                    "failedRequests": failed_requests,
+                }
                 (artifact_root / f"{slug}-geometry.json").write_text(
                     json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
                 )
                 assert measurements["viewport"] == {"width": 1240, "height": 1754}
                 assert measurements["cardCount"] == count
                 for safety_check in (
-                    "cardsInside", "gridInside", "footerAfterGrid", "noCardOverflow",
-                    "noStageTextCollision", "badgesInside", "pricesInside", "titlesClamped",
-                    "imagesLoaded", "imagesContained", "cardTopBordersReduced", "noCardCollisions",
+                    "cardsInside",
+                    "gridInside",
+                    "footerAfterGrid",
+                    "noCardOverflow",
+                    "noStageTextCollision",
+                    "badgesInside",
+                    "pricesInside",
+                    "titlesClamped",
+                    "imagesLoaded",
+                    "imagesContained",
+                    "cardTopBordersReduced",
+                    "noCardCollisions",
                 ):
                     assert measurements[safety_check], safety_check
-                assert not page_errors and not console_errors
+                assert not page_errors and not console_errors and not failed_requests
                 assert measurements["fallbackCount"] == 1
                 assert measurements["densityProfile"] == reference["density"]
                 assert measurements["featuredCount"] == reference["featured"]
@@ -333,7 +387,10 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 assert measurements["stageHeightRange"] >= reference["min_stage_delta"]
                 assert min(measurements["priceWidthRatios"]) >= reference["min_price_ratio"]
                 assert max(measurements["priceWidthRatios"]) <= 0.98
-                assert max(measurements["priceWidthRatios"]) - min(measurements["priceWidthRatios"]) >= reference["min_price_width_delta"]
+                assert (
+                    max(measurements["priceWidthRatios"]) - min(measurements["priceWidthRatios"])
+                    >= reference["min_price_width_delta"]
+                )
                 assert measurements["pricePatternCount"] >= reference["min_price_patterns"]
                 assert measurements["imageStageHeightTiers"] >= reference["min_stage_tiers"]
                 assert measurements["fullSeparatorCount"] == 0
@@ -344,9 +401,18 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 elif count == 9:
                     assert measurements["sharedSectionSurface"]
                     assert measurements["imageTopTiers"] >= 3
-                    assert measurements["priceTreatmentCount"] >= reference["min_visual_price_treatments"]
-                    assert measurements["priceTreatmentGeometryCount"] >= reference["min_visual_price_treatments"]
-                    assert measurements["perceptibleVerticalOffsetCount"] >= reference["min_perceptible_offsets"]
+                    assert (
+                        measurements["priceTreatmentCount"]
+                        >= reference["min_visual_price_treatments"]
+                    )
+                    assert (
+                        measurements["priceTreatmentGeometryCount"]
+                        >= reference["min_visual_price_treatments"]
+                    )
+                    assert (
+                        measurements["perceptibleVerticalOffsetCount"]
+                        >= reference["min_perceptible_offsets"]
+                    )
                     assert all(
                         image_range >= 12 or price_range >= 12
                         for image_range, price_range in zip(
@@ -361,29 +427,64 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
                 else:
                     assert measurements["sharedSectionSurface"]
                     assert measurements["imageTierCount"] >= 3
-                    assert measurements["priceTreatmentCount"] >= reference["min_visual_price_treatments"]
-                    assert measurements["priceTreatmentGeometryCount"] >= reference["min_visual_price_treatments"]
-                    assert measurements["perceptibleVerticalOffsetCount"] >= reference["min_perceptible_offsets"]
+                    assert (
+                        measurements["priceTreatmentCount"]
+                        >= reference["min_visual_price_treatments"]
+                    )
+                    assert (
+                        measurements["priceTreatmentGeometryCount"]
+                        >= reference["min_visual_price_treatments"]
+                    )
+                    assert (
+                        measurements["perceptibleVerticalOffsetCount"]
+                        >= reference["min_perceptible_offsets"]
+                    )
                     assert all(value >= 12 for value in measurements["logicalRowPriceTopRanges"])
                     assert measurements["opaqueCardCount"] == 0
                     assert measurements["compositionGroups"] == 4
                 if reference["featured"]:
                     assert measurements["featuredAreaRatio"] >= reference["min_featured_area_ratio"]
-                    assert measurements["featuredImageRatio"] >= reference["min_featured_image_ratio"]
-                    assert measurements["featuredPriceRatio"] >= reference["min_featured_price_ratio"]
-                page.screenshot(path=str(png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
-                page.screenshot(path=str(second_png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
+                    assert (
+                        measurements["featuredImageRatio"] >= reference["min_featured_image_ratio"]
+                    )
+                    assert (
+                        measurements["featuredPriceRatio"] >= reference["min_featured_price_ratio"]
+                    )
+                page.screenshot(
+                    path=str(png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754}
+                )
+                page.screenshot(
+                    path=str(second_png_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754}
+                )
                 page.pdf(path=str(pdf_path), format="A4", print_background=True, scale=0.635)
             finally:
                 browser.close()
     except ImportError as exc:
         pytest.skip(f"Playwright unavailable: {exc}")
 
-    with Image.open(png_path).convert("RGBA") as first, Image.open(second_png_path).convert("RGBA") as second:
+    with (
+        Image.open(png_path).convert("RGBA") as first,
+        Image.open(second_png_path).convert("RGBA") as second,
+    ):
         assert ImageChops.difference(first, second).getbbox() is None
+    render_html_to_png_sync(html, export_png_path)
+    render_html_to_png_sync(html, repeat_export_png_path)
+    render_html_to_pdf_sync(html, export_pdf_path)
+
     with Image.open(png_path) as png:
         assert png.size == (2480, 3508)
     pdf = PdfReader(str(pdf_path))
+    with (
+        Image.open(png_path).convert("RGBA") as preview_png,
+        Image.open(export_png_path).convert("RGBA") as export_png,
+    ):
+        assert ImageChops.difference(preview_png, export_png).getbbox() is None
+    assert export_png_path.read_bytes() == repeat_export_png_path.read_bytes()
+
     assert len(pdf.pages) == 1
     assert abs(float(pdf.pages[0].mediabox.width) - 595.276) < 2
     assert abs(float(pdf.pages[0].mediabox.height) - 841.89) < 2
+    export_pdf = PdfReader(str(export_pdf_path))
+    assert len(export_pdf.pages) == 1
+    assert abs(float(export_pdf.pages[0].mediabox.width) - 595.276) < 2
+    assert abs(float(export_pdf.pages[0].mediabox.height) - 841.89) < 2

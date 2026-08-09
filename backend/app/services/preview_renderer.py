@@ -10,6 +10,7 @@ from typing import Any
 from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
 from app.services.image_pipeline import stored_flyer_image_has_alpha
+from app.services.merchandising import create_composition_plan
 from app.services.template_presets import (
     SUPERMARKET_PRESETS,
     supermarket_density_profile,
@@ -187,6 +188,11 @@ def _live_payload(campaign: Campaign, template: Template | None) -> dict[str, An
             else getattr(global_image, "has_transparent_background", None)
         )
         result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
+        result["items"][-1].update(
+            category=item.category_hint or (str(effective.category_id) if effective.category_id else None),
+            is_hero=bool(item.is_hero),
+            emphasis="featured" if item.is_hero else None,
+        )
     return result
 
 
@@ -302,7 +308,24 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
     if len(items) > limit:
         raise ValueError(f"{slug} accepts at most {limit} products")
     density = supermarket_density_profile(slug)
-    items, merchandising_roles = _merchandising_sequence(items, density["name"])
+    smart_composition = bool((payload.get("builder_config") or {}).get("smart_composition"))
+    strategy = density["composition"]
+    if smart_composition:
+        plan = create_composition_plan(
+            items,
+            campaign_key=str(payload.get("campaign_id") or payload.get("title") or slug),
+        )
+        strategy = plan["strategy"]
+        items = [
+            {
+                **product["item"],
+                "_merchandising": {key: value for key, value in product.items() if key != "item"},
+            }
+            for product in plan["products"]
+        ]
+        merchandising_roles = [item["_merchandising"]["role"] for item in items]
+    else:
+        items, merchandising_roles = _merchandising_sequence(items, density["name"])
     header = payload.get("header") or {}
     title = payload.get("title") or "Campaign"
     validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
@@ -325,6 +348,8 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
         f'density-{density["name"]}', f'retail-header-{config["header_style"]}', f'retail-card-{config["card_style"]}',
         f'retail-price-{config["price_style"]}', f'retail-badge-{config["badge_style"]}', f'retail-image-{config["image_treatment"]}',
         f'composition-{density["composition"]}',
+        "smart-composition" if smart_composition else "manual-composition",
+        f'smart-strategy-{strategy}' if smart_composition else "",
     ))
     return f'''<!doctype html><html lang="{_attr(payload.get("language") or "tr")}"><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:{config["background_end"]};font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:24px;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(145deg,{config["background_start"]},{config["background_end"]})}}.hero{{height:{density["header_height"]}px;flex:0 0 {density["header_height"]}px;padding:18px 24px;border-radius:18px;background:linear-gradient(135deg,{config["background_start"]},{config["background_end"]});color:{config["title_color"]};display:flex;justify-content:space-between;overflow:hidden;position:relative}}.retail-header-burst .hero:after{{content:"";position:absolute;right:-100px;top:-130px;width:420px;height:420px;border-radius:50%;background:{config["price_panel_background"]}33}}.retail-header-band .hero{{border-radius:4px;border-bottom:10px solid {config["price_panel_background"]}}}.retail-header-minimal .hero{{border-radius:0;background:{config["background_end"]};border-left:12px solid {config["price_panel_background"]}}}.logos{{display:flex;gap:8px;align-items:center;height:46px;margin-bottom:9px;position:relative;z-index:1}}.market-logo,.header-logo{{max-height:46px;max-width:190px;object-fit:contain;background:transparent;padding:0;border-radius:0}}.header-logo{{max-width:105px;max-height:36px}}.payment-icon{{max-height:26px;max-width:72px;object-fit:contain;background:#fff;padding:3px;border-radius:5px}}.market-name{{font-size:20px;font-weight:1000;letter-spacing:.04em}}.eyebrow{{margin:0 0 4px;color:{config["price_panel_background"]};font-size:17px;font-weight:900;text-transform:uppercase;position:relative;z-index:1}}h1{{margin:0;max-width:760px;font-size:{42 if columns < 4 else 31}px;line-height:1.02;font-weight:1000;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;position:relative;z-index:1}}.meta{{max-width:285px;text-align:right;font-size:{16 if columns < 4 else 14}px;font-weight:900;position:relative;z-index:1}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:19px}}.stock{{margin-top:8px;color:{config["price_panel_background"]};font-size:13px;line-height:15px}}.section-title{{height:34px;flex:0 0 34px;display:flex;justify-content:space-between;align-items:end;padding:0 4px;color:#fff;font-size:{18 if columns < 4 else 15}px;font-weight:900;text-transform:uppercase}}.product-grid{{height:{density["grid_height"]}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},minmax(0,1fr));gap:{density["grid_gap"]}px;margin-top:{10 if columns < 4 else 8}px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;min-width:0;height:100%;padding:{density["card_padding"]}px;border:2px solid {config["card_border_color"]};border-radius:{density["card_radius"]}px;background:{config["card_background"]};overflow:hidden}}.retail-card-shadow .product-card{{box-shadow:0 6px 0 #5f111944}}.retail-card-outlined .product-card{{box-shadow:none;border-width:3px}}.retail-card-rounded .product-card{{border-radius:{density["card_radius"] + 8}px;box-shadow:0 7px 20px #4c0b1826}}.promo-card-image{{width:100%;height:{density["image_height"]}px;flex:0 0 {density["image_height"]}px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:11px;background:#fff;margin-bottom:7px}}.retail-image-cutout .promo-card-image{{background:transparent}}.retail-image-photo .promo-card-image{{border:1px solid {config["card_border_color"]}66;padding:4px}}.product-image,.image-placeholder{{display:block;width:100%;height:100%;object-fit:contain;object-position:center;border-radius:9px;background:transparent}}.product-image.photo{{padding:4px;border:1px solid #f3e4c2}}.product-image.cutout{{filter:drop-shadow(0 8px 7px #5f1b1b2b)}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:#fff1c7;color:#8a5a00;font-size:12px;font-weight:800}}.price-panel{{order:2;margin:0 0 7px;min-height:{density["price_panel_height"]}px;padding:{7 if columns < 4 else 5}px {10 if columns < 4 else 6}px;background:{config["price_panel_background"]};border-radius:9px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,32%);grid-template-areas:"price badge" "price old";align-items:center;gap:2px 5px;overflow:hidden}}.retail-price-ticket .price-panel{{clip-path:polygon(0 0,96% 0,100% 50%,96% 100%,0 100%);padding-right:8%}}.retail-price-split .price-panel{{background:transparent;border:2px solid {config["price_panel_background"]}}}.price{{grid-area:price;color:{config["price_color"]};font-size:{density["price_size"]}px;line-height:.9;font-weight:1000;min-width:0;max-width:100%;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.price-minor{{font-size:.56em;vertical-align:baseline}}.price-currency{{font-size:.42em;margin:0 2px;vertical-align:top}}.old-price{{grid-area:old;color:#6d4b39;font-size:{12 if columns < 4 else 10}px;text-decoration:line-through;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.promo-badge{{grid-area:badge;justify-self:end;max-width:100%;color:#fff;background:{config["brand_label_background"]};padding:4px 6px;border-radius:5px;font-size:{density["badge_size"]}px;line-height:1;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.retail-badge-pill .promo-badge{{border-radius:999px}}.retail-badge-burst .promo-badge{{clip-path:polygon(50% 0,62% 18%,82% 8%,87% 31%,100% 42%,84% 57%,91% 80%,67% 82%,55% 100%,41% 82%,18% 91%,14% 66%,0 54%,17% 38%,9% 16%,35% 18%);padding:9px 8px}}.retail-badge-ribbon .promo-badge{{border-radius:2px;transform:rotate(-2deg)}}.brand-label{{order:3;align-self:flex-start;max-width:100%;padding:3px 8px;border-radius:5px;background:{config["brand_label_background"]};color:{config["brand_label_color"]};font-size:{11 if columns < 4 else 9}px;line-height:1.1;font-weight:900;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.product-name{{order:4;margin:5px 0 0;color:{config["product_title_color"]};font-size:{density["name_size"]}px;line-height:1.08;font-weight:900;display:-webkit-box;-webkit-line-clamp:{density["name_lines"]};-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.product-unit{{order:5;margin:3px 0 0;color:{config["product_title_color"]};font-size:{density["unit_size"]}px;line-height:1.1;font-weight:800;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}}.footer{{height:{density["footer_height"]}px;flex:0 0 {density["footer_height"]}px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:11px;font-weight:700;overflow:hidden}}.footer-note{{max-width:68%;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:5px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)} {_attr(semantic_classes)}" data-density-profile="{_attr(density["name"])}" data-layout="{columns}x{rows}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">PROMO</p>{title_html}</div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{stock_html}</div></header><div class="section-title"><span>{_text(copy["offers"])}</span><span>{len(items)} {_text(copy["products"])}</span></div><section class="product-grid">{cards}</section>{footer_html}</main></body></html>'''
@@ -344,6 +369,12 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     brand_html = f'<span class="brand-label">{brand}</span>' if brand else ""
     name = f'<h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="{density["name_lines"]}">{_text(item.get("name") or item.get("resolved_name"))}</h2>' if config["show_product_name"] else ""
     package = f'<p class="product-unit" data-clamp-enabled="true" data-clamp-lines="1">{_text(unit)}</p>' if config["show_package_size"] else ""
+    merchandising = item.get("_merchandising") or {}
+    if merchandising:
+        smart_role = role
+        role = {"hero": "featured", "featured": "secondary", "support": "compact"}.get(role, role)
+    else:
+        smart_role = None
     emphasis = "featured" if role == "featured" else "normal"
     rhythm = ("a", "b", "c")[index % 3]
     price_align = ("start", "end", "start", "center")[index % 4]
@@ -381,9 +412,13 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
             "medium", "compact", "small", "large",
         )[index]
         vertical_offset = (0, 20, 36, 10, 28, 4, 40, 16, 34, 12, 2, 30, 14, 38, 6, 24)[index]
+    price_treatment = merchandising.get("price_treatment") or price_treatment
+    image_tier = merchandising.get("image_treatment") or image_tier
+    composition_group = merchandising.get("group_key") or composition_group
     price_class = "price price-long" if len(major) + len(symbol) >= 8 else "price"
     return (
         f'<article class="product-card" data-emphasis="{emphasis}" data-merchandising-role="{role}" '
+        f'data-smart-role="{_attr(smart_role)}" data-emphasis-score="{_attr(merchandising.get("emphasis_score"))}" '
         f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-price-treatment="{price_treatment}" '
         f'data-image-tier="{image_tier}" data-vertical-offset="{vertical_offset}" '
         f'data-composition-group="{composition_group}" style="--vertical-offset:{vertical_offset}px">'
@@ -550,4 +585,9 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .composition-catalogue-grid .product-card[data-price-treatment="side-block"] .price-panel{min-height:96px;margin-top:5px}
 .composition-catalogue-grid .product-card[data-price-treatment="side-block"] .price{font-size:22px}
 .composition-catalogue-grid .product-card[data-price-treatment="title-strip"] .price-panel{min-height:46px}
+.composition-catalogue-grid .product-card[data-smart-role="hero"] .promo-card-image{height:215px;flex-basis:215px}
+.composition-catalogue-grid .product-card[data-smart-role="hero"] .price{font-size:34px}
+.smart-strategy-hero-right .product-grid,.smart-strategy-hero-top-right .product-grid,.smart-strategy-hero-corner-right .product-grid{direction:rtl}
+.smart-strategy-hero-right .product-card,.smart-strategy-hero-top-right .product-card,.smart-strategy-hero-corner-right .product-card{direction:ltr}
+.smart-composition .product-card[data-smart-role="support"]{opacity:.94}
 """

@@ -17,10 +17,19 @@ test("preview refresh persists metadata and guards stale responses", () => {
   assert.match(page, /builderConfig\.headline/);
   assert.match(page, /builderConfig\.subtitle/);
   assert.match(page, /builderConfig\.footer/);
+
   assert.match(page, /cache_bust: requestId/);
   assert.match(page, /previewRequestRef\.current/);
   assert.match(page, /previewLoading/);
   assert.match(page, /previewError/);
+});
+
+test("smart composition defaults on for new campaigns and preserves legacy drafts", () => {
+  assert.ok(page.includes("smart_composition: true"));
+  assert.ok(page.includes("smart_composition: false"));
+  assert.ok(page.includes("Smart composition"));
+  assert.ok(page.includes("event.target.checked"));
+  assert.ok(page.includes("builder_config: { ...builderConfig, output_format: format }"));
 });
 
 test("preview formats expose real aspect variants", () => {

@@ -46,7 +46,7 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {})
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("");
   const [productBrand, setProductBrand] = useState("");
-  const [builderConfig, setBuilderConfig] = useState({ headline: "", subtitle: "", footer: "" });
+  const [builderConfig, setBuilderConfig] = useState({ headline: "", subtitle: "", footer: "", smart_composition: true });
   const [campaignId, setCampaignId] = useState(editCampaignId);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -102,7 +102,7 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {})
         setLanguage(loadedCampaign.language || "tr");
         setChannel(loadedCampaign.channel || "panel");
         setSelectedTemplate(loadedTemplateId);
-        setBuilderConfig(loadedCampaign.builder_config_json || { headline: "", subtitle: "", footer: "" });
+        setBuilderConfig({ headline: "", subtitle: "", footer: "", smart_composition: false, ...(loadedCampaign.builder_config_json || {}) });
         setRawText(loadedCampaign.raw_input_text || "");
         setCampaignId(isRevision ? "" : loadedCampaign.id);
         if (usesCatalog) {
@@ -256,6 +256,14 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {})
       {step === 3 ? <Table columns={inputMode === "catalog" ? ["Ürün", "Fiyat", "Eski fiyat", "Para birimi", "Paket"] : ["Ham satır", "Gelen ürün", "Fiyat", "Eski fiyat", "Uyarılar"]}>{selectedItems.map((product, index) => <tr key={product.id || `${product.raw_line}-${index}`}><td>{product.name || product.incoming_name}</td><td>{product.promo_price ?? product.price ?? "-"} {product.currency || currency}</td><td>{product.regular_price ?? product.old_price ?? "-"}</td>{inputMode === "catalog" ? <><td>{product.currency}</td><td>{[product.package_size, product.package_type].filter(Boolean).join(" ") || "-"}</td></> : <td>{product.warnings?.join(", ") || "-"}</td>}</tr>)}</Table> : null}
       {step === 4 ? <div className="template-grid">{templateItems.map((template) => <button className={`template-card template-gallery-card ${selectedTemplate === template.id ? "is-selected" : ""}`} type="button" onClick={() => setSelectedTemplate(template.id)} key={template.id}><div className="template-thumbnail">{templatePreviews[template.id] ? <iframe title={`${template.name} önizlemesi`} srcDoc={templatePreviews[template.id]} sandbox="" scrolling="no" tabIndex="-1" aria-hidden="true" /> : <div className="template-preview-fallback">{template.name.slice(0, 2)}</div>}</div><strong>{template.name}</strong><small>{template.template_type || "Broşür"}</small><span>{template.config_json?.slot_count || "Sınırsız"} ürün</span></button>)}</div> : null}
       {step === 5 ? <div className="stack-list"><label className="field"><span>Önizleme boyutu</span><select value={previewFormat} onChange={async (event) => { const value = event.target.value; setPreviewFormat(value); try { setIsBusy(true); await loadPreview(value); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }}>{outputFormats.map((format) => <option key={format.id} value={format.id}>{format.label}</option>)}</select></label>{previewLoading ? <p className="inline-result">Önizleme yenileniyor...</p> : null}{previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}{preview?.html ? <div className={`campaign-preview-viewport preview-format-${previewFormat}`}><iframe className="campaign-preview-frame" title="Kampanya önizlemesi" srcDoc={preview.html} sandbox="" scrolling="no" /></div> : <p>Önizleme henüz oluşturulmadı.</p>}<div className="form-grid"><Input label="Başlık" value={builderConfig.headline} onChange={(event) => setBuilderConfig((current) => ({ ...current, headline: event.target.value }))} /><Input label="Alt başlık" value={builderConfig.subtitle} onChange={(event) => setBuilderConfig((current) => ({ ...current, subtitle: event.target.value }))} /><Input label="Alt bilgi" value={builderConfig.footer} onChange={(event) => setBuilderConfig((current) => ({ ...current, footer: event.target.value }))} /></div><Button onClick={async () => { try { setIsBusy(true); await loadPreview(); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }} disabled={isBusy}>{previewLoading ? "Yenileniyor..." : "Önizlemeyi yenile"}</Button></div> : null}
+      {step === 5 ? <label className="check-row">
+        <input
+          type="checkbox"
+          checked={builderConfig.smart_composition === true}
+          onChange={(event) => setBuilderConfig((current) => ({ ...current, smart_composition: event.target.checked }))}
+        />
+        <span><strong>Smart composition</strong><small>Automatically emphasizes the strongest deals while keeping product variety.</small></span>
+      </label> : null}
       {step === 6 ? <div className="checkbox-grid">{outputFormats.map((format) => <label className="check-row" key={format.id}><input checked={selectedFormats.includes(format.id)} type="checkbox" onChange={() => toggleFormat(format.id)} /><span>{format.label}</span></label>)}</div> : null}
       </Card>{step !== 2 ? <Card title="Kampanya Özeti" className="wizard-side"><dl className="detail-list"><div><dt>Ad</dt><dd>{campaignName || "-"}</dd></div><div><dt>Market</dt><dd>{storedMarket?.name || "-"}</dd></div><div><dt>Girdi modu</dt><dd>{inputMode === "catalog" ? "Katalog" : "Metin"}</dd></div><div><dt>Ürün</dt><dd>{selectedItems.length}</dd></div><div><dt>Çıktı</dt><dd>{selectedFormats.length} format</dd></div></dl><div className="card-actions"><Button disabled={step === 1 || isBusy} onClick={() => setStep((current) => Math.max(1, current - 1))}>Geri</Button><Button variant="primary" disabled={isBusy || slotValidation} onClick={goNext}>{isBusy ? "Kaydediliyor..." : step === steps.length ? "Kampanyayı Oluştur" : "İleri"}</Button></div></Card> : null}</section>
   </>;
