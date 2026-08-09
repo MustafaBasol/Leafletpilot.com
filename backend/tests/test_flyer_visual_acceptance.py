@@ -488,3 +488,80 @@ def test_real_chromium_flyers_fit_a4_without_collisions(
     assert len(export_pdf.pages) == 1
     assert abs(float(export_pdf.pages[0].mediabox.width) - 595.276) < 2
     assert abs(float(export_pdf.pages[0].mediabox.height) - 841.89) < 2
+
+
+@pytest.mark.parametrize(
+    ("count", "strategy"),
+    [(1, "single-poster"), (2, "split-pair"), (3, "hero-trio")],
+)
+def test_real_chromium_small_campaign_layouts_fill_the_page_without_collisions(
+    count: int, strategy: str
+) -> None:
+    items = [
+        {
+            "id": str(index),
+            "name": f"Small campaign product {index + 1}",
+            "price": f"{index + 1}.99",
+            "old_price": f"{index + 2}.49",
+            "currency": "EUR",
+            "badge": "SPECIAL",
+        }
+        for index in range(count)
+    ]
+    payload = {
+        "template_slug": "supermarket-promo-4",
+        "market_name": "Fixture Market",
+        "title": "Small campaign offers",
+        "builder_config": {"smart_composition": True},
+        "items": items,
+    }
+    html = render_render_payload_html(payload, generated_at=FIXED_TIME)
+    assert f'data-refinement-strategy="{strategy}"' in html
+
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch()
+            except PlaywrightError as exc:
+                pytest.skip(f"Playwright Chromium unavailable: {exc}")
+            try:
+                page = browser.new_page(viewport={"width": 1240, "height": 1754})
+                page.set_content(html, wait_until="networkidle")
+                measurements = page.evaluate(
+                    """() => {
+                      const rect = (element) => {
+                        const value = element.getBoundingClientRect();
+                        return {left: value.left, top: value.top, right: value.right, bottom: value.bottom};
+                      };
+                      const area = (box) => (box.right - box.left) * (box.bottom - box.top);
+                      const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+                      const documentBox = rect(document.querySelector('.preview-document'));
+                      const gridBox = rect(document.querySelector('.product-grid'));
+                      const cards = [...document.querySelectorAll('.product-card')];
+                      const cardBoxes = cards.map(rect);
+                      return {
+                        viewport: {width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight},
+                        cardsInside: cardBoxes.every((box) => box.left >= documentBox.left && box.top >= documentBox.top && box.right <= documentBox.right && box.bottom <= documentBox.bottom),
+                        noOverflow: cards.every((card) => card.scrollWidth <= card.clientWidth && card.scrollHeight <= card.clientHeight),
+                        noCollisions: cardBoxes.every((box, index) => cardBoxes.slice(index + 1).every((other) => !overlaps(box, other))),
+                        usedAreaRatio: cardBoxes.reduce((total, box) => total + area(box), 0) / area(gridBox),
+                        reachesPageBottom: Math.max(...cardBoxes.map((box) => box.bottom)) >= gridBox.top + (gridBox.bottom - gridBox.top) * .88,
+                        fallbackCount: document.querySelectorAll('.image-placeholder').length,
+                      };
+                    }"""
+                )
+            finally:
+                browser.close()
+    except ImportError as exc:
+        pytest.skip(f"Playwright unavailable: {exc}")
+
+    assert measurements["viewport"] == {"width": 1240, "height": 1754}
+    assert measurements["cardsInside"]
+    assert measurements["noOverflow"]
+    assert measurements["noCollisions"]
+    assert measurements["usedAreaRatio"] >= 0.68
+    assert measurements["reachesPageBottom"]
+    assert measurements["fallbackCount"] == count

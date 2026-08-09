@@ -101,13 +101,16 @@ def _apply_campaign_intelligence(
         if item.get("is_hero") or item.get("emphasis") == "featured":
             role = "hero"
         size = str(recommendation.get("recommendedSize") or "md")
+        if role == "hero":
+            size = "xl"
         if product_id in reduced_ids and role != "hero":
             size = "sm"
         merchandising = {
             "role": role,
             "emphasis_score": recommendation.get("priorityScore"),
-            "price_treatment": "promo-panel" if role == "hero" else "surface-accent",
-            "image_treatment": {"xl": "hero", "lg": "large", "md": "medium"}.get(size, "medium"),
+            "visual_weight": "dominant" if role == "hero" else ("quiet" if role == "support" else "standard"),
+            "price_treatment": "hero-panel" if role == "hero" else "surface-accent",
+            "image_treatment": {"xl": "hero", "lg": "large", "md": "medium", "sm": "compact"}.get(size, "medium"),
             "group_key": recommendation.get("groupKey"),
             "position_hint": len(ordered),
             "engine_version": plan.get("engineVersion"),
@@ -285,11 +288,11 @@ def _card(item: dict[str, Any], config: dict[str, Any], dense: bool, compact: bo
     unit = _unit_label(item)
     old = f'<span class="old-price">{_text(_money(item.get("old_price"), item.get("currency")))}</span>' if config.get("show_old_price", True) and item.get("old_price") else ""
     badge = f'<span class="promo-badge">{_text(item["badge"])}</span>' if item.get("badge") else ""
-    stock = f'<p class="product-stock">{_text(item["stock_note"])}</p>' if item.get("stock_note") else ""
+    stock = f'<p class="product-stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(item["stock_note"])}</p>' if item.get("stock_note") else ""
     brand_text, unit_text = _text(item.get("brand")), _text(unit)
     legacy = f'<!-- class="product-brand">{brand_text} --><!-- class="product-unit">{unit_text} -->'
     variant = "compact-card" if compact else "editorial-card"
-    return f'<article class="product-card" data-card-variant="{variant}"><div class="product-stage">{_image(item)}</div>{legacy}<p class="product-brand" data-clamp-enabled="true" data-clamp-lines="1">{brand_text}</p><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2><p class="product-unit" data-clamp-enabled="true" data-clamp-lines="2">{unit_text}</p>{stock.replace("class=\"product-stock\"", "class=\"product-stock\" data-clamp-enabled=\"true\" data-clamp-lines=\"2\"") if stock else ''}<div class="price-row"><span class="price">{_text(_money(item.get("price") or item.get("promo_price"), item.get("currency")))}</span><span class="price-secondary">{old}{badge}</span></div></article>'
+    return f'<article class="product-card" data-card-variant="{variant}"><div class="product-stage">{_image(item)}</div>{legacy}<p class="product-brand" data-clamp-enabled="true" data-clamp-lines="1">{brand_text}</p><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2><p class="product-unit" data-clamp-enabled="true" data-clamp-lines="2">{unit_text}</p>{stock}<div class="price-row"><span class="price">{_text(_money(item.get("price") or item.get("promo_price"), item.get("currency")))}</span><span class="price-secondary">{old}{badge}</span></div></article>'
 
 
 def _image(item: dict[str, Any]) -> str:
@@ -374,6 +377,35 @@ def _apply_output_format(html: str, output_format: str | None) -> str:
     return html
 
 
+def _render_refinement_profile(
+    items: list[dict[str, Any]], builder_config: dict[str, Any], roles: list[str]
+) -> dict[str, str]:
+    """Choose one bounded, deterministic visual refinement before rendering."""
+    count = len(items)
+    image_count = sum(bool(item.get("image_key")) for item in items)
+    image_coverage = "image-poor" if count and image_count / count < 0.5 else "image-rich"
+    density_override = str(builder_config.get("visual_density") or "")
+    visual_mode = {"simple": "simple", "expressive": "eye-catching"}.get(density_override, "default")
+    has_hero = any(role in {"hero", "featured"} for role in roles)
+
+    if count == 1:
+        layout = "single-poster"
+    elif count == 2:
+        layout = "split-pair"
+    elif count == 3:
+        layout = "hero-trio" if has_hero else "balanced-trio"
+    elif count == 4:
+        layout = "large-quad"
+    elif visual_mode == "simple":
+        layout = "simplified-grid"
+    elif image_coverage == "image-poor":
+        layout = "price-led"
+    else:
+        layout = "standard"
+
+    return {"layout": layout, "visual_mode": visual_mode, "image_coverage": image_coverage}
+
+
 def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
     config = supermarket_visual_config(payload.get("template_config"))
     slug = str(payload.get("template_slug") or "supermarket-promo-4")
@@ -416,6 +448,12 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
         merchandising_roles = [item["_merchandising"]["role"] for item in items]
     else:
         items, merchandising_roles = _merchandising_sequence(items, density["name"])
+    refinement_config = {
+        **dict(payload.get("template_config") or {}),
+        **dict(payload.get("builder_config") or {}),
+    }
+    refinement = _render_refinement_profile(items, refinement_config, merchandising_roles)
+    composition = "simplified-grid" if refinement["visual_mode"] == "simple" else density["composition"]
     header = payload.get("header") or {}
     title = payload.get("title") or "Campaign"
     validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
@@ -437,12 +475,18 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
     semantic_classes = " ".join((
         f'density-{density["name"]}', f'retail-header-{config["header_style"]}', f'retail-card-{config["card_style"]}',
         f'retail-price-{config["price_style"]}', f'retail-badge-{config["badge_style"]}', f'retail-image-{config["image_treatment"]}',
-        f'composition-{density["composition"]}',
+        f'composition-{composition}',
+        f'visual-mode-{refinement["visual_mode"]}',
+        f'small-layout-{refinement["layout"]}',
+        f'image-coverage-{refinement["image_coverage"]}',
+        f'refinement-strategy-{refinement["layout"]}',
+        "price-prominence-high" if refinement_config.get("price_prominence") == "high" else "",
+        "headline-emphasis-high" if refinement_config.get("headline_emphasis") == "high" else "",
         "smart-composition" if smart_composition else "manual-composition",
         f'smart-strategy-{strategy}' if smart_composition else "",
     ))
     return f'''<!doctype html><html lang="{_attr(payload.get("language") or "tr")}"><head><meta charset="utf-8"><style>
-*{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:{config["background_end"]};font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:24px;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(145deg,{config["background_start"]},{config["background_end"]})}}.hero{{height:{density["header_height"]}px;flex:0 0 {density["header_height"]}px;padding:18px 24px;border-radius:18px;background:linear-gradient(135deg,{config["background_start"]},{config["background_end"]});color:{config["title_color"]};display:flex;justify-content:space-between;overflow:hidden;position:relative}}.retail-header-burst .hero:after{{content:"";position:absolute;right:-100px;top:-130px;width:420px;height:420px;border-radius:50%;background:{config["price_panel_background"]}33}}.retail-header-band .hero{{border-radius:4px;border-bottom:10px solid {config["price_panel_background"]}}}.retail-header-minimal .hero{{border-radius:0;background:{config["background_end"]};border-left:12px solid {config["price_panel_background"]}}}.logos{{display:flex;gap:8px;align-items:center;height:46px;margin-bottom:9px;position:relative;z-index:1}}.market-logo,.header-logo{{max-height:46px;max-width:190px;object-fit:contain;background:transparent;padding:0;border-radius:0}}.header-logo{{max-width:105px;max-height:36px}}.payment-icon{{max-height:26px;max-width:72px;object-fit:contain;background:#fff;padding:3px;border-radius:5px}}.market-name{{font-size:20px;font-weight:1000;letter-spacing:.04em}}.eyebrow{{margin:0 0 4px;color:{config["price_panel_background"]};font-size:17px;font-weight:900;text-transform:uppercase;position:relative;z-index:1}}h1{{margin:0;max-width:760px;font-size:{42 if columns < 4 else 31}px;line-height:1.02;font-weight:1000;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;position:relative;z-index:1}}.meta{{max-width:285px;text-align:right;font-size:{16 if columns < 4 else 14}px;font-weight:900;position:relative;z-index:1}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:19px}}.stock{{margin-top:8px;color:{config["price_panel_background"]};font-size:13px;line-height:15px}}.section-title{{height:34px;flex:0 0 34px;display:flex;justify-content:space-between;align-items:end;padding:0 4px;color:#fff;font-size:{18 if columns < 4 else 15}px;font-weight:900;text-transform:uppercase}}.product-grid{{height:{density["grid_height"]}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},minmax(0,1fr));gap:{density["grid_gap"]}px;margin-top:{10 if columns < 4 else 8}px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;min-width:0;height:100%;padding:{density["card_padding"]}px;border:2px solid {config["card_border_color"]};border-radius:{density["card_radius"]}px;background:{config["card_background"]};overflow:hidden}}.retail-card-shadow .product-card{{box-shadow:0 6px 0 #5f111944}}.retail-card-outlined .product-card{{box-shadow:none;border-width:3px}}.retail-card-rounded .product-card{{border-radius:{density["card_radius"] + 8}px;box-shadow:0 7px 20px #4c0b1826}}.promo-card-image{{width:100%;height:{density["image_height"]}px;flex:0 0 {density["image_height"]}px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:11px;background:#fff;margin-bottom:7px}}.retail-image-cutout .promo-card-image{{background:transparent}}.retail-image-photo .promo-card-image{{border:1px solid {config["card_border_color"]}66;padding:4px}}.product-image,.image-placeholder{{display:block;width:100%;height:100%;object-fit:contain;object-position:center;border-radius:9px;background:transparent}}.product-image.photo{{padding:4px;border:1px solid #f3e4c2}}.product-image.cutout{{filter:drop-shadow(0 8px 7px #5f1b1b2b)}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:#fff1c7;color:#8a5a00;font-size:12px;font-weight:800}}.price-panel{{order:2;margin:0 0 7px;min-height:{density["price_panel_height"]}px;padding:{7 if columns < 4 else 5}px {10 if columns < 4 else 6}px;background:{config["price_panel_background"]};border-radius:9px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,32%);grid-template-areas:"price badge" "price old";align-items:center;gap:2px 5px;overflow:hidden}}.retail-price-ticket .price-panel{{clip-path:polygon(0 0,96% 0,100% 50%,96% 100%,0 100%);padding-right:8%}}.retail-price-split .price-panel{{background:transparent;border:2px solid {config["price_panel_background"]}}}.price{{grid-area:price;color:{config["price_color"]};font-size:{density["price_size"]}px;line-height:.9;font-weight:1000;min-width:0;max-width:100%;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.price-minor{{font-size:.56em;vertical-align:baseline}}.price-currency{{font-size:.42em;margin:0 2px;vertical-align:top}}.old-price{{grid-area:old;color:#6d4b39;font-size:{12 if columns < 4 else 10}px;text-decoration:line-through;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.promo-badge{{grid-area:badge;justify-self:end;max-width:100%;color:#fff;background:{config["brand_label_background"]};padding:4px 6px;border-radius:5px;font-size:{density["badge_size"]}px;line-height:1;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.retail-badge-pill .promo-badge{{border-radius:999px}}.retail-badge-burst .promo-badge{{clip-path:polygon(50% 0,62% 18%,82% 8%,87% 31%,100% 42%,84% 57%,91% 80%,67% 82%,55% 100%,41% 82%,18% 91%,14% 66%,0 54%,17% 38%,9% 16%,35% 18%);padding:9px 8px}}.retail-badge-ribbon .promo-badge{{border-radius:2px;transform:rotate(-2deg)}}.brand-label{{order:3;align-self:flex-start;max-width:100%;padding:3px 8px;border-radius:5px;background:{config["brand_label_background"]};color:{config["brand_label_color"]};font-size:{11 if columns < 4 else 9}px;line-height:1.1;font-weight:900;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.product-name{{order:4;margin:5px 0 0;color:{config["product_title_color"]};font-size:{density["name_size"]}px;line-height:1.08;font-weight:900;display:-webkit-box;-webkit-line-clamp:{density["name_lines"]};-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.product-unit{{order:5;margin:3px 0 0;color:{config["product_title_color"]};font-size:{density["unit_size"]}px;line-height:1.1;font-weight:800;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}}.footer{{height:{density["footer_height"]}px;flex:0 0 {density["footer_height"]}px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:11px;font-weight:700;overflow:hidden}}.footer-note{{max-width:68%;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:5px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)} {_attr(semantic_classes)}" data-density-profile="{_attr(density["name"])}" data-layout="{columns}x{rows}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">PROMO</p>{title_html}</div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{stock_html}</div></header><div class="section-title"><span>{_text(copy["offers"])}</span><span>{len(items)} {_text(copy["products"])}</span></div><section class="product-grid">{cards}</section>{footer_html}</main></body></html>'''
+*{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:{config["background_end"]};font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:24px;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(145deg,{config["background_start"]},{config["background_end"]})}}.hero{{height:{density["header_height"]}px;flex:0 0 {density["header_height"]}px;padding:18px 24px;border-radius:18px;background:linear-gradient(135deg,{config["background_start"]},{config["background_end"]});color:{config["title_color"]};display:flex;justify-content:space-between;overflow:hidden;position:relative}}.retail-header-burst .hero:after{{content:"";position:absolute;right:-100px;top:-130px;width:420px;height:420px;border-radius:50%;background:{config["price_panel_background"]}33}}.retail-header-band .hero{{border-radius:4px;border-bottom:10px solid {config["price_panel_background"]}}}.retail-header-minimal .hero{{border-radius:0;background:{config["background_end"]};border-left:12px solid {config["price_panel_background"]}}}.logos{{display:flex;gap:8px;align-items:center;height:46px;margin-bottom:9px;position:relative;z-index:1}}.market-logo,.header-logo{{max-height:46px;max-width:190px;object-fit:contain;background:transparent;padding:0;border-radius:0}}.header-logo{{max-width:105px;max-height:36px}}.payment-icon{{max-height:26px;max-width:72px;object-fit:contain;background:#fff;padding:3px;border-radius:5px}}.market-name{{font-size:20px;font-weight:1000;letter-spacing:.04em}}.eyebrow{{margin:0 0 4px;color:{config["price_panel_background"]};font-size:17px;font-weight:900;text-transform:uppercase;position:relative;z-index:1}}h1{{margin:0;max-width:760px;font-size:{42 if columns < 4 else 31}px;line-height:1.02;font-weight:1000;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;position:relative;z-index:1}}.meta{{max-width:285px;text-align:right;font-size:{16 if columns < 4 else 14}px;font-weight:900;position:relative;z-index:1}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:19px}}.stock{{margin-top:8px;color:{config["price_panel_background"]};font-size:13px;line-height:15px}}.section-title{{height:34px;flex:0 0 34px;display:flex;justify-content:space-between;align-items:end;padding:0 4px;color:#fff;font-size:{18 if columns < 4 else 15}px;font-weight:900;text-transform:uppercase}}.product-grid{{height:{density["grid_height"]}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},minmax(0,1fr));gap:{density["grid_gap"]}px;margin-top:{10 if columns < 4 else 8}px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;min-width:0;height:100%;padding:{density["card_padding"]}px;border:2px solid {config["card_border_color"]};border-radius:{density["card_radius"]}px;background:{config["card_background"]};overflow:hidden}}.retail-card-shadow .product-card{{box-shadow:0 6px 0 #5f111944}}.retail-card-outlined .product-card{{box-shadow:none;border-width:3px}}.retail-card-rounded .product-card{{border-radius:{density["card_radius"] + 8}px;box-shadow:0 7px 20px #4c0b1826}}.promo-card-image{{width:100%;height:{density["image_height"]}px;flex:0 0 {density["image_height"]}px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:11px;background:#fff;margin-bottom:7px}}.retail-image-cutout .promo-card-image{{background:transparent}}.retail-image-photo .promo-card-image{{border:1px solid {config["card_border_color"]}66;padding:4px}}.product-image,.image-placeholder{{display:block;width:100%;height:100%;object-fit:contain;object-position:center;border-radius:9px;background:transparent}}.product-image.photo{{padding:4px;border:1px solid #f3e4c2}}.product-image.cutout{{filter:drop-shadow(0 8px 7px #5f1b1b2b)}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:#fff1c7;color:#8a5a00;font-size:12px;font-weight:800}}.price-panel{{order:2;margin:0 0 7px;min-height:{density["price_panel_height"]}px;padding:{7 if columns < 4 else 5}px {10 if columns < 4 else 6}px;background:{config["price_panel_background"]};border-radius:9px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,32%);grid-template-areas:"price badge" "price old";align-items:center;gap:2px 5px;overflow:hidden}}.retail-price-ticket .price-panel{{clip-path:polygon(0 0,96% 0,100% 50%,96% 100%,0 100%);padding-right:8%}}.retail-price-split .price-panel{{background:transparent;border:2px solid {config["price_panel_background"]}}}.price{{grid-area:price;color:{config["price_color"]};font-size:{density["price_size"]}px;line-height:.9;font-weight:1000;min-width:0;max-width:100%;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.price-minor{{font-size:.56em;vertical-align:baseline}}.price-currency{{font-size:.42em;margin:0 2px;vertical-align:top}}.old-price{{grid-area:old;color:#6d4b39;font-size:{12 if columns < 4 else 10}px;text-decoration:line-through;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.promo-badge{{grid-area:badge;justify-self:end;max-width:100%;color:#fff;background:{config["brand_label_background"]};padding:4px 6px;border-radius:5px;font-size:{density["badge_size"]}px;line-height:1;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}.retail-badge-pill .promo-badge{{border-radius:999px}}.retail-badge-burst .promo-badge{{clip-path:polygon(50% 0,62% 18%,82% 8%,87% 31%,100% 42%,84% 57%,91% 80%,67% 82%,55% 100%,41% 82%,18% 91%,14% 66%,0 54%,17% 38%,9% 16%,35% 18%);padding:9px 8px}}.retail-badge-ribbon .promo-badge{{border-radius:2px;transform:rotate(-2deg)}}.brand-label{{order:3;align-self:flex-start;max-width:100%;padding:3px 8px;border-radius:5px;background:{config["brand_label_background"]};color:{config["brand_label_color"]};font-size:{11 if columns < 4 else 9}px;line-height:1.1;font-weight:900;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.product-name{{order:4;margin:5px 0 0;color:{config["product_title_color"]};font-size:{density["name_size"]}px;line-height:1.08;font-weight:900;display:-webkit-box;-webkit-line-clamp:{density["name_lines"]};-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.product-unit{{order:5;margin:3px 0 0;color:{config["product_title_color"]};font-size:{density["unit_size"]}px;line-height:1.1;font-weight:800;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}}.footer{{height:{density["footer_height"]}px;flex:0 0 {density["footer_height"]}px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:11px;font-weight:700;overflow:hidden}}.footer-note{{max-width:68%;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:5px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)} {_attr(semantic_classes)}" data-density-profile="{_attr(density["name"])}" data-layout="{columns}x{rows}" data-refinement-strategy="{_attr(refinement["layout"])}" data-visual-mode="{_attr(refinement["visual_mode"])}" data-image-coverage="{_attr(refinement["image_coverage"])}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">PROMO</p>{title_html}</div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{stock_html}</div></header><div class="section-title"><span>{_text(copy["offers"])}</span><span>{len(items)} {_text(copy["products"])}</span></div><section class="product-grid">{cards}</section>{footer_html}</main></body></html>'''
 
 
 def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dict[str, Any], *, role: str, index: int) -> str:
@@ -509,6 +553,7 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     return (
         f'<article class="product-card" data-emphasis="{emphasis}" data-merchandising-role="{role}" '
         f'data-smart-role="{_attr(smart_role)}" data-emphasis-score="{_attr(merchandising.get("emphasis_score"))}" '
+        f'data-visual-weight="{_attr(merchandising.get("visual_weight"))}" data-image-available="{str(bool(item.get("image_key"))).lower()}" '
         f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-price-treatment="{price_treatment}" '
         f'data-image-tier="{image_tier}" data-vertical-offset="{vertical_offset}" '
         f'data-composition-group="{composition_group}" style="--vertical-offset:{vertical_offset}px">'
@@ -680,4 +725,66 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .smart-strategy-hero-right .product-grid,.smart-strategy-hero-top-right .product-grid,.smart-strategy-hero-corner-right .product-grid{direction:rtl}
 .smart-strategy-hero-right .product-card,.smart-strategy-hero-top-right .product-card,.smart-strategy-hero-corner-right .product-card{direction:ltr}
 .smart-composition .product-card[data-smart-role="support"]{opacity:.94}
+
+/* Phase 27: one deterministic refinement layer for visible conversational overrides. */
+.image-placeholder{position:relative;flex-direction:column;gap:13px;border:3px solid color-mix(in srgb,var(--card-border,#f1b900) 52%,transparent);background:linear-gradient(145deg,#fffdf5,#fff0ba);color:var(--product-title,#4c2430);font-size:0;opacity:1}
+.image-placeholder:before{content:"LP";display:grid;place-items:center;width:88px;height:88px;border-radius:50%;background:var(--price-panel,#ffd928);color:var(--price-color,#c5161d);font-size:30px;font-weight:1000;letter-spacing:-.08em;box-shadow:0 8px 0 #8e101c18}
+.image-placeholder:after{content:"Gorsel mevcut degil";font-size:15px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+.image-coverage-image-poor .promo-card-image[data-image-stage="fallback"]{height:210px;flex-basis:210px;margin:0 0 16px}
+.image-coverage-image-poor .price-panel{width:100%;min-height:105px;align-self:stretch}
+.image-coverage-image-poor .price{font-size:58px}
+.image-coverage-image-poor .product-name{font-size:27px;line-height:1.02}
+.price-prominence-high.density-editorial .price{font-size:66px}
+.price-prominence-high.density-weekly .price{font-size:48px}
+.price-prominence-high.density-compact .price{font-size:34px}
+.headline-emphasis-high h1{font-size:54px;letter-spacing:-.025em}
+.product-card[data-price-treatment="hero-panel"] .price-panel{width:100%;min-height:128px;padding:12px 18px;border-left:14px solid color-mix(in srgb,var(--price-color,#c5161d) 72%,transparent);box-shadow:9px 9px 0 #6f10212b}
+.product-card[data-price-treatment="hero-panel"] .price{font-size:78px}
+.product-card[data-visual-weight="dominant"]{outline:5px solid color-mix(in srgb,var(--price-panel,#ffd928) 78%,transparent);outline-offset:-5px}
+.product-card[data-visual-weight="dominant"] .product-name{font-size:34px;line-height:1.02}
+.product-card[data-visual-weight="dominant"] .promo-card-image{height:440px;flex-basis:440px}
+.product-card[data-visual-weight="quiet"]{opacity:.82}
+.product-card[data-visual-weight="quiet"] .price{font-size:28px}
+
+.visual-mode-simple .product-grid{gap:30px;padding:28px;background:#fff;border-radius:2px}
+.visual-mode-simple .product-card{grid-column:auto;grid-row:auto;padding:20px;border:2px solid color-mix(in srgb,var(--card-border,#f1b900) 42%,transparent);border-radius:2px;background:#fff;box-shadow:none;transform:none}
+.visual-mode-simple .promo-badge{display:none}
+.visual-mode-simple .price-panel{width:100%;align-self:stretch;border:0;border-left:8px solid var(--price-panel,#ffd928);border-radius:0;background:transparent;box-shadow:none}
+.visual-mode-simple .promo-card-image{background:#fff}
+.visual-mode-eye-catching .hero{border-bottom:10px solid var(--price-panel,#ffd928)}
+.visual-mode-eye-catching .product-card[data-merchandising-role="featured"],.visual-mode-eye-catching .product-card[data-smart-role="hero"]{outline:8px solid var(--price-panel,#ffd928);outline-offset:-8px;background:var(--card-bg,#fff8e7)}
+.visual-mode-eye-catching .product-card[data-merchandising-role="featured"] .price,.visual-mode-eye-catching .product-card[data-smart-role="hero"] .price{font-size:84px}
+.visual-mode-eye-catching .promo-badge{min-width:72px;min-height:64px;font-size:17px}
+
+.small-layout-single-poster .product-grid{grid-template-columns:1fr;grid-template-rows:1fr;padding:42px 54px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 96%,#fff);border-radius:24px}
+.small-layout-single-poster .product-card{grid-column:1/-1!important;grid-row:1!important;display:grid;grid-template-columns:minmax(0,58%) minmax(0,42%);grid-template-rows:auto auto auto 1fr;column-gap:38px;padding:38px;border-radius:26px}
+.small-layout-single-poster .promo-card-image{grid-column:1;grid-row:1/5;height:1180px!important;flex-basis:1180px!important;margin:0;background:radial-gradient(circle at 50% 55%,#fff 0,#ffffff75 50%,transparent 76%)}
+.small-layout-single-poster .price-panel{grid-column:2;grid-row:1;width:100%;min-height:180px;align-self:start;margin:80px 0 28px;padding:20px}
+.small-layout-single-poster .price{font-size:104px!important}
+.small-layout-single-poster .brand-label,.small-layout-single-poster .product-name,.small-layout-single-poster .product-unit{grid-column:2}
+.small-layout-single-poster .product-name{font-size:46px!important;line-height:1.02}
+.small-layout-single-poster .product-unit{font-size:22px}
+.small-layout-single-poster .image-placeholder:before{width:150px;height:150px;font-size:48px}
+.small-layout-single-poster .image-placeholder:after{font-size:20px}
+
+.small-layout-split-pair .product-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:1fr;gap:34px;padding:30px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
+.small-layout-split-pair .product-card{grid-column:auto!important;grid-row:1!important;padding:28px;border-radius:22px}
+.small-layout-split-pair .promo-card-image{height:790px!important;flex-basis:790px!important}
+.small-layout-split-pair .price-panel{width:96%;min-height:135px;padding:14px 18px}
+.small-layout-split-pair .price{font-size:72px!important}
+.small-layout-split-pair .product-name{font-size:34px!important}
+
+.small-layout-hero-trio .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:28px;padding:24px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
+.small-layout-hero-trio .product-card{grid-column:2!important;grid-row:auto!important;padding:18px;border-radius:18px}
+.small-layout-hero-trio .product-card:first-child{grid-column:1!important;grid-row:1/3!important;padding:30px}
+.small-layout-hero-trio .product-card:first-child .promo-card-image{height:850px!important;flex-basis:850px!important}
+.small-layout-hero-trio .product-card:first-child .price{font-size:82px!important}
+.small-layout-hero-trio .product-card:not(:first-child) .promo-card-image{height:370px!important;flex-basis:370px!important}
+.small-layout-hero-trio .product-card:not(:first-child) .price{font-size:48px}
+
+.small-layout-large-quad .product-card[data-merchandising-role="featured"] .promo-card-image{height:970px;flex-basis:970px}
+.small-layout-large-quad .product-card[data-merchandising-role="featured"] .price{font-size:86px}
+.small-layout-large-quad .product-card[data-merchandising-role="featured"] .product-name{font-size:36px}
+.small-layout-large-quad .product-card:not([data-merchandising-role="featured"]) .promo-card-image{min-height:250px;flex-basis:250px}
+.small-layout-large-quad .product-card:not([data-merchandising-role="featured"]) .price{font-size:50px}
 """
