@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 CampaignStatus = Literal[
     "draft",
     "parsing",
@@ -39,6 +38,8 @@ MatchResolution = Literal[
     "not_found",
 ]
 MatchingSuggestionReason = Literal["exact", "alias", "barcode", "fuzzy", "ai_normalized", "manual"]
+IntelligenceRole = Literal["hero", "featured", "standard", "support"]
+IntelligenceBadge = Literal["save_percent", "save_amount", "special", "best_value"]
 RAW_TEXT_MAX_LENGTH = 20_000
 
 
@@ -280,6 +281,53 @@ class CampaignDetail(CampaignListItem):
     matching_suggestions: list[MatchingSuggestionRead] = Field(default_factory=list)
     snapshot_json: dict[str, Any] | None = None
     builder_config_json: dict[str, Any] | None = None
+    intelligence_json: dict[str, Any] | None = None
+    intelligence_analyzed_at: datetime | None = None
+
+
+class CampaignIntelligenceStrategy(BaseModel):
+    campaignType: Literal["discount_led", "price_led", "image_led"]
+    density: Literal["balanced", "dense"]
+    composition: Literal["hero_plus_grid", "balanced_grid", "dense_value_grid"]
+    primaryObjective: Literal["maximize_value_perception", "balance_product_discovery"]
+    categoryMode: Literal["single", "mixed"]
+
+
+class CampaignIntelligenceProduct(BaseModel):
+    productId: str
+    role: IntelligenceRole
+    priorityScore: int = Field(ge=0, le=100)
+    promotionStrength: float = Field(ge=0, le=1)
+    discountPercent: Decimal | None = Field(default=None, ge=0, le=100)
+    absoluteSaving: Decimal | None = Field(default=None, ge=0)
+    recommendedSize: Literal["md", "lg", "xl"]
+    recommendedBadge: IntelligenceBadge | None = None
+    groupKey: str
+    reasons: list[str] = Field(default_factory=list)
+    sourceOrder: int = Field(ge=0)
+    manualHero: bool = False
+
+
+class CampaignIntelligenceGroup(BaseModel):
+    key: str
+    productCount: int = Field(ge=0)
+    reason: str
+
+
+class CampaignIntelligenceResult(BaseModel):
+    campaignId: str
+    engineVersion: str
+    strategy: CampaignIntelligenceStrategy
+    products: list[CampaignIntelligenceProduct] = Field(default_factory=list)
+    groups: list[CampaignIntelligenceGroup] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CampaignIntelligenceEnvelope(BaseModel):
+    result: CampaignIntelligenceResult
+    analyzedAt: datetime
+    applied: bool = False
 
 
 class CampaignPreviewHtml(BaseModel):

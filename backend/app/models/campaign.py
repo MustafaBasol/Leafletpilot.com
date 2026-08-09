@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,8 +23,7 @@ from app.core.database import Base
 from app.models.base import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from app.models.catalog import Product
-    from app.models.catalog import MarketProduct
+    from app.models.catalog import MarketProduct, Product
     from app.models.export import CampaignFile, ExportJob
     from app.models.market import Market
     from app.models.messaging import Conversation
@@ -88,6 +97,8 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     template_id: Mapped[UUID | None] = mapped_column(ForeignKey("templates.id"))
     # Exact template row is the immutable version reference.  These fields are
     # additive so existing campaigns continue to use template_id/product_id.
+    intelligence_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    intelligence_analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     builder_config_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

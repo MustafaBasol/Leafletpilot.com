@@ -14,6 +14,17 @@ export function getCampaignPreviewHtml(campaignId, marketId, params = {}) {
   return apiClient.get(`/campaigns/${campaignId}/preview-html`, { marketId, params });
 }
 
+export function getCampaignIntelligence(campaignId, marketId) {
+  return apiClient.get(`/campaigns/${campaignId}/intelligence`, { marketId });
+}
+
+export function analyzeCampaignIntelligence(campaignId, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/intelligence/analyze`, {}, { marketId });
+}
+
+export function applyCampaignIntelligence(campaignId, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/intelligence/apply`, {}, { marketId });
+}
 export function createCampaign(payload, marketId) {
   return apiClient.post("/campaigns", payload, { marketId });
 }

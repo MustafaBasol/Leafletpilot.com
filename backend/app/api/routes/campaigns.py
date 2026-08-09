@@ -8,16 +8,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_campaign_session, get_required_market_id, require_market_role
 from app.core.roles import MARKET_MUTATION_ROLES
 from app.schemas.campaign import (
+    CampaignBuilderOptions,
     CampaignCreate,
     CampaignCreateFromTextRequest,
     CampaignCreateFromTextResponse,
     CampaignDetail,
+    CampaignFinalizeResponse,
+    CampaignIntelligenceEnvelope,
     CampaignItemCreate,
+    CampaignItemOrderUpdate,
     CampaignItemRead,
     CampaignItemResolveMatch,
     CampaignItemSuggestionResult,
     CampaignItemUpdate,
     CampaignListItem,
+    CampaignParseRequest,
+    CampaignParseResponse,
     CampaignPreviewHtml,
     CampaignSuggestionSummary,
     CampaignUpdate,
@@ -25,18 +31,13 @@ from app.schemas.campaign import (
     GenerateItemSuggestionsRequest,
     MatchingSuggestionCreate,
     MatchingSuggestionRead,
-    CampaignParseRequest,
-    CampaignParseResponse,
     ParsedCampaignLineRead,
-    CampaignBuilderOptions,
-    CampaignFinalizeResponse,
-    CampaignItemOrderUpdate,
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
 from app.services import campaign as campaign_service
-from app.services.campaign_parser import parse_campaign_text
 from app.services import product_matching
+from app.services.campaign_parser import parse_campaign_text
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -128,6 +129,33 @@ async def get_campaign(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
     return await campaign_service.get_campaign(session, campaign_id, market_id)
+
+
+@router.get("/{campaign_id}/intelligence", response_model=CampaignIntelligenceEnvelope)
+async def get_campaign_intelligence(
+    campaign_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignIntelligenceEnvelope:
+    return await campaign_service.get_campaign_intelligence(session, campaign_id, market_id)
+
+
+@router.post("/{campaign_id}/intelligence/analyze", response_model=CampaignIntelligenceEnvelope)
+async def analyze_campaign_intelligence(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignIntelligenceEnvelope:
+    return await campaign_service.analyze_campaign_intelligence(session, campaign_id, market_id)
+
+
+@router.post("/{campaign_id}/intelligence/apply", response_model=CampaignIntelligenceEnvelope)
+async def apply_campaign_intelligence(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignIntelligenceEnvelope:
+    return await campaign_service.apply_campaign_intelligence(session, campaign_id, market_id)
 
 
 @router.get("/{campaign_id}/preview-html", response_model=CampaignPreviewHtml)

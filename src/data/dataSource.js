@@ -195,6 +195,11 @@ function mapCampaignDetail(campaign) {
     files: campaign.files || [],
     exportJobs: campaign.export_jobs || [],
     matchingSuggestions: campaign.matching_suggestions || [],
+    intelligence: campaign.intelligence_json || null,
+    intelligenceAnalyzedAt: campaign.intelligence_analyzed_at || null,
+    intelligenceApplied: Boolean(campaign.intelligence_json)
+      && JSON.stringify(campaign.builder_config_json?.campaign_intelligence || null)
+        === JSON.stringify(campaign.intelligence_json),
   };
 }
 
@@ -308,6 +313,15 @@ export async function getCampaignPreviewHtml(campaignId) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
   return campaignApi.getCampaignPreviewHtml(campaignId, marketId);
+}
+export async function analyzeCampaignIntelligence(campaignId) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.analyzeCampaignIntelligence(campaignId, requireSelectedMarketId());
+}
+
+export async function applyCampaignIntelligence(campaignId) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.applyCampaignIntelligence(campaignId, requireSelectedMarketId());
 }
 
 export async function finalizeCampaign(id) {

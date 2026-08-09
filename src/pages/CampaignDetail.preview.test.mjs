@@ -63,3 +63,14 @@ test("failed export jobs surface an error instead of a success notice", () => {
   assert.match(dataSource, /if \(job\?\.status === "failed"\)/);
   assert.match(dataSource, /throw new Error\(job\.error_message \|\| "Çıktı üretilemedi/);
 });
+test("campaign intelligence is inspectable before explicit application", () => {
+  assert.match(api, /intelligence\/analyze/);
+  assert.match(api, /intelligence\/apply/);
+  assert.match(dataSource, /analyzeCampaignIntelligence/);
+  assert.match(dataSource, /applyCampaignIntelligence/);
+  assert.match(page, /campaign-intelligence-analyze/);
+  assert.match(page, /campaign-intelligence-apply/);
+  assert.match(page, /intelligence\.warnings/);
+  assert.match(page, /product\.reasons\.slice/);
+  assert.match(styles, /\.intelligence-panel/);
+});
