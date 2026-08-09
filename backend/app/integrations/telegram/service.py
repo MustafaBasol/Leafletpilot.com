@@ -226,6 +226,21 @@ async def _handle_plain_text(
         await _apply_flyer_edit(session, state, intent, client)
         return
 
+    if state.state == TelegramState.AWAITING_PRODUCT_LIST.value:
+        if len(text) > RAW_TEXT_MAX_LENGTH:
+            await client.send_message(chat_id, "Liste cok uzun. Lutfen daha kisa bir liste gonderin.")
+            return
+        parsed = parse_campaign_text(text)
+        usable = [item for item in parsed if item.incoming_name.strip()]
+        if not usable:
+            await client.send_message(chat_id, "Kullanilabilir urun satiri bulunamadi. Listeyi tekrar gonderin.")
+            return
+        state.pending_raw_text = text
+        state.parsed_summary = _parsed_summary(parsed)
+        state.state = TelegramState.AWAITING_TITLE.value
+        await client.send_message(chat_id, _summary_text(parsed) + "\n\nKampanya basligini gonderin.")
+        return
+
     if state.state != TelegramState.AWAITING_TITLE.value:
         if len(text) > RAW_TEXT_MAX_LENGTH:
             await client.send_message(chat_id, "Liste cok uzun. Lutfen daha kisa bir liste gonderin.")
@@ -238,12 +253,6 @@ async def _handle_plain_text(
                 await client.send_message(chat_id, "Tek brosurde en fazla 16 urun kullanin; listeyi bolerek tekrar gonderin.")
                 return
             await _create_and_send_flyer(session, state, text, parsed, client)
-            return
-        if state.state == TelegramState.AWAITING_PRODUCT_LIST.value:
-            await client.send_message(
-                chat_id,
-                "Fiyatli bir urun satiri bulamadim. Ornek: Sut 1L - 1,29",
-            )
             return
 
     if state.state == TelegramState.AWAITING_TITLE.value:
@@ -286,10 +295,7 @@ async def _handle_plain_text(
         return
 
     if state.state == TelegramState.AWAITING_CONFIRMATION.value and state.campaign_id is not None:
-        await client.send_message(
-            chat_id,
-            "Bu kampanya aktif. 'Daha sade yap', 'bir urunu buyut' veya yeni bir fiyat listesi gonderebilirsiniz.",
-        )
+        await client.send_message(chat_id, "Bu kampanya basligi zaten islendi.")
         return
 
     await client.send_message(

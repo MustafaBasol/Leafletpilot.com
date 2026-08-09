@@ -117,14 +117,14 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
 
 @pytest.mark.asyncio
 async def test_no_parseable_price_asks_one_useful_follow_up() -> None:
-    state = _state(status="awaiting_product_list")
+    state = _state(status="idle")
     state.campaign_id = None
     client = MessageClient()
 
     await service._handle_plain_text(SimpleNamespace(), state, "sadece urun adi", client)
 
-    assert client.messages == ["Fiyatli bir urun satiri bulamadim. Ornek: Sut 1L - 1,29"]
-    assert state.state == "awaiting_product_list"
+    assert client.messages == ["Fiyatli urun listenizi dogrudan gonderin. Ornek: Sut 1L - 1,29"]
+    assert state.state == "idle"
 
 
 @pytest.mark.asyncio
