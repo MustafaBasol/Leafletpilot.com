@@ -779,7 +779,7 @@ async def test_direct_telegram_flyer_uses_supermarket_renderer_for_create_and_ed
         assert 'data-refinement-strategy="hero-trio"' in hero_html
         assert 'data-visual-weight="dominant"' in hero_html
         assert 'data-visual-mode="simple"' in simple_html
-        assert 'data-refinement-strategy="simplified-grid"' in simple_html
+        assert 'data-refinement-strategy="balanced-trio"' in simple_html
 
         async with session_factory() as session:
             campaign = await session.scalar(

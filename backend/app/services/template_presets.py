@@ -101,6 +101,28 @@ def supermarket_density_profile(slug: str) -> dict[str, Any]:
     return dict(SUPERMARKET_DENSITY_PROFILES.get(slug, SUPERMARKET_DENSITY_PROFILES["supermarket-promo-4"]))
 
 
+# Internal, gate-owned refinement lever (Phase 28B). Never read or set by
+# user-facing code (edit intents, template config API) - the visual quality
+# gate is the only writer, and only for a single extra render pass.
+FILL_BOOST_CONFIG_KEY = "_quality_gate_fill_boost"
+
+_FILL_BOOST_SCALES = {
+    "image_height": 1.10,
+    "grid_gap": 0.85,
+    "card_padding": 0.85,
+    "price_panel_height": 1.08,
+}
+
+
+def apply_density_fill_boost(density: dict[str, Any]) -> dict[str, Any]:
+    """Return a bounded, one-shot copy of density with page-fill knobs nudged."""
+    boosted = dict(density)
+    for key, scale in _FILL_BOOST_SCALES.items():
+        if key in boosted:
+            boosted[key] = round(boosted[key] * scale)
+    return boosted
+
+
 def preset_for_config(config: dict | None) -> dict | None:
     if not isinstance(config, dict):
         return None

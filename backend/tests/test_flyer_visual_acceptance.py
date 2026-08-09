@@ -5,6 +5,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PIL import Image, ImageChops, ImageDraw
@@ -14,6 +15,7 @@ from app.core.config import settings
 from app.services.image_pipeline import store_flyer_image
 from app.services.preview_renderer import render_render_payload_html
 from app.services.rendering import render_html_to_pdf_sync, render_html_to_png_sync
+from app.services.visual_quality_gate import QUALITY_THRESHOLD, run_visual_quality_gate
 
 FIXED_TIME = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 
@@ -582,3 +584,133 @@ def test_real_chromium_small_campaign_layouts_fill_the_page_without_collisions(
     assert measurements["usedAreaRatio"] >= 0.68
     assert measurements["reachesPageBottom"]
     assert measurements["fallbackCount"] == count
+
+
+# --- Phase 28B acceptance fixtures ---------------------------------------
+# Same 3-product campaign as the task spec's Case 1/2/3, run through the real
+# visual quality gate (run_visual_quality_gate) with real Chromium - not just
+# render_render_payload_html - to prove the CSS fix (preview_renderer.py's
+# now-deleted "simplified-grid" branch) actually resolves the sparse
+# 3-product-simple layout, and that the gate behaves as designed end to end.
+
+def _three_product_payload(*, hero: bool = False, visual_density: str | None = None) -> dict:
+    items = [
+        {"id": "1", "name": "Coca Cola 1L", "price": "29.90", "currency": "TRY", "is_hero": hero},
+        {"id": "2", "name": "Eti Burcak", "price": "44.90", "currency": "TRY"},
+        {"id": "3", "name": "Sutas Yogurt", "price": "74.90", "currency": "TRY"},
+    ]
+    return {
+        "template_slug": "supermarket-promo-4",
+        "market_name": "Fixture Market",
+        "title": "Haftanin Firsatlari",
+        "builder_config": {"visual_density": visual_density} if visual_density else {},
+        "items": items,
+    }
+
+
+def _run_gate_or_skip(payload: dict):
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+    except ImportError as exc:
+        pytest.skip(f"Playwright unavailable: {exc}")
+    try:
+        return run_visual_quality_gate(
+            payload,
+            generated_at=FIXED_TIME,
+            market_id=uuid4(),
+            campaign_id=uuid4(),
+            export_job_id=uuid4(),
+        )
+    except PlaywrightError as exc:
+        pytest.skip(f"Playwright Chromium unavailable: {exc}")
+
+
+def _measure_page_fill(html: str) -> dict:
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1240, "height": 1754})
+            page.set_content(html, wait_until="networkidle")
+            return page.evaluate(
+                """() => {
+                  const rect = (element) => { const value = element.getBoundingClientRect(); return {left: value.left, top: value.top, right: value.right, bottom: value.bottom}; };
+                  const area = (box) => (box.right - box.left) * (box.bottom - box.top);
+                  const gridBox = rect(document.querySelector('.product-grid'));
+                  const cardBoxes = [...document.querySelectorAll('.product-card')].map(rect);
+                  return {
+                    usedAreaRatio: cardBoxes.reduce((total, box) => total + area(box), 0) / area(gridBox),
+                    reachesPageBottom: Math.max(...cardBoxes.map((box) => box.bottom)) >= gridBox.top + (gridBox.bottom - gridBox.top) * .88,
+                  };
+                }"""
+            )
+        finally:
+            browser.close()
+
+
+def _write_case_report(artifact_root: Path, name: str, payload: dict, result) -> None:
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    report = {
+        "case": name,
+        "initial_score": result.initial_score.overall_score if result.initial_score else None,
+        "issues": list(result.initial_score.issues) if result.initial_score else [],
+        "refinement_triggered": result.refinement_action is not None,
+        "refinement_action": result.refinement_action,
+        "refined_score": result.refined_score.overall_score if result.refined_score else None,
+        "selected_result": "refined" if result.applied else "initial",
+    }
+    (artifact_root / f"quality-gate-{name}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+
+def test_quality_gate_case1_balanced_three_products_meets_threshold(tmp_path: Path) -> None:
+    payload = _three_product_payload()
+    result = _run_gate_or_skip(payload)
+    assert result.initial_score is not None
+    assert result.initial_score.overflow_ok
+    assert result.initial_score.collision_ok
+    assert result.initial_score.overall_score >= QUALITY_THRESHOLD
+    assert result.applied is False
+    assert 'data-refinement-strategy="balanced-trio"' in result.html
+    _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case1", payload, result)
+
+
+def test_quality_gate_case2_hero_product_is_measurably_dominant(tmp_path: Path) -> None:
+    payload = _three_product_payload(hero=True)
+    result = _run_gate_or_skip(payload)
+    assert result.initial_score is not None
+    assert result.initial_score.overflow_ok
+    assert result.initial_score.collision_ok
+    assert result.initial_score.hero_dominance_applicable
+    assert result.initial_score.hero_dominance_score >= 65.0
+    assert 'data-refinement-strategy="hero-trio"' in result.html
+    # Hero targeting is untouched by the gate - same item, same flag, no reorder.
+    assert payload["items"][0]["id"] == "1"
+    assert payload["items"][0]["is_hero"] is True
+    _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case2", payload, result)
+
+
+def test_quality_gate_case3_simple_mode_produces_intentional_composition_not_legacy_grid(tmp_path: Path) -> None:
+    """Regression test for the preview_renderer.py "simplified-grid" bug (Phase 28B section 1).
+
+    Before the fix this would render a CSS-less "simplified-grid" layout
+    (undersized cards in a 2x2 grid with one empty cell) instead of the
+    full-bleed balanced-trio geometry.
+    """
+    payload = _three_product_payload(visual_density="simple")
+    result = _run_gate_or_skip(payload)
+    assert result.initial_score is not None
+    assert result.initial_score.overflow_ok
+    assert result.initial_score.collision_ok
+    assert 'data-refinement-strategy="balanced-trio"' in result.html
+    assert "small-layout-simplified-grid" not in result.html
+    assert "composition-simplified-grid" not in result.html
+
+    measurements = _measure_page_fill(result.html)
+    assert measurements["usedAreaRatio"] >= 0.68
+    assert measurements["reachesPageBottom"]
+    # The CSS fix alone should already clear the quality threshold - the gate
+    # is a safety net here, not the primary fix.
+    assert result.initial_score.overall_score >= QUALITY_THRESHOLD
+    assert result.applied is False
+    _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case3", payload, result)

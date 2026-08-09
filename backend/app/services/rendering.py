@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models import Campaign, CampaignFile, ExportJob
 from app.services.campaign_rendering import get_campaign_for_render
-from app.services.preview_renderer import render_campaign_preview_html
 
 logger = logging.getLogger(__name__)
 
@@ -118,13 +117,26 @@ async def render_campaign_export(
     created_files: list[CampaignFile] = []
     try:
         generated_at = datetime.now(UTC).replace(microsecond=0)
-        if campaign.snapshot_json:
-            from app.services.campaign_rendering import render_campaign_snapshot_html
+        from app.services.campaign_rendering import build_campaign_render_payload
+        from app.services.visual_quality_gate import run_visual_quality_gate
 
-            html = render_campaign_snapshot_html(campaign.snapshot_json, generated_at=generated_at)
-        else:
-            template = campaign.template
-            html = render_campaign_preview_html(campaign, template, generated_at=generated_at)
+        payload = build_campaign_render_payload(campaign, campaign.template)
+        gate_result = await asyncio.to_thread(
+            run_visual_quality_gate,
+            payload,
+            generated_at=generated_at,
+            market_id=market_id,
+            campaign_id=campaign_id,
+            export_job_id=export_job_id,
+        )
+        html = gate_result.html
+        if not campaign.snapshot_json:
+            # Preserve the pre-existing snapshot/live asymmetry: only the
+            # live path ever applied output-format-specific page sizing.
+            from app.services.preview_renderer import _apply_output_format
+
+            output_format = (payload.get("builder_config") or {}).get("output_format", "pdf")
+            html = _apply_output_format(html, output_format)
 
         for file_format in formats:
             file_name = build_export_file_name(campaign, file_format)

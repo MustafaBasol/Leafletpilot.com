@@ -115,7 +115,7 @@ def test_simpler_and_eye_catching_are_distinct_render_strategies() -> None:
     )
 
     assert 'data-visual-mode="simple"' in simple
-    assert "composition-simplified-grid" in simple
+    assert "composition-weekly-grid" in simple
     assert "retail-header-minimal" in simple
     assert 'data-visual-mode="eye-catching"' in eye_catching
     assert "price-prominence-high" in eye_catching
