@@ -134,6 +134,16 @@ async def get_current_platform_admin(
     return admin
 
 
+async def get_optional_platform_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    deferred_session: DeferredCatalogSession = Depends(get_deferred_catalog_session),
+    session: OptionalSession = None,
+) -> PlatformAdmin | None:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+    return await get_current_platform_admin(credentials, deferred_session, session)
+
+
 async def get_current_market_membership(
     x_market_id: UUID | None = Header(default=None),
     current_user: User = Depends(get_current_user),
