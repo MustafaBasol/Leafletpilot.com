@@ -33,11 +33,14 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
   python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health/readiness').read().decode())"
 ```
 
-Expected: all three return HTTP 200 with `"status": "ok"`. If
-`/api/health/readiness` returns 503, read the `checks` object in the response
-body to find which dependency (database, storage, telegram_config,
-supermarket_templates) is failing, and stop — do not proceed to step 2 until
-it is fixed.
+Expected: all three return HTTP 200 with `"status": "ok"`. Since Phase 30A,
+the `/api/health/readiness` response body only includes the per-dependency
+`checks` object for an authenticated platform admin caller (anonymous callers
+only see the top-level `status`); if it returns 503, run
+`python -m scripts.readiness_check` (step 2) or call the endpoint with a
+platform admin bearer token to see which dependency (database, storage,
+telegram_config, supermarket_templates) is failing, and stop — do not proceed
+to step 2 until it is fixed.
 
 Also confirm the frontend is reachable at `https://${APP_DOMAIN}` and returns
 200.

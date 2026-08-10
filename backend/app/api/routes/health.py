@@ -1,11 +1,12 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, text
 
+from app.api.deps import get_optional_platform_admin
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.models import Template
+from app.models import PlatformAdmin, Template
 from app.services.template_presets import SUPERMARKET_PRESETS
 
 router = APIRouter()
@@ -44,22 +45,35 @@ async def database_health() -> dict[str, str]:
 
 
 @router.get("/health/readiness")
-async def readiness() -> dict[str, object]:
+async def readiness(
+    admin: PlatformAdmin | None = Depends(get_optional_platform_admin),
+) -> dict[str, object]:
     """First-customer readiness snapshot: DB, storage, Telegram config, and the
     published supermarket presets the automated Telegram flow depends on.
 
     Deliberately excludes an actual Chromium launch/render (too slow for a
     hot health check); use `scripts/readiness_check.py` for that before a
     production deploy.
+
+    Anonymous callers (load balancers, uptime probes) only get the overall
+    status - per-dependency diagnostics (Telegram config booleans, storage
+    detail, missing template slugs) are operational information and are only
+    included for an authenticated platform admin, per Phase 30A section F.
     """
     checks: dict[str, dict[str, object]] = {
         "database": await _check_database(),
         "storage": _check_storage(),
         "telegram_config": _check_telegram_config(),
         "supermarket_templates": await _check_supermarket_templates(),
+        "security_config": _check_security_config(),
     }
     all_ok = all(check["ok"] for check in checks.values())
-    body = {"status": "ok" if all_ok else "degraded", "service": settings.app_name, "checks": checks}
+    body: dict[str, object] = {
+        "status": "ok" if all_ok else "degraded",
+        "service": settings.app_name,
+    }
+    if admin is not None:
+        body["checks"] = checks
     if not all_ok:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=body)
     return body
@@ -100,6 +114,23 @@ def _check_telegram_config() -> dict[str, object]:
         "bot_token_configured": bool(settings.telegram_bot_token.strip()),
         "webhook_secret_configured": bool(settings.telegram_webhook_secret.strip()),
         "webhook_base_url_configured": bool(settings.telegram_webhook_base_url.strip()),
+    }
+
+
+def _check_security_config() -> dict[str, object]:
+    # Settings() already refuses to boot in production without these being
+    # present and non-placeholder (see core/config.py validate_security_settings),
+    # so a running process implies "ok". Report booleans/status only, never values.
+    return {
+        "ok": True,
+        "environment": settings.environment,
+        "is_production": settings.is_production,
+        "debug": settings.debug,
+        "jwt_secret_configured": bool(settings.jwt_secret_key.strip()),
+        "platform_admin_enabled": settings.platform_admin_enabled,
+        "platform_jwt_secret_configured": bool(settings.platform_jwt_secret.strip()),
+        "cors_origins_configured": len(settings.backend_cors_origins) > 0,
+        "trusted_hosts_configured": len(settings.trusted_hosts) > 0,
     }
 
 

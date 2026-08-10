@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.health import (
     _check_database,
+    _check_security_config,
     _check_storage,
     _check_supermarket_templates,
     _check_telegram_config,
@@ -81,6 +82,7 @@ async def run_checks() -> dict[str, object]:
         "storage": _check_storage(),
         "telegram_config": _check_telegram_config(),
         "supermarket_templates": await _check_supermarket_templates(),
+        "security_config": _check_security_config(),
         "chromium": _check_chromium(),
         "render": _check_render(),
     }

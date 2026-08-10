@@ -1,11 +1,25 @@
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_optional_platform_admin
 from app.api.routes import health as health_routes
 from app.core.config import Settings
 from app.main import app
+from app.models import PlatformAdmin
 
 client = TestClient(app)
+
+
+def _override_platform_admin() -> None:
+    app.dependency_overrides[get_optional_platform_admin] = lambda: PlatformAdmin(
+        id=uuid4(), email="admin@leafletpilot.com", is_active=True
+    )
+
+
+def _clear_platform_admin_override() -> None:
+    app.dependency_overrides.pop(get_optional_platform_admin, None)
 
 
 def test_app_can_be_imported() -> None:
@@ -108,16 +122,63 @@ def test_readiness_reports_ok_when_all_checks_pass(monkeypatch) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
+
+
+def test_readiness_anonymous_caller_never_sees_dependency_checks(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+
+    response = client.get("/api/health/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"status", "service"}
+    assert "checks" not in body
+
+
+def test_readiness_platform_admin_sees_dependency_checks(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+    _override_platform_admin()
+    try:
+        response = client.get("/api/health/readiness", headers={"Authorization": "Bearer irrelevant-see-override"})
+    finally:
+        _clear_platform_admin_override()
+
+    assert response.status_code == 200
+    body = response.json()
     assert body["checks"]["database"]["ok"] is True
 
 
-def test_readiness_returns_503_and_names_the_failing_check(monkeypatch) -> None:
+def test_readiness_returns_503_and_hides_detail_from_anonymous_caller(monkeypatch) -> None:
     monkeypatch.setattr(health_routes, "_check_database", _ok_check)
     monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": False, "detail": "Local storage path is not writable."})
     monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
     monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
 
     response = client.get("/api/health/readiness")
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "degraded"
+    assert "checks" not in body
+    assert "not writable" not in response.text
+
+
+def test_readiness_returns_503_and_names_the_failing_check_for_platform_admin(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": False, "detail": "Local storage path is not writable."})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+    _override_platform_admin()
+    try:
+        response = client.get("/api/health/readiness", headers={"Authorization": "Bearer irrelevant-see-override"})
+    finally:
+        _clear_platform_admin_override()
 
     assert response.status_code == 503
     body = response.json()["detail"]
@@ -133,8 +194,11 @@ def test_readiness_never_exposes_bot_token_or_webhook_secret(monkeypatch) -> Non
     monkeypatch.setattr(health_routes, "_check_database", _ok_check)
     monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
     monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
-
-    response = client.get("/api/health/readiness")
+    _override_platform_admin()
+    try:
+        response = client.get("/api/health/readiness", headers={"Authorization": "Bearer irrelevant-see-override"})
+    finally:
+        _clear_platform_admin_override()
 
     assert "123456:super-secret-token" not in response.text
     assert "s" * 40 not in response.text
@@ -146,6 +210,25 @@ def test_readiness_never_exposes_bot_token_or_webhook_secret(monkeypatch) -> Non
         "webhook_secret_configured": True,
         "webhook_base_url_configured": True,
     }
+
+
+def test_readiness_security_config_check_reports_booleans_only(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+    monkeypatch.setattr(health_routes.settings, "jwt_secret_key", "super-secret-jwt-signing-key-value")
+    _override_platform_admin()
+    try:
+        response = client.get("/api/health/readiness", headers={"Authorization": "Bearer irrelevant-see-override"})
+    finally:
+        _clear_platform_admin_override()
+
+    assert "super-secret-jwt-signing-key-value" not in response.text
+    security_config = response.json()["checks"]["security_config"]
+    assert security_config["ok"] is True
+    assert security_config["jwt_secret_configured"] is True
+    assert isinstance(security_config["is_production"], bool)
 
 
 async def _ok_check() -> dict[str, object]:
