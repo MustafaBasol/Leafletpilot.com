@@ -417,14 +417,25 @@ textarea {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
   width: 40px;
   height: 40px;
-  place-items: center;
-  border-radius: 12px;
-  background: var(--primary-900);
-  color: var(--white);
-  font-weight: 800;
+  object-fit: contain;
+}
+
+.brand-logo {
+  display: block;
+  height: 30px;
+  width: auto;
+}
+
+.login-brand .brand-logo {
+  height: 40px;
+}
+
+.platform-login-brand .brand-logo,
+.landing-footer .brand-logo {
+  height: 26px;
 }
 
 .brand strong,

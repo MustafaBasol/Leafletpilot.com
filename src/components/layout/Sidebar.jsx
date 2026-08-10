@@ -41,7 +41,7 @@ export function Sidebar({ currentPath, sessionVersion }) {
   return (
     <aside className="sidebar">
       <a className="brand" href="#/">
-        <span className="brand-mark">LP</span>
+        <img className="brand-mark" src="/brand/mark-dark.png" alt="LeafletPilot" width="40" height="40" />
         <span>
           <strong>LeafletPilot</strong>
           <small>AI Brochure Automation</small>
