@@ -38,6 +38,12 @@ from app.services.rendering import (
 
 
 def _check_chromium() -> dict[str, object]:
+    """Blocking Chromium launch probe.
+
+    Must never be awaited directly - it uses Playwright's Sync API, which
+    raises immediately if called on a thread already running an asyncio event
+    loop. Callers run this via asyncio.to_thread (see run_checks).
+    """
     try:
         from playwright.sync_api import sync_playwright
 
@@ -45,11 +51,18 @@ def _check_chromium() -> dict[str, object]:
             browser = playwright.chromium.launch()
             browser.close()
     except Exception as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: Chromium is not available."}
+        return {
+            "ok": False,
+            "stage": "chromium_launch",
+            "error_type": type(exc).__name__,
+            "detail": "Chromium launch failed.",
+        }
     return {"ok": True}
 
 
 def _check_render() -> dict[str, object]:
+    """Blocking PDF/PNG render probe - same Sync API / event-loop constraint
+    as _check_chromium; run via asyncio.to_thread (see run_checks)."""
     from app.services.preview_renderer import render_render_payload_html
 
     payload = {
@@ -72,7 +85,12 @@ def _check_render() -> dict[str, object]:
             validate_rendered_file(pdf_path, "pdf")
             validate_rendered_file(png_path, "png")
     except Exception as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: PDF/PNG render failed."}
+        return {
+            "ok": False,
+            "stage": "render",
+            "error_type": type(exc).__name__,
+            "detail": "PDF/PNG render failed.",
+        }
     return {"ok": True, "pdf": True, "png": True}
 
 
@@ -83,9 +101,13 @@ async def run_checks() -> dict[str, object]:
         "telegram_config": _check_telegram_config(),
         "supermarket_templates": await _check_supermarket_templates(),
         "security_config": _check_security_config(),
-        "chromium": _check_chromium(),
-        "render": _check_render(),
     }
+    # _check_chromium/_check_render use Playwright's Sync API, which refuses
+    # to run on a thread that already has an asyncio event loop active. Run
+    # them off-thread (sequentially, to avoid two Chromium processes at once)
+    # rather than awaiting them directly on this coroutine's thread.
+    checks["chromium"] = await asyncio.to_thread(_check_chromium)
+    checks["render"] = await asyncio.to_thread(_check_render)
     all_ok = all(check["ok"] for check in checks.values())  # type: ignore[index]
     return {"status": "ok" if all_ok else "not_ready", "checks": checks}
 
