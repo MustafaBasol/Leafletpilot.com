@@ -557,12 +557,16 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     image_tier = merchandising.get("image_treatment") or image_tier
     composition_group = merchandising.get("group_key") or composition_group
     price_class = "price price-long" if len(major) + len(symbol) >= 8 else "price"
+    # The campaign's own is_hero fact, independent of the positional role/
+    # merchandising-sequence pipeline above - hero-trio geometry keys off this
+    # instead of DOM position so a non-first hero still renders dominant.
+    is_hero_item = str(bool(item.get("is_hero"))).lower()
     return (
         f'<article class="product-card" data-emphasis="{emphasis}" data-merchandising-role="{role}" '
         f'data-smart-role="{_attr(smart_role)}" data-emphasis-score="{_attr(merchandising.get("emphasis_score"))}" '
         f'data-visual-weight="{_attr(merchandising.get("visual_weight"))}" data-image-available="{str(bool(item.get("image_key"))).lower()}" '
         f'data-rhythm="{rhythm}" data-price-align="{price_align}" data-price-treatment="{price_treatment}" '
-        f'data-image-tier="{image_tier}" data-vertical-offset="{vertical_offset}" '
+        f'data-image-tier="{image_tier}" data-vertical-offset="{vertical_offset}" data-hero="{is_hero_item}" '
         f'data-composition-group="{composition_group}" style="--vertical-offset:{vertical_offset}px">'
         f'{image}<div class="price-panel"><span class="{price_class}">{price}</span>{badge}{old}</div>{brand_html}{name}{package}</article>'
     )
@@ -790,14 +794,14 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 
 .small-layout-hero-trio .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:28px;padding:24px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
 .small-layout-hero-trio .product-card{grid-column:2!important;grid-row:auto!important;padding:18px;border-radius:18px}
-.small-layout-hero-trio .product-card:first-child{grid-column:1!important;grid-row:1/3!important;padding:30px}
-.small-layout-hero-trio .product-card:first-child .promo-card-image{height:950px!important;flex-basis:950px!important;margin-bottom:10px}
-.small-layout-hero-trio .product-card:first-child .price-panel{min-height:130px}
-.small-layout-hero-trio .product-card:first-child .price{font-size:82px!important}
-.small-layout-hero-trio .product-card:first-child .product-name{font-size:30px!important;line-height:1.03}
-.small-layout-hero-trio .product-card:not(:first-child) .promo-card-image{height:430px!important;flex-basis:430px!important}
-.small-layout-hero-trio .product-card:not(:first-child) .price{font-size:48px}
-.small-layout-hero-trio .product-card:not(:first-child) .product-name{font-size:26px!important;line-height:1.04}
+.small-layout-hero-trio .product-card[data-hero="true"]{grid-column:1!important;grid-row:1/3!important;padding:30px}
+.small-layout-hero-trio .product-card[data-hero="true"] .promo-card-image{height:950px!important;flex-basis:950px!important;margin-bottom:10px}
+.small-layout-hero-trio .product-card[data-hero="true"] .price-panel{min-height:130px}
+.small-layout-hero-trio .product-card[data-hero="true"] .price{font-size:82px!important}
+.small-layout-hero-trio .product-card[data-hero="true"] .product-name{font-size:30px!important;line-height:1.03}
+.small-layout-hero-trio .product-card:not([data-hero="true"]) .promo-card-image{height:430px!important;flex-basis:430px!important}
+.small-layout-hero-trio .product-card:not([data-hero="true"]) .price{font-size:48px}
+.small-layout-hero-trio .product-card:not([data-hero="true"]) .product-name{font-size:26px!important;line-height:1.04}
 
 .small-layout-large-quad .product-card[data-merchandising-role="featured"] .promo-card-image{height:970px;flex-basis:970px}
 .small-layout-large-quad .product-card[data-merchandising-role="featured"] .price{font-size:86px}

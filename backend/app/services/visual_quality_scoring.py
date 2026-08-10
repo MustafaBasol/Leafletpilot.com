@@ -82,7 +82,16 @@ _METRICS_JS = """() => {
   const prices = cards.map((c) => c.querySelector('.price'));
   const names = cards.map((c) => c.querySelector('.product-name'));
 
-  const featuredIndex = cards.findIndex((c) => c.dataset.merchandisingRole === 'featured' || c.dataset.emphasis === 'featured');
+  // hero-trio sizes strictly off data-hero (see preview_renderer.py), which
+  // can disagree with the positional merchandising role - so for that layout
+  // use data-hero exclusively rather than as a secondary OR clause (an OR
+  // would let a card's stale/positional "featured" role win the findIndex
+  // race before the real data-hero card is reached). Other compositions are
+  // unaffected and keep sizing off the merchandising role as before.
+  const isHeroTrio = document.querySelector('.preview-document')?.classList.contains('small-layout-hero-trio');
+  const featuredIndex = isHeroTrio
+    ? cards.findIndex((c) => c.dataset.hero === 'true')
+    : cards.findIndex((c) => c.dataset.merchandisingRole === 'featured' || c.dataset.emphasis === 'featured');
   const hasFeatured = featuredIndex >= 0;
   const supportIndexes = cards.map((_, i) => i).filter((i) => i !== featuredIndex);
 

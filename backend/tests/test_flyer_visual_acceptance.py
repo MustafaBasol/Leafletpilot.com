@@ -594,11 +594,15 @@ def test_real_chromium_small_campaign_layouts_fill_the_page_without_collisions(
 # now-deleted "simplified-grid" branch) actually resolves the sparse
 # 3-product-simple layout, and that the gate behaves as designed end to end.
 
-def _three_product_payload(*, hero: bool = False, visual_density: str | None = None) -> dict:
+def _three_product_payload(*, hero: bool = False, hero_id: str = "1", visual_density: str | None = None) -> dict:
+    """Build the fixed 3-product fixture; `hero_id` picks which item (by DOM/
+    campaign position - "1"=Coca Cola, "2"=Eti Burcak, "3"=Sutas Yogurt) carries
+    is_hero, so tests can prove hero dominance is independent of DOM order.
+    """
     items = [
-        {"id": "1", "name": "Coca Cola 1L", "price": "29.90", "currency": "TRY", "is_hero": hero},
-        {"id": "2", "name": "Eti Burcak", "price": "44.90", "currency": "TRY"},
-        {"id": "3", "name": "Sutas Yogurt", "price": "74.90", "currency": "TRY"},
+        {"id": "1", "name": "Coca Cola 1L", "price": "29.90", "currency": "TRY", "is_hero": hero and hero_id == "1"},
+        {"id": "2", "name": "Eti Burcak", "price": "44.90", "currency": "TRY", "is_hero": hero and hero_id == "2"},
+        {"id": "3", "name": "Sutas Yogurt", "price": "74.90", "currency": "TRY", "is_hero": hero and hero_id == "3"},
     ]
     return {
         "template_slug": "supermarket-promo-4",
@@ -806,6 +810,144 @@ def test_quality_gate_case3_simple_mode_produces_intentional_composition_not_leg
     assert all(ratio >= 4.5 for ratio in contrasts)
 
     _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case3", payload, result)
+
+
+# --- Phase 31 follow-up hotfix: hero-trio must follow is_hero, not DOM order ---
+# Before this fix, small-layout-hero-trio sized its "big" card with a bare
+# `:first-child` CSS selector. is_hero never reordered the underlying item
+# list (that reorder only ever fires for `emphasis=="featured"`, a separate
+# field the raw render payload here never sets), so a hero that wasn't
+# already the first product would size the wrong card. The fixture above
+# only ever put the hero (Coca Cola) first, which masked the bug - these
+# cases put the hero second and third instead.
+
+def _measure_card_geometry_by_name(html: str) -> dict[str, dict]:
+    """Real-Chromium per-card geometry keyed by product name - proves which
+
+    card is actually rendered large, not just which CSS class/attribute is
+    present in the markup.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1240, "height": 1754})
+            page.set_content(html, wait_until="networkidle")
+            return {
+                entry["name"]: entry
+                for entry in page.evaluate(
+                    """() => [...document.querySelectorAll('.product-card')].map((card) => {
+                      const box = card.getBoundingClientRect();
+                      const price = card.querySelector('.price');
+                      return {
+                        name: card.querySelector('.product-name')?.textContent ?? '',
+                        hero: card.dataset.hero,
+                        area: Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top),
+                        priceFontSize: price ? parseFloat(getComputedStyle(price).fontSize) : 0,
+                      };
+                    })"""
+                )
+            }
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    ("hero_id", "hero_name", "other_names"),
+    [
+        ("3", "Sutas Yogurt", ("Coca Cola 1L", "Eti Burcak")),  # Case 1: last item is hero
+        ("2", "Eti Burcak", ("Coca Cola 1L", "Sutas Yogurt")),  # Case 2: middle item is hero
+    ],
+)
+def test_hero_trio_dominance_follows_is_hero_not_dom_position(hero_id, hero_name, other_names) -> None:
+    payload = _three_product_payload(hero=True, hero_id=hero_id)
+    html = render_render_payload_html(payload, generated_at=FIXED_TIME)
+
+    # Facts and DOM/campaign order are untouched by hero selection - only the
+    # semantic data-hero marker on the actual hero product changes.
+    assert _extract_product_names(html) == ["Coca Cola 1L", "Eti Burcak", "Sutas Yogurt"]
+    assert _extract_price_majors(html) == ["29", "44", "74"]
+    assert 'data-refinement-strategy="hero-trio"' in html
+
+    try:
+        geometry = _measure_card_geometry_by_name(html)
+    except Exception as exc:  # pragma: no cover - environment guard
+        from playwright.sync_api import Error as PlaywrightError
+
+        if isinstance(exc, (ImportError, PlaywrightError)):
+            pytest.skip(f"Playwright Chromium unavailable: {exc}")
+        raise
+
+    hero_card = geometry[hero_name]
+    assert hero_card["hero"] == "true"
+    for other_name in other_names:
+        other_card = geometry[other_name]
+        assert other_card["hero"] == "false"
+        # The hero card must be measurably dominant in both card area and
+        # price font size - not merely tagged with the right CSS class.
+        assert hero_card["area"] > other_card["area"] * 1.5
+        assert hero_card["priceFontSize"] > other_card["priceFontSize"]
+
+
+def test_hero_trio_simple_mode_flattens_dominance_but_keeps_is_hero_fact() -> None:
+    """Case 4: simple mode after a non-first hero selection must flatten
+
+    visual dominance (balanced-trio, not hero-trio) while leaving the
+    campaign's is_hero fact - and product order/prices - untouched.
+    """
+    payload = _three_product_payload(hero=True, hero_id="3", visual_density="simple")
+    html = render_render_payload_html(payload, generated_at=FIXED_TIME)
+
+    assert payload["items"][2]["is_hero"] is True
+    assert _extract_product_names(html) == ["Coca Cola 1L", "Eti Burcak", "Sutas Yogurt"]
+    assert _extract_price_majors(html) == ["29", "44", "74"]
+    assert 'data-refinement-strategy="balanced-trio"' in html
+    # SUPERMARKET_ART_DIRECTION_CSS always ships the hero-trio ruleset (it's a
+    # static stylesheet, not conditionally emitted), so check the actually
+    # applied class token on <main>, not mere substring presence in the CSS.
+    assert not re.search(r'<main class="[^"]*\bsmall-layout-hero-trio\b', html)
+    # The internal is_hero semantic is still rendered on the card (marker is
+    # layout-agnostic) - simple mode only stops hero-trio geometry from
+    # consuming it.
+    assert re.search(r'<article class="product-card"[^>]*\bdata-hero="true"', html)
+
+
+def test_balanced_trio_default_behavior_unchanged_without_hero() -> None:
+    """Case 5: no explicit hero keeps the existing balanced-trio behavior."""
+    payload = _three_product_payload()
+    html = render_render_payload_html(payload, generated_at=FIXED_TIME)
+
+    assert 'data-refinement-strategy="balanced-trio"' in html
+    # SUPERMARKET_ART_DIRECTION_CSS always ships the hero-trio ruleset (it's a
+    # static stylesheet, not conditionally emitted), so check the actually
+    # applied class token on <main>, not mere substring presence in the CSS.
+    assert not re.search(r'<main class="[^"]*\bsmall-layout-hero-trio\b', html)
+    assert not re.search(r'<article class="product-card"[^>]*\bdata-hero="true"', html)
+    assert _extract_product_names(html) == ["Coca Cola 1L", "Eti Burcak", "Sutas Yogurt"]
+
+
+def test_quality_gate_hero_dominance_score_tracks_non_first_hero(tmp_path: Path) -> None:
+    """Real-Chromium quality-gate coverage (not just render_render_payload_html)
+
+    for a non-first hero, mirroring case2's gate assertions but with the hero
+    on the last product - proves the gate's own hero-dominance metric (which
+    reads a different data attribute set than the CSS) also identifies the
+    correct card after this fix.
+    """
+    payload = _three_product_payload(hero=True, hero_id="3")
+    result = _run_gate_or_skip(payload)
+    assert result.initial_score is not None
+    assert result.initial_score.overflow_ok
+    assert result.initial_score.collision_ok
+    assert result.initial_score.hero_dominance_applicable
+    assert result.initial_score.hero_dominance_score >= 65.0
+    assert 'data-refinement-strategy="hero-trio"' in result.html
+    assert payload["items"][2]["id"] == "3"
+    assert payload["items"][2]["is_hero"] is True
+    assert _extract_product_names(result.html) == ["Coca Cola 1L", "Eti Burcak", "Sutas Yogurt"]
+
+    _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case1-non-first-hero", payload, result)
 
 
 def test_phase31_facts_and_image_association_preserved_across_default_hero_simple() -> None:
