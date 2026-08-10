@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.integrations.telegram import service
 from app.integrations.telegram.edit_intents import FlyerEditIntent, FlyerEditKind
@@ -94,6 +95,8 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
     create = AsyncMock(
         return_value=SimpleNamespace(
             campaign_id=campaign_id,
+            product_count=2,
+            matched_count=1,
             missing_count=1,
             low_confidence_count=0,
         )
@@ -132,6 +135,57 @@ async def test_create_message_runs_matching_intelligence_and_preview_without_tit
     apply.assert_awaited_once_with(session, campaign_id, state.selected_market_id)
     render.assert_awaited_once()
     assert not any("basligini" in message.lower() for message in client.messages)
+
+
+@pytest.mark.asyncio
+async def test_create_and_send_flyer_reports_concise_product_specific_unresolved_warning(monkeypatch) -> None:
+    """Phase 29 Scenario 4: an unresolved image must not block the flyer, and
+    the warning must name the affected product(s) concisely (no confidence
+    scores, no stack traces)."""
+    state = _state(status="awaiting_product_list")
+    client = MessageClient()
+    session = SimpleNamespace(commit=AsyncMock())
+    market = SimpleNamespace(id=state.selected_market_id, name="Demo Market", currency="EUR", language="tr")
+    membership = SimpleNamespace(market_id=state.selected_market_id, market=market, role="market_staff")
+    campaign_id = uuid4()
+    create = AsyncMock(
+        return_value=SimpleNamespace(
+            campaign_id=campaign_id, product_count=3, matched_count=2, missing_count=0, low_confidence_count=0
+        )
+    )
+    template = Template(id=uuid4(), name="Supermarket Promo 4", slug="supermarket-promo-4")
+    acknowledgements: list[str] = []
+
+    async def capture_acknowledgement(_session, _state, _market_id, _client, *, acknowledgement, **_kwargs):
+        acknowledgements.append(acknowledgement)
+
+    monkeypatch.setattr(service, "_require_selected_mutation_membership", AsyncMock(return_value=membership))
+    monkeypatch.setattr(
+        service.template_service,
+        "resolve_automatic_supermarket_template",
+        AsyncMock(return_value=template),
+    )
+    monkeypatch.setattr(service.campaign_service, "create_campaign_from_text", create)
+    monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", AsyncMock())
+    monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", AsyncMock())
+    monkeypatch.setattr(
+        service,
+        "resolve_campaign_product_images",
+        AsyncMock(return_value=SimpleNamespace(unresolved_names=("Sutas Yogurt",))),
+    )
+    monkeypatch.setattr(service, "_render_and_send_flyer", capture_acknowledgement)
+
+    text = "Coca Cola 1L - 29,90\nEti Burcak - 44,90\nSutas Yogurt - 74,90"
+    await service._create_and_send_flyer(session, state, text, parse_campaign_text(text), client)
+
+    assert len(acknowledgements) == 1
+    message = acknowledgements[0]
+    assert "Sutas Yogurt" in message
+    assert "Brosurunuz hazir." in message
+    # No technical/confidence detail leaks into the customer-facing message.
+    assert "confidence" not in message.lower()
+    assert "%" not in message
+    assert "traceback" not in message.lower()
 
 
 @pytest.mark.asyncio
@@ -198,6 +252,8 @@ async def test_direct_three_product_route_uses_refinement_and_conversational_geo
         assert payload.template_id == template.id
         return SimpleNamespace(
             campaign_id=campaign.id,
+            product_count=3,
+            matched_count=0,
             missing_count=3,
             low_confidence_count=0,
         )
@@ -352,6 +408,42 @@ async def test_edit_loop_applies_manual_hero_and_preserves_price(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_hero_then_simplify_edit_chain_never_mutates_campaign_facts(monkeypatch) -> None:
+    """Phase 29 Scenarios 2+3 chained: 'Coca Cola'yi one cikar' followed by
+    'Daha sade yap' must never touch price/name/currency/item count - visual
+    refinement is presentation-only."""
+    campaign = _campaign()
+    state = _state(campaign_id=campaign.id)
+    state.selected_market_id = campaign.market_id
+    client = MessageClient()
+    session = SimpleNamespace(commit=AsyncMock())
+    membership = SimpleNamespace(market_id=campaign.market_id, market=SimpleNamespace(), role="market_staff")
+    monkeypatch.setattr(service, "_require_selected_mutation_membership", AsyncMock(return_value=membership))
+    monkeypatch.setattr(service.campaign_service, "get_campaign", AsyncMock(return_value=campaign))
+    monkeypatch.setattr(service.campaign_service, "analyze_campaign_intelligence", AsyncMock())
+    monkeypatch.setattr(service.campaign_service, "apply_campaign_intelligence", AsyncMock())
+    monkeypatch.setattr(service, "_render_and_send_flyer", AsyncMock())
+
+    original_facts = [
+        (item.id, item.incoming_name, item.price, item.currency) for item in campaign.items
+    ]
+
+    await service._apply_flyer_edit(
+        session, state, FlyerEditIntent(FlyerEditKind.CHANGE_HERO_PRODUCT, product_reference="Coca Cola"), client
+    )
+    await service._apply_flyer_edit(
+        session, state, FlyerEditIntent(FlyerEditKind.ADJUST_VISUAL_DENSITY, value="simpler"), client
+    )
+
+    current_facts = [(item.id, item.incoming_name, item.price, item.currency) for item in campaign.items]
+    assert current_facts == original_facts
+    assert len(campaign.items) == len(original_facts)
+    assert campaign.items[0].is_hero is True
+    assert campaign.builder_config_json["visual_density"] == "simple"
+    assert state.revision_count == 2
+
+
+@pytest.mark.asyncio
 async def test_edit_loop_remove_title_simplify_and_unknown_product(monkeypatch) -> None:
     campaign = _campaign()
     state = _state(campaign_id=campaign.id)
@@ -449,3 +541,89 @@ async def test_preview_reply_path_sends_png_and_preserves_active_campaign(tmp_pa
     assert client.photos == [(output, "Ilk taslak hazir. 'Daha sade yap' veya 'bir urunu buyut' diyebilirsiniz.")]
     assert state.campaign_id == campaign_id
     assert state.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_preview_export_quota_exceeded_notifies_user_without_raising(monkeypatch) -> None:
+    """Phase 29: create_export_job's 403 (monthly export limit) must reach the
+    customer as a concise Turkish message, not vanish into a silent failure."""
+    campaign_id = uuid4()
+    state = _state(campaign_id=campaign_id)
+    state.revision_count = 0
+    client = MessageClient()
+    session = SimpleNamespace(flush=AsyncMock())
+    monkeypatch.setattr(
+        service.campaign_service,
+        "create_export_job",
+        AsyncMock(side_effect=HTTPException(status_code=403, detail="The starter plan has reached its monthly export limit.")),
+    )
+
+    await service._render_and_send_flyer(
+        session,
+        state,
+        state.selected_market_id,
+        client,
+        acknowledgement="Guncellendi.",
+    )
+
+    assert client.messages == ["Bu ay icin export kotanız doldu. Plani yukseltin veya gelecek ay tekrar deneyin."]
+    assert state.state == "completed"
+    assert state.last_error is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_exports_quota_exceeded_returns_to_confirmation_state(monkeypatch) -> None:
+    campaign_id = uuid4()
+    state = _state(campaign_id=campaign_id, status="awaiting_confirmation")
+    client = MessageClient()
+    session = SimpleNamespace()
+    membership = SimpleNamespace(market_id=state.selected_market_id, market=SimpleNamespace(), role="market_staff")
+    campaign = SimpleNamespace(id=campaign_id, market_id=state.selected_market_id)
+    session.get = AsyncMock(return_value=campaign)
+    monkeypatch.setattr(service, "_selected_membership", AsyncMock(return_value=membership))
+    monkeypatch.setattr(service, "market_allows_mutations", lambda market: True)
+    monkeypatch.setattr(service, "_get_reusable_export_job", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        service.campaign_service,
+        "create_export_job",
+        AsyncMock(side_effect=HTTPException(status_code=403, detail="quota")),
+    )
+
+    await service._generate_exports(session, state, client)
+
+    assert state.state == "awaiting_confirmation"
+    assert state.export_delivery_started_at is None
+    assert "kotanız doldu" in client.messages[-1]
+
+
+@pytest.mark.asyncio
+async def test_process_update_notifies_user_on_unexpected_failure_and_reraises(monkeypatch) -> None:
+    """Phase 29: any unhandled exception in the Telegram flow must still leave
+    the customer with a concise message instead of total silence."""
+    update = SimpleNamespace(update_id=999, update_type="message", chat=SimpleNamespace(id=555))
+    client = MessageClient()
+    record = SimpleNamespace(status="processing", last_error=None, processed_at=None, attempt_count=1, telegram_user_id=1, chat_id=555)
+    session = SimpleNamespace(commit=AsyncMock())
+    monkeypatch.setattr(service, "_begin_update", AsyncMock(return_value=record))
+    monkeypatch.setattr(service, "_process_update_body", AsyncMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await service.process_update(session, update, client)
+
+    assert record.status == "failed"
+    assert client.messages == ["Bir sorun olustu. Lutfen birazdan tekrar deneyin."]
+
+
+@pytest.mark.asyncio
+async def test_process_update_failure_notification_never_masks_original_error(monkeypatch) -> None:
+    update = SimpleNamespace(update_id=1000, update_type="message", chat=SimpleNamespace(id=555))
+    record = SimpleNamespace(status="processing", last_error=None, processed_at=None, attempt_count=1, telegram_user_id=1, chat_id=555)
+    session = SimpleNamespace(commit=AsyncMock())
+    client = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("telegram unreachable")))
+    monkeypatch.setattr(service, "_begin_update", AsyncMock(return_value=record))
+    monkeypatch.setattr(service, "_process_update_body", AsyncMock(side_effect=ValueError("original bug")))
+
+    with pytest.raises(ValueError, match="original bug"):
+        await service.process_update(session, update, client)
+
+    assert record.status == "failed"

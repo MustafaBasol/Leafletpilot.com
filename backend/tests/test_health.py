@@ -1,9 +1,9 @@
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
+from app.api.routes import health as health_routes
 from app.core.config import Settings
 from app.main import app
-
 
 client = TestClient(app)
 
@@ -95,6 +95,61 @@ def test_health_response_exposes_no_secret_values() -> None:
     assert "JWT_SECRET_KEY" not in body
     assert "DATABASE_URL" not in body
     assert "change-this-development-secret" not in body
+
+
+def test_readiness_reports_ok_when_all_checks_pass(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+
+    response = client.get("/api/health/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["checks"]["database"]["ok"] is True
+
+
+def test_readiness_returns_503_and_names_the_failing_check(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": False, "detail": "Local storage path is not writable."})
+    monkeypatch.setattr(health_routes, "_check_telegram_config", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+
+    response = client.get("/api/health/readiness")
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "degraded"
+    assert body["checks"]["storage"]["ok"] is False
+
+
+def test_readiness_never_exposes_bot_token_or_webhook_secret(monkeypatch) -> None:
+    monkeypatch.setattr(health_routes.settings, "telegram_bot_enabled", True)
+    monkeypatch.setattr(health_routes.settings, "telegram_bot_token", "123456:super-secret-token")
+    monkeypatch.setattr(health_routes.settings, "telegram_webhook_secret", "s" * 40)
+    monkeypatch.setattr(health_routes.settings, "telegram_webhook_base_url", "https://api.example.com")
+    monkeypatch.setattr(health_routes, "_check_database", _ok_check)
+    monkeypatch.setattr(health_routes, "_check_storage", lambda: {"ok": True})
+    monkeypatch.setattr(health_routes, "_check_supermarket_templates", _ok_check)
+
+    response = client.get("/api/health/readiness")
+
+    assert "123456:super-secret-token" not in response.text
+    assert "s" * 40 not in response.text
+    body = response.json()
+    assert body["checks"]["telegram_config"] == {
+        "ok": True,
+        "enabled": True,
+        "bot_token_configured": True,
+        "webhook_secret_configured": True,
+        "webhook_base_url_configured": True,
+    }
+
+
+async def _ok_check() -> dict[str, object]:
+    return {"ok": True}
 
 
 def test_production_rejects_debug_true(monkeypatch) -> None:

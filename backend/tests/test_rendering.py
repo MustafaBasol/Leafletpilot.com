@@ -1,16 +1,22 @@
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import app.models  # noqa: F401
 from app.core.config import settings
-from app.models import Campaign
+from app.core.database import Base
+from app.models import Campaign, CampaignFile, CampaignItem, ExportJob, Market, Template
 from app.services.rendering import (
     MISSING_CHROMIUM_MESSAGE,
     build_export_file_name,
     build_export_storage_key,
-    render_error_message,
     normalize_requested_formats,
+    render_campaign_export,
+    render_error_message,
     storage_path_for_key,
     validate_rendered_file,
 )
@@ -91,3 +97,92 @@ def test_validate_rendered_file_requires_existing_non_empty_file(tmp_path) -> No
         validate_rendered_file(empty_path, "pdf")
 
     validate_rendered_file(ready_path, "pdf")
+
+
+@pytest.mark.asyncio
+async def test_render_campaign_export_marks_job_failed_without_raising_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    """Phase 29: a Chromium/render failure must leave a consistent ExportJob
+    status ('failed', no result files) and never expose a raw traceback to the
+    caller - render_campaign_export swallows the exception by design so the
+    Telegram layer can report a concise Turkish message instead."""
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed rendering test skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    market_id = uuid4()
+    campaign_id = uuid4()
+    export_job_id = uuid4()
+    async with session_factory() as session:
+        market = Market(id=market_id, name="Render Failure Market", slug=f"render-fail-{market_id}")
+        template = Template(
+            name="Supermarket Promo 4",
+            slug="supermarket-promo-4",
+            template_type="supermarket",
+            is_global=True,
+            is_active=True,
+            status="published",
+            visibility="shared",
+            config_json={"layout": "supermarket-promo-4"},
+        )
+        session.add_all([market, template])
+        await session.flush()
+        campaign = Campaign(
+            id=campaign_id,
+            market_id=market_id,
+            title="Render Failure Campaign",
+            template_id=template.id,
+        )
+        campaign.items = [
+            CampaignItem(
+                id=uuid4(),
+                market_id=market_id,
+                raw_line="Su 5L - 8.90",
+                incoming_name="Su 5L",
+                price=Decimal("8.90"),
+                sort_order=0,
+                match_status="not_found",
+            )
+        ]
+        export_job = ExportJob(
+            id=export_job_id,
+            campaign_id=campaign_id,
+            market_id=market_id,
+            job_type="final_export",
+            status="queued",
+            requested_formats=["pdf", "png"],
+        )
+        session.add_all([campaign, export_job])
+        await session.commit()
+
+    async def failing_render_html_to_pdf(html, output_path):
+        raise RuntimeError("Executable doesn't exist at /fake/chromium")
+
+    monkeypatch.setattr("app.services.rendering.render_html_to_pdf", failing_render_html_to_pdf)
+
+    async with session_factory() as session:
+        result = await render_campaign_export(
+            session,
+            market_id=market_id,
+            campaign_id=campaign_id,
+            requested_formats=["pdf", "png"],
+            export_job_id=export_job_id,
+        )
+
+        assert result == []
+        refreshed_job = await session.get(ExportJob, export_job_id)
+        assert refreshed_job.status == "failed"
+        assert refreshed_job.result_file_ids == []
+        assert refreshed_job.error_message == MISSING_CHROMIUM_MESSAGE
+        assert "Traceback" not in refreshed_job.error_message
+        files = (
+            await session.scalars(select(CampaignFile).where(CampaignFile.campaign_id == campaign_id))
+        ).all()
+        assert list(files) == []
+
+    await engine.dispose()

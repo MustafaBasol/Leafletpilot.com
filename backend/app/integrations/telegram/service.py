@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,14 +73,23 @@ async def process_update(
         await _process_update_body(session, update, client)
     except Exception as exc:
         logger.exception(
-            "Telegram update failed. update_id=%s update_type=%s",
+            "Telegram update failed. update_id=%s update_type=%s attempt=%s",
             update.update_id,
             update.update_type,
+            record.attempt_count,
+            extra={
+                "update_id": update.update_id,
+                "update_type": update.update_type,
+                "telegram_user_id": record.telegram_user_id,
+                "chat_id": record.chat_id,
+                "attempt_count": record.attempt_count,
+            },
         )
         record.status = "failed"
         record.last_error = _safe_error(exc)
         record.processed_at = utc_now()
         await session.commit()
+        await _notify_unexpected_failure(update, client)
         raise
 
     record.status = "completed"
@@ -352,6 +362,21 @@ async def _create_and_send_flyer(
     state.export_job_id = None
     state.state = TelegramState.GENERATING_EXPORTS.value
     await session.commit()
+    logger.info(
+        "Telegram campaign created. campaign_id=%s market_id=%s telegram_user_id=%s product_count=%s matched_count=%s",
+        result.campaign_id,
+        membership.market_id,
+        state.telegram_user_id,
+        result.product_count,
+        result.matched_count,
+        extra={
+            "campaign_id": str(result.campaign_id),
+            "market_id": str(membership.market_id),
+            "telegram_user_id": state.telegram_user_id,
+            "product_count": result.product_count,
+            "matched_count": result.matched_count,
+        },
+    )
 
     image_resolution = await resolve_campaign_product_images(
         session,
@@ -539,14 +564,20 @@ async def _render_and_send_flyer(
         created_job.requested_by_user_id = state.user_id
         state.export_job_id = created_job.id
 
-    job = await campaign_service.create_export_job(
-        session,
-        state.campaign_id,
-        ExportJobCreate(job_type=job_type, requested_formats=[file_format]),
-        market_id,
-        commit=False,
-        after_flush=remember_export_job,
-    )
+    try:
+        job = await campaign_service.create_export_job(
+            session,
+            state.campaign_id,
+            ExportJobCreate(job_type=job_type, requested_formats=[file_format]),
+            market_id,
+            commit=False,
+            after_flush=remember_export_job,
+        )
+    except HTTPException as exc:
+        state.state = TelegramState.COMPLETED.value
+        state.last_error = _safe_error(exc)
+        await client.send_message(_chat_id(state), _export_job_error_message(exc))
+        return
     files = await _ready_export_files(session, job.result_file_ids or [])
     rendered = _find_file(files, file_format)
     if rendered is None:
@@ -737,14 +768,21 @@ async def _generate_exports(
             created_job.requested_by_user_id = state.user_id
             state.export_job_id = created_job.id
 
-        job = await campaign_service.create_export_job(
-            session,
-            state.campaign_id,
-            ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
-            membership.market_id,
-            commit=False,
-            after_flush=remember_export_job,
-        )
+        try:
+            job = await campaign_service.create_export_job(
+                session,
+                state.campaign_id,
+                ExportJobCreate(job_type="final_export", requested_formats=["pdf", "png"]),
+                membership.market_id,
+                commit=False,
+                after_flush=remember_export_job,
+            )
+        except HTTPException as exc:
+            state.state = TelegramState.AWAITING_CONFIRMATION.value
+            state.export_delivery_started_at = None
+            state.last_error = _safe_error(exc)
+            await client.send_message(chat_id, _export_job_error_message(exc))
+            return
     elif state.export_files_sent_at is not None:
         state.state = TelegramState.COMPLETED.value
         await client.send_message(chat_id, "Bu akis zaten tamamlandi; dosyalar tekrar gonderilmeyecek.")
@@ -996,5 +1034,25 @@ def _chat_id(state: TelegramConversationState) -> int:
     return state.chat_id
 
 
+async def _notify_unexpected_failure(update: TelegramUpdatePayload, client: TelegramClientProtocol) -> None:
+    """Best-effort notification so an unhandled bug/infra error never leaves the
+    customer with total silence. Never raises: a failed notification must not
+    mask the original exception being re-raised by the caller."""
+    if update.chat is None:
+        return
+    try:
+        await client.send_message(update.chat.id, "Bir sorun olustu. Lutfen birazdan tekrar deneyin.")
+    except Exception:
+        logger.warning("Failed to notify Telegram user of an unexpected error. update_id=%s", update.update_id)
+
+
 def _safe_error(exc: Exception) -> str:
     return (str(exc) or type(exc).__name__)[:1000]
+
+
+def _export_job_error_message(exc: HTTPException) -> str:
+    if exc.status_code == 403:
+        return "Bu ay icin export kotanız doldu. Plani yukseltin veya gelecek ay tekrar deneyin."
+    if exc.status_code == 404:
+        return "Kampanya bulunamadi. /new ile yeniden baslatin."
+    return "Brosur su anda olusturulamadi. Lutfen tekrar deneyin."
