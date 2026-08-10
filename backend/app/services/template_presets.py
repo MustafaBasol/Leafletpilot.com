@@ -65,6 +65,41 @@ _COLOR_KEYS = {
     "brand_label_background", "brand_label_color",
 }
 
+_MIN_TEXT_CONTRAST_RATIO = 4.5
+
+
+def _srgb_channel_to_linear(channel: int) -> float:
+    value = channel / 255.0
+    return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(hex_color: str) -> float:
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    lr, lg, lb = (_srgb_channel_to_linear(c) for c in (r, g, b))
+    return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb
+
+
+def contrast_ratio(hex_a: str, hex_b: str) -> float:
+    """WCAG relative-luminance contrast ratio between two `#rrggbb` colors."""
+    la, lb = _relative_luminance(hex_a), _relative_luminance(hex_b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def readable_text_color(background_hex: str, requested_hex: str, *, minimum: float = _MIN_TEXT_CONTRAST_RATIO) -> str:
+    """Keep `requested_hex` if it reads clearly on `background_hex`, else fall back to black/white.
+
+    Product-name/unit text is rendered in a single market-configurable color
+    with no guarantee it was chosen against the background it actually ends
+    up on (Phase 31: production markets left at defaults still hit this via
+    composition-specific overrides bleeding into unrelated layouts). Rather
+    than trust the configured value blindly, verify it here and substitute
+    whichever of pure black/white contrasts better with the background.
+    """
+    if contrast_ratio(background_hex, requested_hex) >= minimum:
+        return requested_hex
+    return "#000000" if contrast_ratio(background_hex, "#000000") >= contrast_ratio(background_hex, "#ffffff") else "#ffffff"
+
 
 def supermarket_visual_config(value: dict[str, Any] | None) -> dict[str, Any]:
     """Return safe semantic tokens, preserving legacy generic color controls."""
@@ -94,6 +129,7 @@ def supermarket_visual_config(value: dict[str, Any] | None) -> dict[str, Any]:
     ):
         if key in source:
             resolved[key] = bool(source[key])
+    resolved["product_title_color"] = readable_text_color(resolved["card_background"], resolved["product_title_color"])
     return resolved
 
 

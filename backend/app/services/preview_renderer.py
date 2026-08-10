@@ -179,7 +179,7 @@ def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetim
             f':root{{--promo-start:{visual["background_start"]};--promo-end:{visual["background_end"]};'
             f'--card-bg:{visual["card_background"]};--card-border:{visual["card_border_color"]};'
             f'--price-panel:{visual["price_panel_background"]};--price-color:{visual["price_color"]};'
-            f'--label-bg:{visual["brand_label_background"]}}}'
+            f'--label-bg:{visual["brand_label_background"]};--product-title:{visual["product_title_color"]}}}'
         )
         html = html.replace("</style></head>", f"</style><style>{variables}{SUPERMARKET_ART_DIRECTION_CSS}</style></head>", 1)
         title_visible = str(visual["show_header_title"]).lower()
@@ -783,22 +783,36 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 
 .small-layout-balanced-trio .product-grid{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:1fr;gap:26px;padding:28px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
 .small-layout-balanced-trio .product-card{grid-column:auto!important;grid-row:1!important;height:100%;padding:22px;border-radius:20px;outline:0!important;transform:none!important}
-.small-layout-balanced-trio .promo-card-image{height:720px!important;flex-basis:720px!important;margin-bottom:18px}
-.small-layout-balanced-trio .price-panel{width:100%!important;min-height:125px;padding:12px 14px}
+.small-layout-balanced-trio .promo-card-image{height:900px!important;flex-basis:900px!important;margin-bottom:20px}
+.small-layout-balanced-trio .price-panel{width:100%!important;min-height:170px;padding:14px 16px}
 .small-layout-balanced-trio .price{font-size:62px!important}
-.small-layout-balanced-trio .product-name{font-size:29px!important;line-height:1.04}
+.small-layout-balanced-trio .product-name{font-size:33px!important;line-height:1.04}
 
 .small-layout-hero-trio .product-grid{grid-template-columns:minmax(0,7fr) minmax(0,5fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:28px;padding:24px;background:color-mix(in srgb,var(--card-bg,#fff8e7) 94%,#fff);border-radius:22px}
 .small-layout-hero-trio .product-card{grid-column:2!important;grid-row:auto!important;padding:18px;border-radius:18px}
 .small-layout-hero-trio .product-card:first-child{grid-column:1!important;grid-row:1/3!important;padding:30px}
-.small-layout-hero-trio .product-card:first-child .promo-card-image{height:850px!important;flex-basis:850px!important}
+.small-layout-hero-trio .product-card:first-child .promo-card-image{height:950px!important;flex-basis:950px!important;margin-bottom:10px}
+.small-layout-hero-trio .product-card:first-child .price-panel{min-height:130px}
 .small-layout-hero-trio .product-card:first-child .price{font-size:82px!important}
-.small-layout-hero-trio .product-card:not(:first-child) .promo-card-image{height:370px!important;flex-basis:370px!important}
+.small-layout-hero-trio .product-card:first-child .product-name{font-size:30px!important;line-height:1.03}
+.small-layout-hero-trio .product-card:not(:first-child) .promo-card-image{height:430px!important;flex-basis:430px!important}
 .small-layout-hero-trio .product-card:not(:first-child) .price{font-size:48px}
+.small-layout-hero-trio .product-card:not(:first-child) .product-name{font-size:26px!important;line-height:1.04}
 
 .small-layout-large-quad .product-card[data-merchandising-role="featured"] .promo-card-image{height:970px;flex-basis:970px}
 .small-layout-large-quad .product-card[data-merchandising-role="featured"] .price{font-size:86px}
 .small-layout-large-quad .product-card[data-merchandising-role="featured"] .product-name{font-size:36px}
 .small-layout-large-quad .product-card:not([data-merchandising-role="featured"]) .promo-card-image{min-height:250px;flex-basis:250px}
 .small-layout-large-quad .product-card:not([data-merchandising-role="featured"]) .price{font-size:50px}
+
+/* Phase 31: composition-hero-offers' white product-name/unit text (designed for its
+   dark hero-card backdrop) otherwise leaks into these small-layout overrides, whose
+   card surfaces are restored to a light card-bg - reset text back to the contrast-safe
+   token so names stay legible on the light surface these layouts actually render. */
+.small-layout-single-poster .product-name,.small-layout-single-poster .product-unit,
+.small-layout-split-pair .product-name,.small-layout-split-pair .product-unit,
+.small-layout-balanced-trio .product-name,.small-layout-balanced-trio .product-unit,
+.small-layout-hero-trio .product-name,.small-layout-hero-trio .product-unit,
+.small-layout-large-quad .product-name,.small-layout-large-quad .product-unit
+{color:var(--product-title,#2b1a12)!important;text-shadow:none!important}
 """

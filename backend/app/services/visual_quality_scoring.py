@@ -23,6 +23,15 @@ SCORE_ISSUE_THRESHOLD = 65.0
 _PAGE_FILL_FLOOR = 0.30
 _PAGE_FILL_TARGET = 0.85
 _WHITESPACE_PENALTY_SCALE = 230.0
+# Card containers are laid out with height:100% by design (CSS grid rows
+# share the available height evenly), so page_fill/whitespace - which both
+# measure the *card container* box - read near-perfect even when a card's
+# actual content (image/price/name) only fills a fraction of that box
+# (Phase 31: confirmed root cause of the "large unused whitespace" production
+# gap slipping past the gate). content_fill_score measures the worst-case
+# card's real content bottom against its own container height instead.
+_CONTENT_FILL_FLOOR = 0.35
+_CONTENT_FILL_TARGET = 0.80
 _CARD_BALANCE_BEST_RATIO = 1.0
 _CARD_BALANCE_WORST_RATIO = 3.0
 _HERO_AREA_FLOOR, _HERO_AREA_TARGET = 1.0, 2.5
@@ -35,15 +44,27 @@ _IMAGE_UNKNOWN_SCORE = 70.0
 _PRICE_CLIPPED_SCORE_CAP = 20.0
 
 _BASE_WEIGHTS = {
-    "page_fill_score": 0.15,
-    "whitespace_score": 0.15,
-    "card_balance_score": 0.15,
-    "hero_dominance_score": 0.15,
-    "price_legibility_score": 0.15,
-    "image_coverage_score": 0.10,
-    "collision_score": 0.10,
+    "page_fill_score": 0.12,
+    "whitespace_score": 0.12,
+    "content_fill_score": 0.14,
+    "card_balance_score": 0.12,
+    "hero_dominance_score": 0.14,
+    "price_legibility_score": 0.14,
+    "image_coverage_score": 0.08,
+    "collision_score": 0.09,
     "overflow_score": 0.05,
 }
+
+# A layout can average out to a passing weighted score while one truly
+# critical dimension has collapsed (e.g. severe under-fill masked by perfect
+# collision/overflow scores - the exact Phase 31 production gap). These
+# dimensions answer "did the layout actually work", as opposed to the softer
+# aesthetic dimensions (card_balance, hero_dominance, image_coverage); if any
+# of them falls below the floor, cap the overall score below QUALITY_THRESHOLD
+# (72.0 in visual_quality_gate.py) regardless of how well the others scored.
+_CRITICAL_DIMENSIONS = ("page_fill_score", "whitespace_score", "content_fill_score", "price_legibility_score")
+_CRITICAL_FLOOR = 20.0
+_CRITICAL_VETO_CAP = 55.0
 
 _METRICS_JS = """() => {
   const rect = (el) => { const r = el.getBoundingClientRect(); return {left: r.left, top: r.top, right: r.right, bottom: r.bottom}; };
@@ -96,6 +117,16 @@ _METRICS_JS = """() => {
 
   const fallbackCount = document.querySelectorAll('.image-placeholder').length;
 
+  const cardContentFillRatios = cards.map((card, i) => {
+    const box = cardBoxes[i];
+    const cardHeight = box.bottom - box.top;
+    if (cardHeight <= 0) return null;
+    const contentEls = [stages[i], panels[i], card.querySelector('.brand-label'), names[i], card.querySelector('.product-unit')].filter(Boolean);
+    if (!contentEls.length) return null;
+    const contentBottom = Math.max(...contentEls.map((el) => rect(el).bottom));
+    return Math.max(0, Math.min(1, (contentBottom - box.top) / cardHeight));
+  }).filter((v) => v !== null);
+
   const noStageTextCollision = cards.every((card, i) => {
     const stage = stages[i], name = names[i], panel = panels[i];
     if (!stage || !name || !panel) return true;
@@ -138,7 +169,7 @@ _METRICS_JS = """() => {
     maxSupportImageArea: supportImageAreas.length ? Math.max(...supportImageAreas) : null,
     featuredPriceSize: featuredPrice ? parseFloat(getComputedStyle(featuredPrice).fontSize) : null,
     maxSupportPriceSize: supportPriceSizes.length ? Math.max(...supportPriceSizes) : null,
-    priceWidthRatios, priceClipped, imageAreaRatios, fallbackCount,
+    priceWidthRatios, priceClipped, imageAreaRatios, fallbackCount, cardContentFillRatios,
   };
 }"""
 
@@ -172,6 +203,7 @@ class LayoutMetrics:
     price_clipped: bool = False
     image_area_ratios: list[float] = field(default_factory=list)
     fallback_count: int = 0
+    card_content_fill_ratios: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -189,6 +221,7 @@ class QualityScore:
     overall_score: float
     page_fill_score: float
     whitespace_score: float
+    content_fill_score: float
     card_balance_score: float
     hero_dominance_score: float
     hero_dominance_applicable: bool
@@ -240,6 +273,7 @@ def evaluate_layout_metrics_sync(page: object) -> LayoutMetrics:
         price_clipped=raw["priceClipped"],
         image_area_ratios=list(raw["imageAreaRatios"]),
         fallback_count=raw["fallbackCount"],
+        card_content_fill_ratios=list(raw["cardContentFillRatios"]),
     )
 
 
@@ -262,6 +296,13 @@ def _page_fill_score(metrics: LayoutMetrics) -> float:
 
 def _whitespace_score(metrics: LayoutMetrics) -> float:
     return _clamp(100.0 - metrics.bottom_gap_ratio * _WHITESPACE_PENALTY_SCALE)
+
+
+def _content_fill_score(metrics: LayoutMetrics) -> float:
+    if not metrics.card_content_fill_ratios:
+        return 100.0
+    worst_ratio = min(metrics.card_content_fill_ratios)
+    return _linear_score(worst_ratio, _CONTENT_FILL_FLOOR, _CONTENT_FILL_TARGET)
 
 
 def _card_balance_score(metrics: LayoutMetrics) -> float:
@@ -315,6 +356,7 @@ def score_from_metrics(metrics: LayoutMetrics, *, context: ScoreContext) -> Qual
 
     page_fill_score = _page_fill_score(metrics)
     whitespace_score = _whitespace_score(metrics)
+    content_fill_score = _content_fill_score(metrics)
     card_balance_score = _card_balance_score(metrics)
     hero_dominance_score, hero_applicable = _hero_dominance(metrics, context)
     price_legibility_score = _price_legibility_score(metrics)
@@ -325,6 +367,7 @@ def score_from_metrics(metrics: LayoutMetrics, *, context: ScoreContext) -> Qual
     scores = {
         "page_fill_score": page_fill_score,
         "whitespace_score": whitespace_score,
+        "content_fill_score": content_fill_score,
         "card_balance_score": card_balance_score,
         "price_legibility_score": price_legibility_score,
         "image_coverage_score": image_coverage_score,
@@ -346,6 +389,8 @@ def score_from_metrics(metrics: LayoutMetrics, *, context: ScoreContext) -> Qual
         issues.append("page_fill_low")
     if whitespace_score < SCORE_ISSUE_THRESHOLD:
         issues.append("whitespace_excessive")
+    if content_fill_score < SCORE_ISSUE_THRESHOLD:
+        issues.append("content_fill_low")
     if card_balance_score < SCORE_ISSUE_THRESHOLD:
         issues.append("card_balance_uneven")
     if hero_applicable and hero_dominance_score < SCORE_ISSUE_THRESHOLD:
@@ -363,10 +408,16 @@ def score_from_metrics(metrics: LayoutMetrics, *, context: ScoreContext) -> Qual
     if not overflow_ok:
         issues.append("overflow_detected")
 
+    critical_min = min(scores[key] for key in _CRITICAL_DIMENSIONS)
+    if critical_min < _CRITICAL_FLOOR:
+        overall_score = min(overall_score, _CRITICAL_VETO_CAP)
+        issues.append("critical_dimension_floor_veto")
+
     return QualityScore(
         overall_score=overall_score,
         page_fill_score=page_fill_score,
         whitespace_score=whitespace_score,
+        content_fill_score=content_fill_score,
         card_balance_score=card_balance_score,
         hero_dominance_score=hero_dominance_score,
         hero_dominance_applicable=hero_applicable,

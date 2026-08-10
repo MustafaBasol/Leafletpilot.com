@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -649,6 +650,61 @@ def _measure_page_fill(html: str) -> dict:
             browser.close()
 
 
+def _measure_text_contrast(html: str) -> list[float]:
+    """Per-card WCAG contrast ratio between .product-name's painted color and
+
+    a guaranteed-empty background sample from its own card (top-left padding
+    corner, before any content starts) - Phase 31 regression coverage for the
+    white-on-cream text bug (composition-hero-offers' hero-card text color
+    leaking into the small-layout-* geometry, see preview_renderer.py).
+    """
+    from playwright.sync_api import sync_playwright
+
+    from app.services.template_presets import contrast_ratio
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1240, "height": 1754})
+            page.set_content(html, wait_until="networkidle")
+            samples = page.evaluate(
+                """() => {
+                  const toHex = (rgbString) => {
+                    const parts = rgbString.match(/\\d+/g).map(Number);
+                    return '#' + parts.slice(0, 3).map((c) => c.toString(16).padStart(2, '0')).join('');
+                  };
+                  return [...document.querySelectorAll('.product-card')].map((card) => {
+                    const name = card.querySelector('.product-name');
+                    const cardBox = card.getBoundingClientRect();
+                    return {
+                      textColor: name ? toHex(getComputedStyle(name).color) : null,
+                      sampleX: Math.round(cardBox.left + 8),
+                      sampleY: Math.round(cardBox.top + 8),
+                    };
+                  });
+                }"""
+            )
+            screenshot = Image.open(io.BytesIO(page.screenshot())).convert("RGB")
+            ratios = []
+            for sample in samples:
+                if sample["textColor"] is None:
+                    continue
+                bg_rgb = screenshot.getpixel((sample["sampleX"], sample["sampleY"]))
+                bg_hex = "#" + "".join(f"{channel:02x}" for channel in bg_rgb)
+                ratios.append(contrast_ratio(bg_hex, sample["textColor"]))
+            return ratios
+        finally:
+            browser.close()
+
+
+def _extract_product_names(html: str) -> list[str]:
+    return re.findall(r'<h2 class="product-name"[^>]*>([^<]*)</h2>', html)
+
+
+def _extract_price_majors(html: str) -> list[str]:
+    return re.findall(r'<span class="price-major">([^<]*)</span>', html)
+
+
 def _write_case_report(artifact_root: Path, name: str, payload: dict, result) -> None:
     artifact_root.mkdir(parents=True, exist_ok=True)
     report = {
@@ -672,6 +728,22 @@ def test_quality_gate_case1_balanced_three_products_meets_threshold(tmp_path: Pa
     assert result.initial_score.overall_score >= QUALITY_THRESHOLD
     assert result.applied is False
     assert 'data-refinement-strategy="balanced-trio"' in result.html
+
+    # Phase 31: default must use substantially more of the page - a severe
+    # page-fill/content-fill failure must not hide behind a passing weighted score.
+    assert result.initial_score.content_fill_score >= 60.0
+    assert "content_fill_low" not in result.initial_score.issues
+    measurements = _measure_page_fill(result.html)
+    assert measurements["usedAreaRatio"] >= 0.68
+    assert measurements["reachesPageBottom"]
+
+    # Phase 31: product names must stay readable against their real background,
+    # not white-on-cream (composition-hero-offers text color leaking into
+    # balanced-trio's light card surface).
+    contrasts = _measure_text_contrast(result.html)
+    assert len(contrasts) == 3
+    assert all(ratio >= 4.5 for ratio in contrasts)
+
     _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case1", payload, result)
 
 
@@ -687,6 +759,19 @@ def test_quality_gate_case2_hero_product_is_measurably_dominant(tmp_path: Path) 
     # Hero targeting is untouched by the gate - same item, same flag, no reorder.
     assert payload["items"][0]["id"] == "1"
     assert payload["items"][0]["is_hero"] is True
+
+    # Phase 31: hero must dominate without leaving giant purposeless blank regions.
+    assert result.initial_score.content_fill_score >= 60.0
+    assert "content_fill_low" not in result.initial_score.issues
+    measurements = _measure_page_fill(result.html)
+    assert measurements["usedAreaRatio"] >= 0.68
+    assert measurements["reachesPageBottom"]
+
+    # Phase 31: hero and support product names must both stay readable.
+    contrasts = _measure_text_contrast(result.html)
+    assert len(contrasts) == 3
+    assert all(ratio >= 4.5 for ratio in contrasts)
+
     _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case2", payload, result)
 
 
@@ -709,8 +794,38 @@ def test_quality_gate_case3_simple_mode_produces_intentional_composition_not_leg
     measurements = _measure_page_fill(result.html)
     assert measurements["usedAreaRatio"] >= 0.68
     assert measurements["reachesPageBottom"]
+    assert result.initial_score.content_fill_score >= 60.0
+    assert "content_fill_low" not in result.initial_score.issues
     # The CSS fix alone should already clear the quality threshold - the gate
     # is a safety net here, not the primary fix.
     assert result.initial_score.overall_score >= QUALITY_THRESHOLD
     assert result.applied is False
+
+    contrasts = _measure_text_contrast(result.html)
+    assert len(contrasts) == 3
+    assert all(ratio >= 4.5 for ratio in contrasts)
+
     _write_case_report(Path(os.environ.get("FLYER_VISUAL_ARTIFACT_DIR", tmp_path / "artifacts")), "case3", payload, result)
+
+
+def test_phase31_facts_and_image_association_preserved_across_default_hero_simple() -> None:
+    """Conversational edits (hero, then "daha sade yap") must reuse the same
+
+    campaign facts: identical prices/names/order, and the same safe
+    "no usable image" fallback for every item (Phase 31 Gap A - none of the
+    fixture products have catalog images, so all three must stay on the
+    documented safe fallback in every mode, never a fabricated/mismatched image).
+    """
+    default_html = render_render_payload_html(_three_product_payload(), generated_at=FIXED_TIME)
+    hero_html = render_render_payload_html(_three_product_payload(hero=True), generated_at=FIXED_TIME)
+    simple_html = render_render_payload_html(_three_product_payload(visual_density="simple"), generated_at=FIXED_TIME)
+
+    expected_names = ["Coca Cola 1L", "Eti Burcak", "Sutas Yogurt"]
+    expected_prices = ["29", "44", "74"]
+    for html in (default_html, hero_html, simple_html):
+        assert _extract_product_names(html) == expected_names
+        assert _extract_price_majors(html) == expected_prices
+        # Match only the rendered element's attribute, not the (also-present)
+        # image-coverage-image-poor CSS selector of the same name.
+        assert len(re.findall(r'<div class="promo-card-image" data-image-stage="fallback">', html)) == 3
+        assert html.count('<div class="image-placeholder">') == 3

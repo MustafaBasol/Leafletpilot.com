@@ -72,6 +72,7 @@ def _score(**overrides) -> QualityScore:
         "overall_score": 80.0,
         "page_fill_score": 80.0,
         "whitespace_score": 80.0,
+        "content_fill_score": 80.0,
         "card_balance_score": 80.0,
         "hero_dominance_score": 100.0,
         "hero_dominance_applicable": False,

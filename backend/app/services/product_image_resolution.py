@@ -241,6 +241,17 @@ async def resolve_campaign_product_images(
         result = await active_resolver.resolve(context)
         _apply_resolution(item, result)
         results.append(result)
+        logger.info(
+            "product_image_resolution campaign_id=%s identity=%s provider=%s source=%s "
+            "confidence=%s decision=%s reason=%s",
+            campaign_id,
+            identity.normalized_full_name,
+            result.provider,
+            result.source,
+            result.confidence,
+            "resolved" if result.resolved else "fallback",
+            result.match_reason,
+        )
         if not result.resolved:
             unresolved_names.append(item.display_name or item.incoming_name)
 
