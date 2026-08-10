@@ -222,7 +222,7 @@ def _choose_refinement(score: QualityScore, payload: dict) -> tuple[dict, str] |
         actions.append("price_prominence_high")
 
     if (
-        (issues & {"page_fill_low", "whitespace_excessive"})
+        (issues & {"page_fill_low", "whitespace_excessive", "content_fill_low"})
         and score.overflow_ok
         and score.collision_ok
         and FILL_BOOST_CONFIG_KEY not in template_config
@@ -253,6 +253,24 @@ def _pick_winner(initial: QualityScore, refined: QualityScore | None) -> Literal
     return "initial"
 
 
+def _score_breakdown(score: QualityScore | None) -> dict[str, object] | None:
+    if score is None:
+        return None
+    return {
+        "overall_score": score.overall_score,
+        "page_fill": score.page_fill_score,
+        "whitespace": score.whitespace_score,
+        "content_fill": score.content_fill_score,
+        "card_balance": score.card_balance_score,
+        "hero_dominance": score.hero_dominance_score if score.hero_dominance_applicable else None,
+        "price_legibility": score.price_legibility_score,
+        "image_coverage": score.image_coverage_score,
+        "collision_ok": score.collision_ok,
+        "overflow_ok": score.overflow_ok,
+        "issues": list(score.issues),
+    }
+
+
 def _log_result(market_id: UUID, campaign_id: UUID, export_job_id: UUID, result: QualityGateResult, *, winner: str) -> None:
     logger.info(
         "Visual quality gate evaluated campaign render.",
@@ -260,10 +278,9 @@ def _log_result(market_id: UUID, campaign_id: UUID, export_job_id: UUID, result:
             "market_id": str(market_id),
             "campaign_id": str(campaign_id),
             "export_job_id": str(export_job_id),
-            "initial_overall_score": result.initial_score.overall_score if result.initial_score else None,
-            "initial_issues": list(result.initial_score.issues) if result.initial_score else [],
+            "initial_score": _score_breakdown(result.initial_score),
             "refinement_action": result.refinement_action,
-            "refined_overall_score": result.refined_score.overall_score if result.refined_score else None,
+            "refined_score": _score_breakdown(result.refined_score),
             "winner": winner,
             "applied": result.applied,
         },
