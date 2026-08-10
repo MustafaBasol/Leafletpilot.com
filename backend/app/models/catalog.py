@@ -168,7 +168,7 @@ class ProductImage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "product_images"
     __table_args__ = (
         CheckConstraint(
-            "quality_status in ('excellent', 'good', 'needs_review', 'missing')",
+            "quality_status in ('excellent', 'good', 'needs_review', 'missing', 'rejected')",
             name="ck_product_images_quality_status",
         ),
         Index("ix_product_images_product_id", "product_id"),

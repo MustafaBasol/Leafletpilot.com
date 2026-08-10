@@ -103,3 +103,12 @@ class PlatformProductRead(BaseModel):
     aliases: list[dict] = Field(default_factory=list)
     images: list[dict] = Field(default_factory=list)
 
+
+class PlatformImageIdsPayload(BaseModel):
+    image_ids: list[UUID] = Field(min_length=1, max_length=200)
+
+
+class PlatformBulkImageResolution(BaseModel):
+    row_index: int
+    product_id: UUID
+
