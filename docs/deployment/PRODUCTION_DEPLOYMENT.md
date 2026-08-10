@@ -250,8 +250,11 @@ explicit migration and backup plan.
 5. Check Alembic heads.
 6. Run `alembic upgrade head`.
 7. Recreate backend and frontend.
-8. Check `/api/health` and `/api/health/db`.
-9. Log in, call the API, generate and download a PDF/PNG.
+8. Check `/api/health`, `/api/health/db`, and `/api/health/readiness`.
+9. Log in, call the API, generate and download a PDF/PNG. If this deploy
+   touches the Telegram workflow, image resolution, or the rendering/quality
+   gate pipeline, run the full
+   [Phase 29 Production Smoke Test](PHASE_29_PRODUCTION_SMOKE.md) instead.
 10. Retain the previous image tag for application rollback.
 
 Application images may be rolled back. Database rollback is not automatically
