@@ -333,11 +333,7 @@ export function Landing() {
     <div className="landing">
       <header className={`landing-header${scrolled ? " is-scrolled" : ""}`}>
         <a className="brand" href="#/">
-          <span className="brand-mark">LP</span>
-          <span>
-            <strong>LeafletPilot</strong>
-            <small>Broşür Otomasyonu</small>
-          </span>
+          <img className="brand-logo" src="/brand/wordmark-dark.png" alt="LeafletPilot" width="172" height="30" />
         </a>
         <nav className="landing-nav" aria-label="Sayfa içi gezinme">
           <a href="#nasil-calisir">Nasıl Çalışır</a>
@@ -489,11 +485,7 @@ export function Landing() {
 
       <footer className="landing-footer">
         <a className="brand" href="#/">
-          <span className="brand-mark">LP</span>
-          <span>
-            <strong>LeafletPilot</strong>
-            <small>Broşür Otomasyonu</small>
-          </span>
+          <img className="brand-logo" src="/brand/wordmark-dark.png" alt="LeafletPilot" width="150" height="26" />
         </a>
         <p>Yerel marketler için haftalık kampanya broşürü üretim sistemi.</p>
         <small>© {new Date().getFullYear()} LeafletPilot · iletisim@leafletpilot.com</small>

@@ -43,11 +43,7 @@ export function Start() {
   return (
     <main className="public-page">
       <a className="brand public-brand" href="#/">
-        <span className="brand-mark">LP</span>
-        <span>
-          <strong>LeafletPilot</strong>
-          <small>Ücretsiz deneme başvurusu</small>
-        </span>
+        <img className="brand-logo" src="/brand/wordmark-dark.png" alt="LeafletPilot" width="172" height="30" />
       </a>
       <section className="public-form-shell">
         <div className="public-copy">

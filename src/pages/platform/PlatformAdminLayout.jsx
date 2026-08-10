@@ -7,7 +7,7 @@ export function PlatformAdminLayout({ children, onLogout }) {
     <div className="platform-shell">
       <aside className="platform-sidebar">
         <a className="brand" href="#/platform">
-          <span className="brand-mark">LP</span>
+          <img className="brand-mark" src="/brand/mark-white.png" alt="LeafletPilot" width="40" height="40" />
           <span>
             <strong>Platform</strong>
             <small>{admin?.full_name || "Admin"}</small>

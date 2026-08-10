@@ -29,11 +29,7 @@ export function Login({ onLogin, initialError = "" }) {
     <main className="login-shell">
       <section className="login-copy">
         <a className="brand login-brand" href="#/">
-          <span className="brand-mark">LP</span>
-          <span>
-            <strong>LeafletPilot</strong>
-            <small>Broşür Otomasyonu</small>
-          </span>
+          <img className="brand-logo" src="/brand/wordmark-light.png" alt="LeafletPilot" width="224" height="40" />
         </a>
         <h1>Kampanya broşürlerinizi dakikalar içinde hazırlayın</h1>
         <p>Ürün listenizi gönderin, LeafletPilot profesyonel PDF ve sosyal medya görsellerinizi otomatik oluştursun.</p>

@@ -35,11 +35,7 @@ export function PlatformLogin({ onLogin }) {
     <main className="platform-login-page">
       <form className="platform-login-card" onSubmit={submit}>
         <div className="platform-login-brand">
-          <span className="brand-mark">LP</span>
-          <span>
-            <strong>LeafletPilot</strong>
-            <small>{t("platformAdmin")}</small>
-          </span>
+          <img className="brand-logo" src="/brand/wordmark-dark.png" alt="LeafletPilot" width="150" height="26" />
         </div>
         <div className="platform-login-heading">
           <h1>{t("platformAdmin")}</h1>
