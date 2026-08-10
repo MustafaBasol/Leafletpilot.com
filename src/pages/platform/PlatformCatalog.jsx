@@ -2,9 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { t } from "./platformI18n.js";
 import { normalizeOptionalUuid, revokeObjectUrls } from "./platformCatalogUtils.js";
+import { PlatformBulkImageImportModal } from "./PlatformBulkImageImportModal.jsx";
 
 const emptyProduct = { name: "", short_name: "", barcode: "", brand_id: null, category_id: null, package_size: "", package_type: "", aliases: [], is_active: true };
 const labels = { categories: "Categories", brands: "Brands", products: "Products" };
+const qualityStatusLabels = { excellent: "Excellent", good: "Good", needs_review: "Needs review", rejected: "Rejected", missing: "Missing" };
+const qualityStatusBadgeClass = { excellent: "badge-success", good: "badge-success", needs_review: "badge-warning", rejected: "badge-danger", missing: "badge-neutral" };
+const resolverEligibleStatuses = new Set(["excellent", "good"]);
 
 function errorText(error) { return error?.body?.detail || error?.message || t("operationFailed"); }
 
@@ -27,6 +31,7 @@ export function PlatformCatalog() {
   const [imageBusy, setImageBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const imageUrlsRef = useRef({});
 
   const loadLookups = async () => {
@@ -91,6 +96,8 @@ export function PlatformCatalog() {
   const refreshProduct = async () => { const result = await platformApi.listGlobalProducts({ search: selected?.name || "" }); const fresh = (result.items || []).find((item) => item.id === selected?.id); if (fresh) { setSelected(fresh); setImages(fresh.images || []); } await load(); };
   const setPrimary = async (image) => { setImageBusy(true); try { await platformApi.setGlobalProductPrimaryImage(selected.id, image.id); await refreshProduct(); } catch (err) { setError(errorText(err)); } finally { setImageBusy(false); } };
   const removeImage = async (image) => { if (!window.confirm("Remove this image?")) return; setImageBusy(true); try { await platformApi.removeGlobalProductImage(selected.id, image.id); await refreshProduct(); } catch (err) { setError(errorText(err)); } finally { setImageBusy(false); } };
+  const approveImage = async (image) => { setImageBusy(true); setError(""); try { await platformApi.approveGlobalProductImage(selected.id, image.id); setNotice("Image approved."); await refreshProduct(); } catch (err) { setError(errorText(err)); } finally { setImageBusy(false); } };
+  const rejectImage = async (image) => { setImageBusy(true); setError(""); try { await platformApi.rejectGlobalProductImage(selected.id, image.id); setNotice("Image rejected."); await refreshProduct(); } catch (err) { setError(errorText(err)); } finally { setImageBusy(false); } };
   const deactivate = async (row) => { try { const fn = tab === "categories" ? platformApi.deactivateGlobalCategory : tab === "brands" ? platformApi.deactivateGlobalBrand : platformApi.deactivateGlobalProduct; await fn(row.id); await load(); } catch (err) { setError(errorText(err)); } };
   const createSimple = async () => { const name = window.prompt(`New ${tab.slice(0, -1)} name`); if (!name?.trim()) return; try { const fn = tab === "categories" ? platformApi.createGlobalCategory : platformApi.createGlobalBrand; await fn({ name: name.trim() }); await load(); } catch (err) { setError(errorText(err)); } };
   const imageUrl = useMemo(() => preview || "", [preview]);
@@ -101,6 +108,7 @@ export function PlatformCatalog() {
     <div className="toolbar"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("search")} onKeyDown={(event) => event.key === "Enter" && load()} /><button type="button" onClick={load}>{t("search")}</button></div>
     {error && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
     {tab !== "products" && <button type="button" onClick={createSimple}>Create {tab.slice(0, -1)}</button>}
+    {tab === "products" && <button type="button" onClick={() => setBulkModalOpen(true)}>Toplu Görsel Yükle</button>}
     {loading ? <p>{t("loading")}</p> : rows.length === 0 ? <p>No records found.</p> : <table><thead><tr><th>Name</th><th>Active</th><th>Usage</th><th /></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.is_active ? "Yes" : "No"}</td><td>{row.usage_count ?? 0}</td><td>{tab === "products" ? <button type="button" onClick={() => openProduct(row)}>Edit</button> : row.is_active && <button type="button" onClick={() => deactivate(row)}>Deactivate</button>}</td></tr>)}</tbody></table>}
     {tab === "products" && <form className="form-grid" onSubmit={saveProduct}><h2>{selected ? "Edit global product" : "Create global product"}</h2>
       <label>Canonical name<input required value={form.name} onChange={(event) => update("name", event.target.value)} /></label><label>Barcode / SKU<input value={form.barcode || ""} onChange={(event) => update("barcode", event.target.value)} /></label>
@@ -109,6 +117,7 @@ export function PlatformCatalog() {
       <label>Aliases<input value={alias} onChange={(event) => setAlias(event.target.value)} onKeyDown={(event) => event.key === "Enter" && (event.preventDefault(), addAlias())} /></label><div>{form.aliases.map((item) => <button type="button" key={item} onClick={() => update("aliases", form.aliases.filter((value) => value !== item))}>{item} ×</button>)}</div>
       <label><input type="checkbox" checked={form.is_active} onChange={(event) => update("is_active", event.target.checked)} /> Active</label><button type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
     </form>}
-    {tab === "products" && selected && <div className="form-grid"><h2>Images</h2><input type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseFile} />{replaceTarget && <p>Replacing selected image.</p>}{imageUrl && <img src={imageUrl} alt="Selected preview" style={{ maxWidth: 180 }} />}<button type="button" disabled={!file || imageBusy} onClick={uploadImage}>{imageBusy ? "Uploading..." : "Upload image"}</button><div>{images.map((image) => <div key={image.id}>{imageUrls[image.id] && <img src={imageUrls[image.id]} alt="Product" style={{ maxWidth: 120, maxHeight: 120 }} />}<span>{image.mime_type} · {image.is_primary ? "Primary" : ""}</span><button type="button" disabled={imageBusy} onClick={() => setReplaceTarget(image)}>Replace</button>{image.is_primary ? null : <button type="button" disabled={imageBusy} onClick={() => setPrimary(image)}>Make primary</button>}<button type="button" disabled={imageBusy} onClick={() => removeImage(image)}>Remove</button></div>)}</div></div>}
+    {tab === "products" && selected && <div className="form-grid"><h2>Images</h2><input type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseFile} />{replaceTarget && <p>Replacing selected image.</p>}{imageUrl && <img src={imageUrl} alt="Selected preview" style={{ maxWidth: 180 }} />}<button type="button" disabled={!file || imageBusy} onClick={uploadImage}>{imageBusy ? "Uploading..." : "Upload image"}</button><div>{images.map((image) => <div key={image.id}>{imageUrls[image.id] && <img src={imageUrls[image.id]} alt="Product" style={{ maxWidth: 120, maxHeight: 120 }} />}<span>{image.mime_type} · {image.is_primary ? "Primary" : ""}</span> <span className={`badge ${qualityStatusBadgeClass[image.quality_status] || "badge-neutral"}`} title={resolverEligibleStatuses.has(image.quality_status) ? "Eligible for the resolver" : "Not yet eligible for the resolver"}>{qualityStatusLabels[image.quality_status] || image.quality_status}</span><button type="button" disabled={imageBusy} onClick={() => setReplaceTarget(image)}>Replace</button>{image.is_primary ? null : <button type="button" disabled={imageBusy} onClick={() => setPrimary(image)}>Make primary</button>}{!resolverEligibleStatuses.has(image.quality_status) && <button type="button" disabled={imageBusy} onClick={() => approveImage(image)}>Approve</button>}{image.quality_status !== "rejected" && <button type="button" disabled={imageBusy} onClick={() => rejectImage(image)}>Reject</button>}<button type="button" disabled={imageBusy} onClick={() => removeImage(image)}>Remove</button></div>)}</div></div>}
+    {bulkModalOpen && <PlatformBulkImageImportModal onClose={() => setBulkModalOpen(false)} onImported={async () => { await load(); if (selected) await refreshProduct(); }} />}
   </section>;
 }

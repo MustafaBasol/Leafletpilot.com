@@ -24,6 +24,12 @@ def test_platform_catalog_route_matrix_is_registered() -> None:
         "/api/platform/catalog/products/{product_id}/images",
         "/api/platform/catalog/products/{product_id}/images/{image_id}",
         "/api/platform/catalog/products/{product_id}/images/{image_id}/primary",
+        "/api/platform/catalog/products/{product_id}/images/{image_id}/approve",
+        "/api/platform/catalog/products/{product_id}/images/{image_id}/reject",
+        "/api/platform/catalog/products/images/bulk-approve",
+        "/api/platform/catalog/products/images/bulk-reject",
+        "/api/platform/catalog/products/bulk-images/preview",
+        "/api/platform/catalog/products/bulk-images/import",
     }
     assert expected <= paths
 
@@ -46,6 +52,12 @@ def test_platform_catalog_route_matrix_is_registered() -> None:
         ("post", "/api/platform/catalog/products/00000000-0000-0000-0000-000000000001/images"),
         ("patch", "/api/platform/catalog/products/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002/primary"),
         ("delete", "/api/platform/catalog/products/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002"),
+        ("patch", "/api/platform/catalog/products/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002/approve"),
+        ("patch", "/api/platform/catalog/products/00000000-0000-0000-0000-000000000001/images/00000000-0000-0000-0000-000000000002/reject"),
+        ("post", "/api/platform/catalog/products/images/bulk-approve"),
+        ("post", "/api/platform/catalog/products/images/bulk-reject"),
+        ("post", "/api/platform/catalog/products/bulk-images/preview"),
+        ("post", "/api/platform/catalog/products/bulk-images/import"),
     ],
 )
 def test_platform_catalog_requires_platform_auth(method: str, path: str) -> None:

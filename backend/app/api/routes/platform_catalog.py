@@ -1,7 +1,9 @@
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,11 +12,18 @@ from app.api.deps import get_catalog_session, get_current_platform_admin
 from app.models import Brand, Category, MarketProduct, PlatformAdmin, Product, ProductAlias, ProductImage
 from app.schemas.common import ListResponse
 from app.schemas.platform_catalog import (
-    PlatformBrandCreate, PlatformBrandRead, PlatformBrandUpdate, PlatformCategoryCreate,
-    PlatformCategoryRead, PlatformCategoryUpdate, PlatformProductCreate, PlatformProductRead,
-    PlatformProductUpdate,
+    PlatformBrandCreate, PlatformBrandRead, PlatformBrandUpdate, PlatformBulkImageResolution,
+    PlatformCategoryCreate, PlatformCategoryRead, PlatformCategoryUpdate, PlatformImageIdsPayload,
+    PlatformProductCreate, PlatformProductRead, PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, slugify
+from app.services.global_catalog_bulk_images import (
+    BulkImportError,
+    extract_zip,
+    import_bulk_rows,
+    match_bulk_rows,
+    read_bounded_zip_body,
+)
 from app.services.image_pipeline import read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
 from app.services.rendering import storage_path_for_key
 
@@ -289,3 +298,100 @@ async def remove_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admi
     await _global(session, Product, product_id); image = await session.scalar(select(ProductImage).where(ProductImage.id == image_id, ProductImage.product_id == product_id))
     if image is None: raise HTTPException(404, "Image not found.")
     await session.delete(image); await session.commit()
+
+
+async def _global_image(session, product_id: UUID, image_id: UUID) -> ProductImage:
+    await _global(session, Product, product_id)
+    image = await session.scalar(select(ProductImage).where(ProductImage.id == image_id, ProductImage.product_id == product_id))
+    if image is None:
+        raise HTTPException(404, "Image not found.")
+    return image
+
+
+@router.patch("/products/{product_id}/images/{image_id}/approve", response_model=dict)
+async def approve_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    image = await _global_image(session, product_id, image_id)
+    image.quality_status = "good"
+    await session.commit()
+    return {"id": image.id, "product_id": product_id, "quality_status": image.quality_status}
+
+
+@router.patch("/products/{product_id}/images/{image_id}/reject", response_model=dict)
+async def reject_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    image = await _global_image(session, product_id, image_id)
+    image.quality_status = "rejected"
+    if image.is_primary:
+        image.is_primary = False
+    await session.commit()
+    return {"id": image.id, "product_id": product_id, "quality_status": image.quality_status}
+
+
+async def _bulk_set_quality_status(session: AsyncSession, image_ids: list[UUID], quality_status: str) -> dict:
+    rows = list(
+        (
+            await session.scalars(
+                select(ProductImage)
+                .join(Product, Product.id == ProductImage.product_id)
+                .where(ProductImage.id.in_(image_ids), Product.is_global.is_(True))
+            )
+        ).all()
+    )
+    found_ids = {row.id for row in rows}
+    for row in rows:
+        row.quality_status = quality_status
+        if quality_status == "rejected" and row.is_primary:
+            row.is_primary = False
+    await session.commit()
+    return {
+        "updated": len(rows),
+        "quality_status": quality_status,
+        "not_found": [str(image_id) for image_id in image_ids if image_id not in found_ids],
+    }
+
+
+@router.post("/products/images/bulk-approve", response_model=dict)
+async def bulk_approve_images(payload: PlatformImageIdsPayload, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    return await _bulk_set_quality_status(session, payload.image_ids, "good")
+
+
+@router.post("/products/images/bulk-reject", response_model=dict)
+async def bulk_reject_images(payload: PlatformImageIdsPayload, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    return await _bulk_set_quality_status(session, payload.image_ids, "rejected")
+
+
+@router.post("/products/bulk-images/preview", response_model=dict)
+async def bulk_images_preview(request: Request, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    content = await read_bounded_zip_body(request)
+    try:
+        package = extract_zip(content)
+    except BulkImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    rows = await match_bulk_rows(session, package.manifest_rows, package.images)
+    counts = {"total": len(rows)}
+    for key in ("exact_match", "matched", "ambiguous", "unmatched", "invalid", "error"):
+        counts[key] = sum(1 for row in rows if row.status == key)
+    return {"counts": counts, "rows": [row.to_dict() for row in rows]}
+
+
+@router.post("/products/bulk-images/import", response_model=dict)
+async def bulk_images_import(request: Request, resolutions: str | None = Query(default=None), _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    content = await read_bounded_zip_body(request)
+    try:
+        package = extract_zip(content)
+    except BulkImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    resolved: dict[int, UUID] = {}
+    if resolutions:
+        try:
+            raw_entries = json.loads(resolutions)
+            if not isinstance(raw_entries, list):
+                raise ValueError("resolutions must be a JSON array.")
+            parsed = [PlatformBulkImageResolution.model_validate(entry) for entry in raw_entries]
+        except (json.JSONDecodeError, ValueError, ValidationError) as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid resolutions payload: {exc}") from None
+        resolved = {entry.row_index: entry.product_id for entry in parsed}
+
+    rows = await match_bulk_rows(session, package.manifest_rows, package.images)
+    summary = await import_bulk_rows(session, rows, package.images, resolved)
+    return summary.to_dict()
