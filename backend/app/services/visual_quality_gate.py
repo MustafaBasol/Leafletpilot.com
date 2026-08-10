@@ -60,32 +60,72 @@ def run_visual_quality_gate(
     export_job_id: UUID,
 ) -> QualityGateResult:
     if payload.get("template_slug") not in SUPERMARKET_LAYOUTS:
-        html = render_render_payload_html(payload, generated_at=generated_at)
-        logger.debug(
-            "Visual quality gate skipped for non-supermarket template.",
-            extra={"market_id": str(market_id), "campaign_id": str(campaign_id), "export_job_id": str(export_job_id)},
-        )
-        return QualityGateResult(
-            html=html,
-            initial_score=None,
-            refined_score=None,
-            refinement_action=None,
-            applied=False,
-            skipped_reason="non_supermarket_template",
-        )
+        return _skip_gate(payload, generated_at=generated_at, market_id=market_id, campaign_id=campaign_id, export_job_id=export_job_id)
 
-    context = _build_score_context(payload)
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            result, winner = _run_gate_with_browser(browser, payload, context, generated_at=generated_at, market_id=market_id, campaign_id=campaign_id, export_job_id=export_job_id)
+            return run_visual_quality_gate_with_browser(
+                browser,
+                payload,
+                generated_at=generated_at,
+                market_id=market_id,
+                campaign_id=campaign_id,
+                export_job_id=export_job_id,
+            )
         finally:
             browser.close()
 
+
+def run_visual_quality_gate_with_browser(
+    browser: object,
+    payload: dict,
+    *,
+    generated_at: datetime,
+    market_id: UUID,
+    campaign_id: UUID,
+    export_job_id: UUID,
+) -> QualityGateResult:
+    """Run the gate against a caller-owned Chromium browser.
+
+    Unlike run_visual_quality_gate, this never launches or closes `browser` -
+    callers that already hold one open (e.g. the export pipeline sharing a
+    single browser across gate + refinement + PDF + PNG) use this to avoid a
+    second launch. The non-supermarket skip path still applies and never
+    touches `browser`.
+    """
+    if payload.get("template_slug") not in SUPERMARKET_LAYOUTS:
+        return _skip_gate(payload, generated_at=generated_at, market_id=market_id, campaign_id=campaign_id, export_job_id=export_job_id)
+
+    context = _build_score_context(payload)
+    result, winner = _run_gate_with_browser(browser, payload, context, generated_at=generated_at, market_id=market_id, campaign_id=campaign_id, export_job_id=export_job_id)
     _log_result(market_id, campaign_id, export_job_id, result, winner=winner)
     return result
+
+
+def _skip_gate(
+    payload: dict,
+    *,
+    generated_at: datetime,
+    market_id: UUID,
+    campaign_id: UUID,
+    export_job_id: UUID,
+) -> QualityGateResult:
+    html = render_render_payload_html(payload, generated_at=generated_at)
+    logger.debug(
+        "Visual quality gate skipped for non-supermarket template.",
+        extra={"market_id": str(market_id), "campaign_id": str(campaign_id), "export_job_id": str(export_job_id)},
+    )
+    return QualityGateResult(
+        html=html,
+        initial_score=None,
+        refined_score=None,
+        refinement_action=None,
+        applied=False,
+        skipped_reason="non_supermarket_template",
+    )
 
 
 def _run_gate_with_browser(
