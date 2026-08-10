@@ -877,14 +877,14 @@ async def test_telegram_concurrent_export_confirms_create_one_job_and_one_delive
 
     monkeypatch.setattr(settings, "local_storage_dir", str(tmp_path))
 
-    async def fake_pdf(html, output_path):
-        output_path.write_bytes(b"%PDF-1.4\n")
+    def fake_render_campaign_assets_sync(payload, **kwargs):
+        output_paths = kwargs["output_paths"]
+        if "pdf" in output_paths:
+            output_paths["pdf"].write_bytes(b"%PDF-1.4\n")
+        if "png" in output_paths:
+            output_paths["png"].write_bytes(b"\x89PNG\r\n\x1a\n")
 
-    async def fake_png(html, output_path):
-        output_path.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-    monkeypatch.setattr("app.services.rendering.render_html_to_pdf", fake_pdf)
-    monkeypatch.setattr("app.services.rendering.render_html_to_png", fake_png)
+    monkeypatch.setattr("app.services.rendering._render_campaign_assets_sync", fake_render_campaign_assets_sync)
 
     engine, session_factory, fake = await _install_telegram_test_app(monkeypatch)
     try:

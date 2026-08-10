@@ -160,10 +160,10 @@ async def test_render_campaign_export_marks_job_failed_without_raising_when_test
         session.add_all([campaign, export_job])
         await session.commit()
 
-    async def failing_render_html_to_pdf(html, output_path):
+    def failing_render_campaign_assets_sync(payload, **kwargs):
         raise RuntimeError("Executable doesn't exist at /fake/chromium")
 
-    monkeypatch.setattr("app.services.rendering.render_html_to_pdf", failing_render_html_to_pdf)
+    monkeypatch.setattr("app.services.rendering._render_campaign_assets_sync", failing_render_campaign_assets_sync)
 
     async with session_factory() as session:
         result = await render_campaign_export(

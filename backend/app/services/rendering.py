@@ -118,26 +118,11 @@ async def render_campaign_export(
     try:
         generated_at = datetime.now(UTC).replace(microsecond=0)
         from app.services.campaign_rendering import build_campaign_render_payload
-        from app.services.visual_quality_gate import run_visual_quality_gate
 
         payload = build_campaign_render_payload(campaign, campaign.template)
-        gate_result = await asyncio.to_thread(
-            run_visual_quality_gate,
-            payload,
-            generated_at=generated_at,
-            market_id=market_id,
-            campaign_id=campaign_id,
-            export_job_id=export_job_id,
-        )
-        html = gate_result.html
-        if not campaign.snapshot_json:
-            # Preserve the pre-existing snapshot/live asymmetry: only the
-            # live path ever applied output-format-specific page sizing.
-            from app.services.preview_renderer import _apply_output_format
 
-            output_format = (payload.get("builder_config") or {}).get("output_format", "pdf")
-            html = _apply_output_format(html, output_format)
-
+        storage_keys: dict[str, str] = {}
+        output_paths: dict[str, Path] = {}
         for file_format in formats:
             file_name = build_export_file_name(campaign, file_format)
             storage_key = build_export_storage_key(
@@ -148,11 +133,22 @@ async def render_campaign_export(
             )
             output_path = storage_path_for_key(storage_key)
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            storage_keys[file_format] = storage_key
+            output_paths[file_format] = output_path
 
-            if file_format == "pdf":
-                await render_html_to_pdf(html, output_path)
-            else:
-                await render_html_to_png(html, output_path)
+        await asyncio.to_thread(
+            _render_campaign_assets_sync,
+            payload,
+            generated_at=generated_at,
+            market_id=market_id,
+            campaign_id=campaign_id,
+            export_job_id=export_job_id,
+            apply_output_format=not campaign.snapshot_json,
+            output_paths=output_paths,
+        )
+
+        for file_format in formats:
+            output_path = output_paths[file_format]
             validate_rendered_file(output_path, file_format)
 
             campaign_file = CampaignFile(
@@ -161,7 +157,7 @@ async def render_campaign_export(
                 file_type=FORMAT_FILE_TYPES[file_format],
                 format=file_format,
                 status="ready",
-                storage_key=storage_key,
+                storage_key=storage_keys[file_format],
                 size_bytes=output_path.stat().st_size,
             )
             session.add(campaign_file)
@@ -219,9 +215,7 @@ def render_html_to_pdf_sync(html: str, output_path: Path) -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=1)
-            page.set_content(html, wait_until="networkidle")
-            page.pdf(path=str(output_path), format="A4", print_background=True, prefer_css_page_size=False, scale=0.635)
+            _render_pdf_page(browser, html, output_path)
         finally:
             browser.close()
 
@@ -236,9 +230,76 @@ def render_html_to_png_sync(html: str, output_path: Path) -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=2)
-            page.set_content(html, wait_until="networkidle")
-            page.screenshot(path=str(output_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
+            _render_png_page(browser, html, output_path)
+        finally:
+            browser.close()
+
+
+def _render_pdf_page(browser: object, html: str, output_path: Path) -> None:
+    page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=1)  # type: ignore[attr-defined]
+    try:
+        page.set_content(html, wait_until="networkidle")
+        page.pdf(path=str(output_path), format="A4", print_background=True, prefer_css_page_size=False, scale=0.635)
+    finally:
+        page.close()
+
+
+def _render_png_page(browser: object, html: str, output_path: Path) -> None:
+    page = browser.new_page(viewport={"width": 1240, "height": 1754}, device_scale_factor=2)  # type: ignore[attr-defined]
+    try:
+        page.set_content(html, wait_until="networkidle")
+        page.screenshot(path=str(output_path), clip={"x": 0, "y": 0, "width": 1240, "height": 1754})
+    finally:
+        page.close()
+
+
+def _render_campaign_assets_sync(
+    payload: dict,
+    *,
+    generated_at: datetime,
+    market_id: UUID,
+    campaign_id: UUID,
+    export_job_id: UUID,
+    apply_output_format: bool,
+    output_paths: dict[str, Path],
+) -> None:
+    """Render the quality-gated flyer HTML plus every requested export format
+    (pdf/png) against a single Chromium browser lifecycle.
+
+    Reusing one browser (each step still gets its own isolated page/context
+    via browser.new_page()) cuts a synchronous Telegram export from up to
+    three Chromium process launches down to one, without changing renderer
+    output, the gate's scoring/refinement behavior, or export validation.
+    """
+    from playwright.sync_api import sync_playwright
+
+    from app.services.visual_quality_gate import run_visual_quality_gate_with_browser
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            gate_result = run_visual_quality_gate_with_browser(
+                browser,
+                payload,
+                generated_at=generated_at,
+                market_id=market_id,
+                campaign_id=campaign_id,
+                export_job_id=export_job_id,
+            )
+            html = gate_result.html
+            if apply_output_format:
+                # Preserve the pre-existing snapshot/live asymmetry: only the
+                # live path ever applied output-format-specific page sizing.
+                from app.services.preview_renderer import _apply_output_format
+
+                output_format = (payload.get("builder_config") or {}).get("output_format", "pdf")
+                html = _apply_output_format(html, output_format)
+
+            for file_format, output_path in output_paths.items():
+                if file_format == "pdf":
+                    _render_pdf_page(browser, html, output_path)
+                else:
+                    _render_png_page(browser, html, output_path)
         finally:
             browser.close()
 
