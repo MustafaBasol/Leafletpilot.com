@@ -18,3 +18,4 @@ backend/**/__pycache__
 *.pyc
 *.pdf
 *.png
+!public/brand/*.png

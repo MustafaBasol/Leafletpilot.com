@@ -12,6 +12,7 @@ RUN npm ci
 COPY index.html vite.config.js ./
 COPY scripts ./scripts
 COPY src ./src
+COPY public ./public
 
 RUN npm run validate \
     && npm run build
