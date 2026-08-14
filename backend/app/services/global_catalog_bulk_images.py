@@ -102,7 +102,7 @@ class BulkZipContents:
     images: dict[str, bytes]
 
 
-def extract_zip(content: bytes) -> BulkZipContents:
+def extract_zip(content: bytes, *, require_manifest: bool = True) -> BulkZipContents:
     if not content:
         raise BulkImportError("ZIP package is empty.")
     if len(content) > MAX_ZIP_BYTES:
@@ -135,12 +135,14 @@ def extract_zip(content: bytes) -> BulkZipContents:
         if name.lower() == "manifest.csv":
             manifest_bytes = data
         elif name.startswith("images/") and base_name:
+            if base_name in images:
+                raise BulkImportError(f"ZIP package contains duplicate image filename: {base_name}.")
             images[base_name] = data
 
-    if manifest_bytes is None:
+    if manifest_bytes is None and require_manifest:
         raise BulkImportError("ZIP package must contain manifest.csv.")
 
-    rows = _parse_manifest_csv(manifest_bytes)
+    rows = _parse_manifest_csv(manifest_bytes) if manifest_bytes is not None else []
     if len(rows) > MAX_MANIFEST_ROWS:
         raise BulkImportError("manifest.csv contains too many rows.")
     return BulkZipContents(manifest_rows=rows, images=images)

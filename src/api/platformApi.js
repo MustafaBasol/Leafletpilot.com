@@ -37,7 +37,7 @@ async function request(path, { method = "GET", params, body, headers: extraHeade
   if (token) headers.Authorization = `Bearer ${token}`;
   const options = { method, headers };
   if (body !== undefined) {
-    if (body instanceof Blob || body instanceof ArrayBuffer) {
+    if (body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData) {
       options.body = body;
     } else {
       headers["Content-Type"] = "application/json";
@@ -101,8 +101,8 @@ export const platformApi = {
   deactivateGlobalBrand: (id) => request(`/platform/catalog/brands/${id}`, { method: "DELETE" }),
   listGlobalProducts: (params) => request("/platform/catalog/products", { params }),
   downloadGlobalProductImportTemplate: () => downloadPlatformFile("/platform/catalog/products/import-template", "leafletpilot-global-products-template.xlsx"),
-  previewGlobalProductImport: (file) => request("/platform/catalog/products/import/preview", { method: "POST", body: file, headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } }),
-  importGlobalProducts: (file) => request("/platform/catalog/products/import", { method: "POST", body: file, headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } }),
+  previewGlobalProductImport: (file, imagesZip) => { const body = new FormData(); body.append("workbook", file); if (imagesZip) body.append("images_zip", imagesZip); return request("/platform/catalog/products/import/preview", { method: "POST", body }); },
+  importGlobalProducts: (file, imagesZip) => { const body = new FormData(); body.append("workbook", file); if (imagesZip) body.append("images_zip", imagesZip); return request("/platform/catalog/products/import", { method: "POST", body }); },
   createGlobalProduct: (body) => request("/platform/catalog/products", { method: "POST", body }),
   updateGlobalProduct: (id, body) => request(`/platform/catalog/products/${id}`, { method: "PATCH", body }),
   deactivateGlobalProduct: (id) => request(`/platform/catalog/products/${id}`, { method: "DELETE" }),
