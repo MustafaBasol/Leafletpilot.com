@@ -2,7 +2,7 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.schemas.platform_catalog import (
     PlatformProductCreate, PlatformProductRead, PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, slugify
+from app.services.global_catalog_excel import COLUMNS, MAX_ROWS, build_template, parse_workbook
 from app.services.global_catalog_bulk_images import (
     BulkImportError,
     extract_zip,
@@ -395,3 +396,89 @@ async def bulk_images_import(request: Request, resolutions: str | None = Query(d
     rows = await match_bulk_rows(session, package.manifest_rows, package.images)
     summary = await import_bulk_rows(session, rows, package.images, resolved)
     return summary.to_dict()
+
+@router.get("/products/import-template", response_class=Response)
+async def download_product_import_template(_: PlatformAdmin = admin):
+    return Response(
+        content=build_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="leafletpilot-global-products-template.xlsx"'},
+    )
+
+
+async def _read_xlsx(request: Request) -> bytes:
+    if request.headers.get("content-type", "").split(";", 1)[0] not in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"
+    }:
+        raise HTTPException(415, "Yalnızca .xlsx dosyaları kabul edilir.")
+    size = int(request.headers.get("content-length") or 0)
+    if size > 10 * 1024 * 1024:
+        raise HTTPException(413, "Excel dosyası en fazla 10 MiB olabilir.")
+    content = await request.body()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Excel dosyası en fazla 10 MiB olabilir.")
+    return content
+
+
+async def _excel_preview(content: bytes, session: AsyncSession) -> list[dict]:
+    rows = parse_workbook(content)
+    valid = [row for row in rows if row.get("status") != "invalid"]
+    barcodes = {row["barcode_sku"] for row in valid if row["barcode_sku"]}
+    names = {row["canonical_name"].casefold() for row in valid}
+    existing = list((await session.scalars(select(Product).where(Product.is_global.is_(True), or_(Product.barcode.in_(barcodes) if barcodes else False, func.lower(Product.name).in_(names) if names else False)))).all())
+    by_barcode = {product.barcode: product for product in existing if product.barcode}
+    by_name = {product.name.casefold(): product for product in existing}
+    brands = {brand.name.casefold(): brand for brand in (await session.scalars(select(Brand).where(Brand.is_global.is_(True)))).all()}
+    categories = {category.name.casefold(): category for category in (await session.scalars(select(Category).where(Category.is_global.is_(True)))).all()}
+    seen_barcodes: set[str] = set()
+    for row in rows:
+        if row.get("status") == "invalid": continue
+        barcode = row["barcode_sku"]
+        if barcode and barcode in seen_barcodes:
+            row.update(status="conflict", error="Dosyada aynı barkod/SKU birden fazla kez bulunuyor."); continue
+        seen_barcodes.add(barcode)
+        if row["brand"] and row["brand"].casefold() not in brands:
+            row.update(status="invalid", error="Global marka bulunamadı."); continue
+        if row["category"] and row["category"].casefold() not in categories:
+            row.update(status="invalid", error="Global kategori bulunamadı."); continue
+        by_code = by_barcode.get(barcode) if barcode else None
+        by_label = by_name.get(row["canonical_name"].casefold())
+        if by_code and by_label and by_code.id != by_label.id:
+            row.update(status="ambiguous", error="Barkod ve ürün adı farklı global ürünlerle eşleşiyor."); continue
+        match = by_code or by_label
+        row["product_id"] = str(match.id) if match else None
+        if not match: row["status"] = "new"
+        elif (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"]): row["status"] = "unchanged"
+        else: row["status"] = "update"
+        row["aliases"] = [item.strip() for item in row["aliases"].split(";") if item.strip()]
+    return rows
+
+
+@router.post("/products/import/preview", response_model=dict)
+async def preview_product_import(request: Request, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    rows = await _excel_preview(await _read_xlsx(request), session)
+    counts = {name: sum(row.get("status") == name for row in rows) for name in ("new", "update", "unchanged", "invalid", "ambiguous", "conflict")}
+    return {"rows": rows, "counts": {"total": len(rows), **counts, "with_image": sum(bool(row.get("image_filename")) for row in rows)}}
+
+
+@router.post("/products/import", response_model=dict)
+async def import_products(request: Request, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    rows = await _excel_preview(await _read_xlsx(request), session)
+    brands = {brand.name.casefold(): brand for brand in (await session.scalars(select(Brand).where(Brand.is_global.is_(True)))).all()}
+    categories = {category.name.casefold(): category for category in (await session.scalars(select(Category).where(Category.is_global.is_(True)))).all()}
+    result = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "images_awaiting_review": 0, "rows": []}
+    for row in rows:
+        if row["status"] in {"invalid", "ambiguous", "conflict"}:
+            result["skipped"] += 1; result["rows"].append(row); continue
+        if row["status"] == "unchanged": result["unchanged"] += 1; result["rows"].append(row); continue
+        product = await session.get(Product, UUID(row["product_id"])) if row.get("product_id") else None
+        values = dict(name=row["canonical_name"], barcode=row["barcode_sku"] or None, package_size=row["package_size"] or None, package_type=row["package_type"] or None, is_active=row["active"], brand_id=brands[row["brand"].casefold()].id if row["brand"] else None, category_id=categories[row["category"].casefold()].id if row["category"] else None)
+        if product is None:
+            product = Product(**values, is_global=True, market_id=None); session.add(product); result["created"] += 1
+        else:
+            for key, value in values.items(): setattr(product, key, value)
+            result["updated"] += 1
+        product.aliases = [ProductAlias(alias=alias, normalized_alias=normalize_alias(alias), source="platform_import") for alias in row.get("aliases", [])]
+        result["rows"].append(row)
+    await session.commit()
+    return {"total": len(rows), **result}

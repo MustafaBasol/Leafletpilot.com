@@ -3,6 +3,7 @@ import { platformApi } from "../../api/platformApi.js";
 import { t } from "./platformI18n.js";
 import { normalizeOptionalUuid, revokeObjectUrls } from "./platformCatalogUtils.js";
 import { PlatformBulkImageImportModal } from "./PlatformBulkImageImportModal.jsx";
+import { PlatformProductImportModal } from "./PlatformProductImportModal.jsx";
 
 const emptyProduct = { name: "", short_name: "", barcode: "", brand_id: null, category_id: null, package_size: "", package_type: "", aliases: [], is_active: true };
 const labels = { categories: "Categories", brands: "Brands", products: "Products" };
@@ -32,6 +33,7 @@ export function PlatformCatalog() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [productImportOpen, setProductImportOpen] = useState(false);
   const imageUrlsRef = useRef({});
 
   const loadLookups = async () => {
@@ -108,7 +110,7 @@ export function PlatformCatalog() {
     <div className="toolbar"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("search")} onKeyDown={(event) => event.key === "Enter" && load()} /><button type="button" onClick={load}>{t("search")}</button></div>
     {error && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
     {tab !== "products" && <button type="button" onClick={createSimple}>Create {tab.slice(0, -1)}</button>}
-    {tab === "products" && <button type="button" onClick={() => setBulkModalOpen(true)}>Toplu Görsel Yükle</button>}
+    {tab === "products" && <div className="page-actions"><button type="button" onClick={() => platformApi.downloadGlobalProductImportTemplate()}>Excel Şablonunu İndir</button><button type="button" onClick={() => setProductImportOpen(true)}>Excel ile Ürün Yükle</button><button type="button" onClick={() => setBulkModalOpen(true)}>Toplu Görsel Yükle</button></div>}
     {loading ? <p>{t("loading")}</p> : rows.length === 0 ? <p>No records found.</p> : <table><thead><tr><th>Name</th><th>Active</th><th>Usage</th><th /></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.is_active ? "Yes" : "No"}</td><td>{row.usage_count ?? 0}</td><td>{tab === "products" ? <button type="button" onClick={() => openProduct(row)}>Edit</button> : row.is_active && <button type="button" onClick={() => deactivate(row)}>Deactivate</button>}</td></tr>)}</tbody></table>}
     {tab === "products" && <form className="form-grid" onSubmit={saveProduct}><h2>{selected ? "Edit global product" : "Create global product"}</h2>
       <label>Canonical name<input required value={form.name} onChange={(event) => update("name", event.target.value)} /></label><label>Barcode / SKU<input value={form.barcode || ""} onChange={(event) => update("barcode", event.target.value)} /></label>
@@ -118,6 +120,7 @@ export function PlatformCatalog() {
       <label><input type="checkbox" checked={form.is_active} onChange={(event) => update("is_active", event.target.checked)} /> Active</label><button type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
     </form>}
     {tab === "products" && selected && <div className="form-grid"><h2>Images</h2><input type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseFile} />{replaceTarget && <p>Replacing selected image.</p>}{imageUrl && <img src={imageUrl} alt="Selected preview" style={{ maxWidth: 180 }} />}<button type="button" disabled={!file || imageBusy} onClick={uploadImage}>{imageBusy ? "Uploading..." : "Upload image"}</button><div>{images.map((image) => <div key={image.id}>{imageUrls[image.id] && <img src={imageUrls[image.id]} alt="Product" style={{ maxWidth: 120, maxHeight: 120 }} />}<span>{image.mime_type} · {image.is_primary ? "Primary" : ""}</span> <span className={`badge ${qualityStatusBadgeClass[image.quality_status] || "badge-neutral"}`} title={resolverEligibleStatuses.has(image.quality_status) ? "Eligible for the resolver" : "Not yet eligible for the resolver"}>{qualityStatusLabels[image.quality_status] || image.quality_status}</span><button type="button" disabled={imageBusy} onClick={() => setReplaceTarget(image)}>Replace</button>{image.is_primary ? null : <button type="button" disabled={imageBusy} onClick={() => setPrimary(image)}>Make primary</button>}{!resolverEligibleStatuses.has(image.quality_status) && <button type="button" disabled={imageBusy} onClick={() => approveImage(image)}>Approve</button>}{image.quality_status !== "rejected" && <button type="button" disabled={imageBusy} onClick={() => rejectImage(image)}>Reject</button>}<button type="button" disabled={imageBusy} onClick={() => removeImage(image)}>Remove</button></div>)}</div></div>}
+    {productImportOpen && <PlatformProductImportModal onClose={() => setProductImportOpen(false)} onImported={load} />}
     {bulkModalOpen && <PlatformBulkImageImportModal onClose={() => setBulkModalOpen(false)} onImported={async () => { await load(); if (selected) await refreshProduct(); }} />}
   </section>;
 }
