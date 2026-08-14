@@ -37,7 +37,7 @@ async function request(path, { method = "GET", params, body, headers: extraHeade
   if (token) headers.Authorization = `Bearer ${token}`;
   const options = { method, headers };
   if (body !== undefined) {
-    if (body instanceof Blob || body instanceof ArrayBuffer) {
+    if (body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData) {
       options.body = body;
     } else {
       headers["Content-Type"] = "application/json";
@@ -68,6 +68,13 @@ async function requestImage(path) {
   return URL.createObjectURL(await response.blob());
 }
 
+async function downloadPlatformFile(path, filename) {
+  const response = await fetch(`${apiBaseUrl}${path}`, { headers: { Authorization: `Bearer ${getPlatformAccessToken()}` } });
+  if (!response.ok) throwPlatformErrorIfNeeded(response, await response.clone().json().catch(() => null));
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
+}
+
 export const platformApi = {
   login: (email, password) => request("/platform/auth/login", { method: "POST", skipAuth: true, body: { email, password } }),
   me: () => request("/platform/auth/me"),
@@ -93,6 +100,9 @@ export const platformApi = {
   updateGlobalBrand: (id, body) => request(`/platform/catalog/brands/${id}`, { method: "PATCH", body }),
   deactivateGlobalBrand: (id) => request(`/platform/catalog/brands/${id}`, { method: "DELETE" }),
   listGlobalProducts: (params) => request("/platform/catalog/products", { params }),
+  downloadGlobalProductImportTemplate: () => downloadPlatformFile("/platform/catalog/products/import-template", "leafletpilot-global-products-template.xlsx"),
+  previewGlobalProductImport: (file, imagesZip) => { const body = new FormData(); body.append("workbook", file); if (imagesZip) body.append("images_zip", imagesZip); return request("/platform/catalog/products/import/preview", { method: "POST", body }); },
+  importGlobalProducts: (file, imagesZip) => { const body = new FormData(); body.append("workbook", file); if (imagesZip) body.append("images_zip", imagesZip); return request("/platform/catalog/products/import", { method: "POST", body }); },
   createGlobalProduct: (body) => request("/platform/catalog/products", { method: "POST", body }),
   updateGlobalProduct: (id, body) => request(`/platform/catalog/products/${id}`, { method: "PATCH", body }),
   deactivateGlobalProduct: (id) => request(`/platform/catalog/products/${id}`, { method: "DELETE" }),

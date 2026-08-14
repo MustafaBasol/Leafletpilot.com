@@ -2,7 +2,7 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,8 @@ from app.schemas.platform_catalog import (
     PlatformProductCreate, PlatformProductRead, PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, slugify
+from app.services.product_identity import normalize_product_identity
+from app.services.global_catalog_excel import COLUMNS, MAX_ROWS, build_template, parse_workbook
 from app.services.global_catalog_bulk_images import (
     BulkImportError,
     extract_zip,
@@ -24,7 +26,7 @@ from app.services.global_catalog_bulk_images import (
     match_bulk_rows,
     read_bounded_zip_body,
 )
-from app.services.image_pipeline import read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
+from app.services.image_pipeline import normalize_flyer_image, read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
 from app.services.rendering import storage_path_for_key
 
 router = APIRouter(prefix="/platform/catalog", tags=["platform-catalog"])
@@ -40,6 +42,10 @@ async def _global(session, model, item_id):
     if item is None:
         raise HTTPException(status_code=404, detail=f"{model.__name__} not found.")
     return item
+
+
+def _canonical_identity(name: str, package_size: str | None = None) -> str:
+    return normalize_product_identity(name, package_size=package_size).normalized_full_name
 
 
 async def _product_usage_counts(session, column, item_ids):
@@ -211,7 +217,7 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
 @router.post("/products", response_model=PlatformProductRead, status_code=201)
 async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
-    if await session.scalar(select(Product).where(Product.is_global.is_(True), func.lower(Product.name) == payload.name.lower())): raise _conflict("A global product with this name already exists.")
+    if any(_canonical_identity(product.name, product.package_size) == _canonical_identity(payload.name, payload.package_size) for product in (await session.scalars(select(Product).where(Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     data = payload.model_dump(exclude={"aliases"}); row = Product(**data, is_global=True, market_id=None)
     row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
     session.add(row); await session.commit()
@@ -225,7 +231,7 @@ async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: Pl
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == product_id))
     data = payload.model_dump(exclude_unset=True, exclude={"aliases"})
     if "barcode" in data and data["barcode"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), Product.barcode == data["barcode"])): raise _conflict("A global product with this barcode already exists.")
-    if "name" in data and data["name"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), func.lower(Product.name) == data["name"].lower())): raise _conflict("A global product with this name already exists.")
+    if "name" in data and data["name"] and any(_canonical_identity(product.name, product.package_size) == _canonical_identity(data["name"], data.get("package_size", row.package_size)) for product in (await session.scalars(select(Product).where(Product.id != product_id, Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     for key, value in data.items(): setattr(row, key, value)
     if payload.aliases is not None:
         row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
@@ -395,3 +401,133 @@ async def bulk_images_import(request: Request, resolutions: str | None = Query(d
     rows = await match_bulk_rows(session, package.manifest_rows, package.images)
     summary = await import_bulk_rows(session, rows, package.images, resolved)
     return summary.to_dict()
+
+@router.get("/products/import-template", response_class=Response)
+async def download_product_import_template(_: PlatformAdmin = admin):
+    return Response(
+        content=build_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="leafletpilot-global-products-template.xlsx"'},
+    )
+
+
+async def _read_product_import(request: Request) -> tuple[bytes, dict[str, bytes]]:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0]
+    if content_type == "multipart/form-data":
+        form = await request.form()
+        workbook = form.get("workbook")
+        image_zip = form.get("images_zip")
+        if workbook is None or not hasattr(workbook, "read"):
+            raise HTTPException(422, "products.xlsx alanı zorunludur.")
+        content = await workbook.read()
+        zip_content = await image_zip.read() if image_zip is not None and hasattr(image_zip, "read") else b""
+    elif content_type in {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"}:
+        content, zip_content = await request.body(), b""
+    else:
+        raise HTTPException(415, "Yalnızca .xlsx veya .xlsx + images.zip formu kabul edilir.")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Excel dosyası en fazla 10 MiB olabilir.")
+    if zip_content:
+        try:
+            images = extract_zip(zip_content, require_manifest=False).images
+        except BulkImportError as exc:
+            raise HTTPException(422, detail=str(exc)) from None
+    else:
+        images = {}
+    return content, images
+
+
+def _image_preview(rows: list[dict], images: dict[str, bytes]) -> None:
+    for row in rows:
+        filename = row.get("image_filename")
+        if not filename:
+            row["image_status"] = "none"
+            continue
+        content = images.get(filename)
+        if content is None:
+            row["image_status"] = "missing"
+            row["image_error"] = "Görsel ZIP içinde bulunamadı."
+            continue
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        mime_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(extension)
+        if mime_type is None:
+            row["image_status"] = "invalid"; row["image_error"] = "Desteklenmeyen görsel uzantısı."; continue
+        try:
+            normalize_flyer_image(content, mime_type)
+            row["image_status"] = "ready"; row["image_mime_type"] = mime_type
+        except HTTPException as exc:
+            row["image_status"] = "invalid"; row["image_error"] = str(exc.detail)
+
+
+async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str, bytes] | None = None) -> list[dict]:
+    rows = parse_workbook(content)
+    products = list((await session.scalars(select(Product).where(Product.is_global.is_(True)))).all())
+    by_barcode: dict[str, list[Product]] = {}
+    by_identity: dict[str, list[Product]] = {}
+    for product in products:
+        if product.barcode: by_barcode.setdefault(product.barcode.strip(), []).append(product)
+        by_identity.setdefault(_canonical_identity(product.name, product.package_size), []).append(product)
+    brands = {brand.name.casefold(): brand for brand in (await session.scalars(select(Brand).where(Brand.is_global.is_(True)))).all()}
+    categories = {category.name.casefold(): category for category in (await session.scalars(select(Category).where(Category.is_global.is_(True)))).all()}
+    seen_barcodes: set[str] = set(); seen_identities: set[str] = set()
+    for row in rows:
+        if row.get("status") == "invalid": continue
+        barcode = row["barcode_sku"]; identity = _canonical_identity(row["canonical_name"], row["package_size"])
+        if barcode and barcode in seen_barcodes:
+            row.update(status="conflict", error="Dosyada aynı barkod/SKU birden fazla kez bulunuyor."); continue
+        if not barcode and identity in seen_identities:
+            row.update(status="conflict", error="Dosyada aynı ürün kimliği birden fazla kez bulunuyor."); continue
+        seen_barcodes.add(barcode); seen_identities.add(identity)
+        if row["brand"] and row["brand"].casefold() not in brands: row.update(status="invalid", error="Global marka bulunamadı."); continue
+        if row["category"] and row["category"].casefold() not in categories: row.update(status="invalid", error="Global kategori bulunamadı."); continue
+        code_matches = by_barcode.get(barcode, []) if barcode else []; name_matches = by_identity.get(identity, [])
+        if len(code_matches) > 1 or len(name_matches) > 1 or (code_matches and name_matches and code_matches[0].id != name_matches[0].id): row.update(status="ambiguous", error="Barkod ve ürün kimliği farklı veya birden çok global ürünle eşleşiyor."); continue
+        match = code_matches[0] if code_matches else (name_matches[0] if name_matches else None)
+        row["product_id"] = str(match.id) if match else None; row["identity"] = identity; row["aliases"] = [item.strip() for item in row["aliases"].split(";") if item.strip()]
+        row["status"] = "new" if not match else ("unchanged" if (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"]) else "update")
+    _image_preview(rows, images or {})
+    return rows
+
+
+def _preview_counts(rows: list[dict]) -> dict:
+    counts = {name: sum(row.get("status") == name for row in rows) for name in ("new", "update", "unchanged", "invalid", "ambiguous", "conflict")}
+    return {"total": len(rows), **counts, "with_image": sum(bool(row.get("image_filename")) for row in rows), "images_missing": sum(row.get("image_status") == "missing" for row in rows), "images_invalid": sum(row.get("image_status") == "invalid" for row in rows)}
+
+
+@router.post("/products/import/preview", response_model=dict)
+async def preview_product_import(request: Request, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    workbook, images = await _read_product_import(request)
+    rows = await _excel_preview(workbook, session, images)
+    return {"rows": rows, "counts": _preview_counts(rows)}
+
+
+@router.post("/products/import", response_model=dict)
+async def import_products(request: Request, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    workbook, images = await _read_product_import(request)
+    rows = await _excel_preview(workbook, session, images)
+    brands = {brand.name.casefold(): brand for brand in (await session.scalars(select(Brand).where(Brand.is_global.is_(True)))).all()}
+    categories = {category.name.casefold(): category for category in (await session.scalars(select(Category).where(Category.is_global.is_(True)))).all()}
+    result = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "conflicts": 0, "images_uploaded": 0, "images_missing": 0, "images_invalid": 0, "images_awaiting_review": 0, "rows": []}
+    for row in rows:
+        if row["status"] in {"invalid", "ambiguous", "conflict"}:
+            result["skipped"] += 1; result["conflicts"] += row["status"] in {"ambiguous", "conflict"}; result["rows"].append(row); continue
+        if row["status"] == "unchanged": result["unchanged"] += 1; product = await session.get(Product, UUID(row["product_id"]))
+        else:
+            product = await session.get(Product, UUID(row["product_id"])) if row.get("product_id") else None
+            values = dict(name=row["canonical_name"], barcode=row["barcode_sku"] or None, package_size=row["package_size"] or None, package_type=row["package_type"] or None, is_active=row["active"], brand_id=brands[row["brand"].casefold()].id if row["brand"] else None, category_id=categories[row["category"].casefold()].id if row["category"] else None)
+            if product is None: product = Product(**values, is_global=True, market_id=None); session.add(product); result["created"] += 1
+            else:
+                for key, value in values.items(): setattr(product, key, value)
+                result["updated"] += 1
+            product.aliases = [ProductAlias(alias=alias, normalized_alias=normalize_alias(alias), source="platform_import") for alias in row.get("aliases", [])]
+        await session.flush()
+        if row.get("image_status") == "ready":
+            asset = store_flyer_image(namespace=f"global/catalog/{product.id}", original_content=images[row["image_filename"]], declared_mime_type=row["image_mime_type"])
+            has_primary = await session.scalar(select(ProductImage.id).where(ProductImage.product_id == product.id, ProductImage.is_primary.is_(True)))
+            session.add(ProductImage(product_id=product.id, storage_key=asset.storage_key, mime_type=asset.mime_type, size_bytes=asset.size_bytes, width=asset.width, height=asset.height, has_transparent_background=asset.has_alpha, quality_status="needs_review", is_primary=not bool(has_primary)))
+            result["images_uploaded"] += 1; result["images_awaiting_review"] += 1
+        elif row.get("image_status") == "missing": result["images_missing"] += 1
+        elif row.get("image_status") == "invalid": result["images_invalid"] += 1
+        result["rows"].append(row)
+    await session.commit()
+    return {"total": len(rows), **result}
