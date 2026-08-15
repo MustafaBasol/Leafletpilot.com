@@ -9,17 +9,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_catalog_session, get_current_platform_admin
-from app.models import Brand, BrandAlias, Category, MarketProduct, PlatformAdmin, Product, ProductAlias, ProductImage
+from app.models import (
+    Brand,
+    BrandAlias,
+    Category,
+    MarketProduct,
+    PlatformAdmin,
+    Product,
+    ProductAlias,
+    ProductImage,
+)
 from app.schemas.common import ListResponse
 from app.schemas.platform_catalog import (
-    PlatformBrandCreate, PlatformBrandRead, PlatformBrandUpdate, PlatformBulkImageResolution,
-    PlatformCategoryCreate, PlatformCategoryRead, PlatformCategoryUpdate, PlatformImageIdsPayload,
-    PlatformProductCreate, PlatformProductRead, PlatformProductUpdate,
+    PlatformBrandCreate,
+    PlatformBrandRead,
+    PlatformBrandUpdate,
+    PlatformBulkImageResolution,
+    PlatformCategoryCreate,
+    PlatformCategoryRead,
+    PlatformCategoryUpdate,
+    PlatformImageIdsPayload,
+    PlatformProductCreate,
+    PlatformProductRead,
+    PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, reconcile_aliases, slugify
-from app.services.product_identity import normalize_product_identity
-from app.services.product_normalization import normalized_package_values
-from app.services.global_catalog_excel import COLUMNS, MAX_ROWS, build_template, parse_workbook
 from app.services.global_catalog_bulk_images import (
     BulkImportError,
     extract_zip,
@@ -27,7 +41,14 @@ from app.services.global_catalog_bulk_images import (
     match_bulk_rows,
     read_bounded_zip_body,
 )
-from app.services.image_pipeline import normalize_flyer_image, read_bounded_image_body, require_supported_image_mime_type, store_flyer_image
+from app.services.global_catalog_excel import build_template, parse_workbook
+from app.services.image_pipeline import (
+    normalize_flyer_image,
+    read_bounded_image_body,
+    store_flyer_image,
+)
+from app.services.product_identity import normalize_product_identity
+from app.services.product_normalization import normalized_package_values
 from app.services.rendering import storage_path_for_key
 
 router = APIRouter(prefix="/platform/catalog", tags=["platform-catalog"])
@@ -39,9 +60,30 @@ def _conflict(detail="Catalog record conflicts with existing data."):
 
 
 async def _global(session, model, item_id):
-    item = await session.scalar(select(model).where(model.id == item_id, model.is_global.is_(True)))
+    item = await session.scalar(
+        select(model).where(
+            model.id == item_id,
+            model.is_global.is_(True),
+            model.market_id.is_(None),
+        )
+    )
     if item is None:
         raise HTTPException(status_code=404, detail=f"{model.__name__} not found.")
+    return item
+
+
+async def _global_reference(session, model, item_id, label):
+    if item_id is None:
+        return None
+    item = await session.scalar(
+        select(model).where(
+            model.id == item_id,
+            model.is_global.is_(True),
+            model.market_id.is_(None),
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Global {label} not found.")
     return item
 
 
@@ -243,6 +285,8 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
 
 @router.post("/products", response_model=PlatformProductRead, status_code=201)
 async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    await _global_reference(session, Brand, payload.brand_id, "brand")
+    await _global_reference(session, Category, payload.category_id, "category")
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
     if any(_canonical_identity(product.name, product.package_size) == _canonical_identity(payload.name, payload.package_size) for product in (await session.scalars(select(Product).where(Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     data = normalized_package_values(payload.model_dump(exclude={"aliases"})); row = Product(**data, is_global=True, market_id=None)
@@ -257,6 +301,12 @@ async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: Pl
     await _global(session, Product, product_id)
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == product_id))
     data = normalized_package_values(payload.model_dump(exclude_unset=True, exclude={"aliases"}))
+    await _global_reference(
+        session, Brand, data.get("brand_id", row.brand_id), "brand"
+    )
+    await _global_reference(
+        session, Category, data.get("category_id", row.category_id), "category"
+    )
     if "barcode" in data and data["barcode"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), Product.barcode == data["barcode"])): raise _conflict("A global product with this barcode already exists.")
     if "name" in data and data["name"] and any(_canonical_identity(product.name, product.package_size) == _canonical_identity(data["name"], data.get("package_size", row.package_size)) for product in (await session.scalars(select(Product).where(Product.id != product_id, Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     for key, value in data.items(): setattr(row, key, value)
@@ -568,7 +618,15 @@ async def import_products(request: Request, _: PlatformAdmin = admin, session: A
         if row["status"] == "unchanged": result["unchanged"] += 1; product = await session.get(Product, UUID(row["product_id"]))
         else:
             product = await session.get(Product, UUID(row["product_id"])) if row.get("product_id") else None
-            values = dict(name=row["canonical_name"], barcode=row["barcode_sku"] or None, package_size=row["package_size"] or None, package_type=row["package_type"] or None, is_active=row["active"], brand_id=brands[row["brand"].casefold()].id if row["brand"] else None, category_id=categories[row["category"].casefold()].id if row["category"] else None)
+            values = normalized_package_values({
+                "name": row["canonical_name"],
+                "barcode": row["barcode_sku"] or None,
+                "package_size": row["package_size"] or None,
+                "package_type": row["package_type"] or None,
+                "is_active": row["active"],
+                "brand_id": brands[row["brand"].casefold()].id if row["brand"] else None,
+                "category_id": categories[row["category"].casefold()].id if row["category"] else None,
+            })
             if product is None: product = Product(**values, is_global=True, market_id=None); session.add(product); result["created"] += 1
             else:
                 for key, value in values.items(): setattr(product, key, value)

@@ -1,9 +1,15 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from app.services.product_normalization import normalize_currency, normalize_package_type, normalize_package_unit
+
+from app.services.product_normalization import (
+    normalize_currency,
+    normalize_package_type,
+    normalize_package_unit,
+)
 
 
 class MarketProductBase(BaseModel):
@@ -36,6 +42,7 @@ class MarketProductAdoptCreate(MarketProductBase):
 
 class PrivateMarketProductCreate(MarketProductBase):
     private_name: str = Field(min_length=1, max_length=255)
+    allow_global_match_override: bool = False
 
 
 class MarketProductRead(MarketProductBase):
@@ -55,7 +62,7 @@ class MarketProductRead(MarketProductBase):
 
 
 class MarketProductUpdate(MarketProductBase):
-    pass
+    private_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class ResolvedMarketProductRead(BaseModel):
@@ -78,6 +85,10 @@ class ResolvedMarketProductRead(BaseModel):
     sort_order: int
     is_active: bool
     source_type: str
+    source_state: Literal["global", "local", "global_override"]
+    global_product_id: UUID | None
+    inherited_values: dict[str, Any]
+    override_values: dict[str, Any]
     image_url: str | None
     image_override_active: bool
     promo_active: bool
@@ -95,3 +106,48 @@ class SharedCatalogProductRead(BaseModel):
     image_url: str | None
     is_active: bool
     already_added: bool
+
+
+class CatalogProductMatchRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    barcode: str | None = Field(default=None, max_length=64)
+    brand: str | None = Field(default=None, max_length=255)
+    brand_id: UUID | None = None
+    package_size: str | None = Field(default=None, max_length=64)
+    package_type: str | None = Field(default=None, max_length=64)
+    package_amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+    package_unit: str | None = Field(default=None, max_length=16)
+    package_type_canonical: str | None = Field(default=None, max_length=64)
+
+    _canonical_unit = field_validator("package_unit", mode="before")(
+        lambda value: normalize_package_unit(value, strict=value is not None)
+    )
+    _canonical_type = field_validator("package_type_canonical", mode="before")(
+        lambda value: normalize_package_type(value, strict=value is not None)
+    )
+
+
+class CatalogProductMatchCandidate(BaseModel):
+    product_id: UUID
+    name: str
+    brand: str | None
+    package_size: str | None
+    package_type: str | None
+    package_amount: Decimal | None
+    package_unit: str | None
+    package_type_canonical: str | None
+    image_url: str | None
+    match_type: Literal["exact", "strong"]
+    match_reason: str
+    already_adopted: bool
+
+
+class CatalogProductMatchResponse(BaseModel):
+    match_type: Literal["exact", "strong", "none", "ambiguous"]
+    match_reason: str
+    candidate_count: int = Field(ge=0)
+    candidates: list[CatalogProductMatchCandidate]
+
+
+class MarketProductLinkGlobalRequest(BaseModel):
+    product_id: UUID

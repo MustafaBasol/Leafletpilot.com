@@ -4584,3 +4584,43 @@ tbody tr:hover {
 .bulk-image-success h3, .bulk-image-success p { margin: 0; }
 .bulk-image-success p { margin-top: 4px; color: var(--neutral-600); }
 @media (max-width: 900px) { .bulk-image-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Market catalog matching and inherited-value summary. */
+.catalog-match-result {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-lg);
+  background: var(--neutral-50);
+  padding: 14px;
+}
+
+.catalog-match-result--exact,
+.catalog-match-result--strong { border-color: var(--success-200, #a7e3c0); background: var(--success-50, #effcf4); }
+.catalog-match-result--ambiguous { border-color: var(--warning-200, #f4d58a); background: var(--warning-50, #fff9e8); }
+.catalog-match-heading, .catalog-match-candidate > div { display: grid; gap: 3px; }
+.catalog-match-heading small, .catalog-match-candidate small, .catalog-match-result > small { color: var(--neutral-600); }
+.catalog-match-candidate { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid var(--neutral-200); }
+.catalog-match-existing { color: var(--neutral-600); font-size: 12px; font-weight: 800; }
+
+.catalog-inherited-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 14px 0;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  background: var(--neutral-50);
+  padding: 12px;
+  color: var(--neutral-700);
+  font-size: 13px;
+}
+
+.catalog-inherited-summary small { grid-column: 1 / -1; color: var(--neutral-600); }
+
+@media (max-width: 640px) {
+  .catalog-match-candidate { grid-template-columns: auto minmax(0, 1fr); }
+  .catalog-match-candidate > button, .catalog-match-existing { grid-column: 1 / -1; justify-self: start; }
+  .catalog-inherited-summary { grid-template-columns: 1fr; }
+  .catalog-inherited-summary small { grid-column: 1; }
+}

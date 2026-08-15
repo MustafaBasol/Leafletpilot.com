@@ -736,6 +736,8 @@ async def validate_visible_market_product(session: AsyncSession, market_product_
             selectinload(MarketProduct.product).selectinload(Product.brand),
             selectinload(MarketProduct.product).selectinload(Product.category),
             selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.legacy_product).selectinload(Product.brand),
+            selectinload(MarketProduct.category_override),
         )
         .where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id, MarketProduct.is_active.is_(True))
     )

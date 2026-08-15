@@ -48,6 +48,7 @@ def test_normalize_product_text_handles_turkish_punctuation_whitespace_and_units
     assert normalize_product_text("ÇİKOLATA\t100 gr.") == "cikolata 100g"
     assert normalize_barcode(" 869-123 45 ") == "86912345"
     assert normalize_barcode("abc") is None
+    assert normalize_barcode("SKU123") == "raw:sku123"
 
 
 def test_scoring_exact_alias_fuzzy_and_barcode_priority() -> None:
@@ -59,6 +60,11 @@ def test_scoring_exact_alias_fuzzy_and_barcode_priority() -> None:
     assert barcode[0].product.id == cola.id
     assert barcode[0].score == Decimal("100.00")
     assert barcode[0].reason == "barcode"
+
+    sku_product = _product("Imported SKU Product", barcode="SKU-123")
+    sku = rank_product_suggestions([sku_product, cola], "Unrelated", barcode="sku-123")
+    assert sku[0].product.id == sku_product.id
+    assert sku[0].reason == "barcode"
 
     exact = rank_product_suggestions(products, "coca cola 2 litre")
     assert exact[0].product.id == cola.id
@@ -90,7 +96,9 @@ def test_duplicate_products_are_returned_once_and_ranked_by_score() -> None:
 @pytest.mark.asyncio
 async def test_product_matching_integration_runs_when_test_database_url_is_configured() -> None:
     if not settings.test_database_url:
-        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed product matching tests skipped.")
+        pytest.skip(
+            "TEST_DATABASE_URL is not configured; DB-backed product matching tests skipped."
+        )
 
     engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -104,17 +112,31 @@ async def test_product_matching_integration_runs_when_test_database_url_is_confi
         session.add_all(
             [
                 Market(id=market_id, name=f"Matching Market {market_id}", slug=f"mm-{market_id}"),
-                Market(id=other_market_id, name=f"Other Market {other_market_id}", slug=f"om-{other_market_id}"),
+                Market(
+                    id=other_market_id,
+                    name=f"Other Market {other_market_id}",
+                    slug=f"om-{other_market_id}",
+                ),
             ]
         )
-        global_product = Product(id=uuid4(), name="Global Sugar 1KG", is_global=True, market_id=None)
-        market_product = Product(id=uuid4(), name="Market Milk 1L", market_id=market_id, is_global=False)
+        global_product = Product(
+            id=uuid4(), name="Global Sugar 1KG", is_global=True, market_id=None
+        )
+        market_product = Product(
+            id=uuid4(), name="Market Milk 1L", market_id=market_id, is_global=False
+        )
         market_product.aliases = [
-            ProductAlias(alias="Market Sut 1 LT", normalized_alias=normalize_product_text("Market Sut 1 LT"))
+            ProductAlias(
+                alias="Market Sut 1 LT", normalized_alias=normalize_product_text("Market Sut 1 LT")
+            )
         ]
         other_product = Product(id=uuid4(), name="Other Market Cheese", market_id=other_market_id)
-        inactive_product = Product(id=uuid4(), name="Inactive Milk 1L", market_id=market_id, is_active=False)
-        barcode_product = Product(id=uuid4(), name="Barcode Cola 2L", barcode="8690001", market_id=market_id)
+        inactive_product = Product(
+            id=uuid4(), name="Inactive Milk 1L", market_id=market_id, is_active=False
+        )
+        barcode_product = Product(
+            id=uuid4(), name="Barcode Cola 2L", barcode="8690001", market_id=market_id
+        )
         campaign = Campaign(id=uuid4(), title="Matching Campaign", market_id=market_id)
         exact_item = CampaignItem(
             id=uuid4(),

@@ -2,9 +2,13 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic import field_validator
-from app.services.product_normalization import normalize_currency, normalize_package_type, normalize_package_unit
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.services.product_normalization import (
+    normalize_currency,
+    normalize_package_type,
+    normalize_package_unit,
+)
 
 
 class ProductAliasCreate(BaseModel):
@@ -90,6 +94,7 @@ class ProductBase(BaseModel):
 class ProductCreate(ProductBase):
     aliases: list[str | ProductAliasCreate] = Field(default_factory=list)
     images: list[ProductImageCreate] = Field(default_factory=list)
+    allow_global_match_override: bool = False
 
 
 class ProductUpdate(BaseModel):

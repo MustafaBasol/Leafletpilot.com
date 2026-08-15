@@ -38,6 +38,7 @@ export function createCategory(payload, marketId) {
 
 export function listSharedCatalog(params, marketId) { return apiClient.get("/catalog/shared", { params, marketId }); }
 export function listMyProducts(params, marketId) { return apiClient.get("/catalog/my-products", { params, marketId }); }
+export function matchGlobalProducts(payload, marketId) { return apiClient.post("/catalog/products/match", payload, { marketId }); }
 export function adoptSharedProduct(productId, payload, marketId) { return apiClient.post(`/catalog/shared/${productId}/adopt`, payload, { marketId }); }
 export function updateMyProduct(productId, payload, marketId) { return apiClient.patch(`/catalog/my-products/${productId}`, payload, { marketId }); }
 export function createPrivateProduct(payload, marketId) { return apiClient.post("/catalog/private-products", payload, { marketId }); }
