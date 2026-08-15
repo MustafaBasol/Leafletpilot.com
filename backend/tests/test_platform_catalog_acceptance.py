@@ -11,12 +11,15 @@ from uuid import UUID, uuid4
 
 import pytest
 import httpx
+from openpyxl import Workbook
+from sqlalchemy import select
 from PIL import Image
 from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.core.security import create_access_token, create_platform_access_token, hash_password
 from app.main import app
-from app.models import Brand, Category, Market, MarketProduct, MarketUser, PlatformAdmin, Product, ProductImage, User
+from app.services.global_catalog_excel import COLUMNS
+from app.models import Brand, Category, Market, MarketProduct, MarketUser, PlatformAdmin, Product, ProductAlias, ProductImage, User
 
 
 async def _seed(prefix: str) -> dict:
@@ -248,3 +251,59 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     assert (await client.patch(f"/api/platform/catalog/products/{product_id}", headers=market_headers, json={"name": f"{prefix} Market Mutation"})).status_code == 401
     assert (await client.post("/api/platform/catalog/brands", headers=market_headers, json={"name": f"{prefix} Market Brand"})).status_code == 401
     await client.aclose()
+
+@pytest.mark.asyncio
+async def test_global_catalog_import_deduplicates_normalized_aliases_and_preserves_images() -> None:
+    if AsyncSessionLocal is None:
+        pytest.skip("DATABASE_URL is not configured.")
+
+    prefix = f"alias-dedup-{uuid4().hex[:10]}"
+    seeded = await _seed(prefix)
+    product = seeded["products"][0]
+    product.name = "Coca Cola 1L"
+    product.barcode = f"{prefix}-coca-cola-1l"
+    product.package_size = "1"
+    product.package_type = "L"
+    existing_image_id: UUID
+    async with AsyncSessionLocal() as session:
+        stored_product = await session.get(Product, product.id)
+        stored_product.name = product.name
+        stored_product.barcode = product.barcode
+        stored_product.package_size = product.package_size
+        stored_product.package_type = product.package_type
+        existing_image_id = await session.scalar(
+            select(ProductImage.id).where(ProductImage.product_id == product.id)
+        )
+        await session.commit()
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Ürünler"
+    sheet.append(COLUMNS)
+    brand = seeded["brands"][0]
+    category = seeded["categories"][0]
+    sheet.append(("Coca Cola 1L", brand.name, category.name, product.barcode, "1", "L", "Coca Cola 1 Lt;Coca-Cola 1L", "true", ""))
+    sheet.append((f"{prefix} New Product 1", brand.name, category.name, f"{prefix}-new-1", "500", "g", "New One;New 1", "true", ""))
+    sheet.append((f"{prefix} New Product 2", brand.name, category.name, f"{prefix}-new-2", "750", "ml", "New Two", "true", ""))
+    workbook = io.BytesIO()
+    book.save(workbook)
+    content = workbook.getvalue()
+
+    headers = {"Authorization": f"Bearer {create_platform_access_token(str(seeded['admin'].id))}", "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        preview = await client.post("/api/platform/catalog/products/import/preview", headers=headers, content=content)
+        assert preview.status_code == 200
+        assert preview.json()["counts"] == {"total": 3, "new": 2, "update": 1, "unchanged": 0, "invalid": 0, "ambiguous": 0, "conflict": 0, "with_image": 0, "images_missing": 0, "images_invalid": 0}
+
+        imported = await client.post("/api/platform/catalog/products/import", headers=headers, content=content)
+        assert imported.status_code == 200
+        assert imported.json()["created"] == 2
+        assert imported.json()["updated"] == 1
+        assert imported.json()["conflicts"] == 0
+
+    async with AsyncSessionLocal() as session:
+        products = list((await session.scalars(select(Product).where(Product.barcode == product.barcode))).all())
+        assert len(products) == 1
+        aliases = list((await session.scalars(select(ProductAlias).where(ProductAlias.product_id == product.id))).all())
+        assert [(alias.alias, alias.normalized_alias) for alias in aliases] == [("Coca Cola 1 Lt", "coca cola 1000ml")]
+        assert await session.scalar(select(ProductImage.id).where(ProductImage.id == existing_image_id)) == existing_image_id

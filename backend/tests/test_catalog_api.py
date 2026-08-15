@@ -15,7 +15,7 @@ from app.models import Brand, Category, Market, MarketUser, Product, User
 from app.schemas.brand import BrandCreate
 from app.schemas.category import CategoryCreate
 from app.schemas.product import ProductCreate
-from app.services.catalog import normalize_alias, slugify
+from app.services.catalog import normalize_alias, reconcile_aliases, slugify
 
 client = TestClient(app)
 
@@ -60,6 +60,25 @@ def test_slug_generation_works() -> None:
 
 def test_alias_normalization_works() -> None:
     assert normalize_alias("  SÜT, 1L!!  ") == "sut 1000ml"
+
+
+@pytest.mark.parametrize(
+    ("values", "expected_normalized", "expected_aliases"),
+    [
+        (["Coca Cola 1L", "Coca Cola 1000 ml"], ["coca cola 1000ml"], ["Coca Cola 1L"]),
+        (["Eti Burçak", "Eti Burcak"], ["eti burcak"], ["Eti Burçak"]),
+        (["Duplicate", "Duplicate"], ["duplicate"], ["Duplicate"]),
+        (["", "   ", "Distinct Alias"], ["distinct alias"], ["Distinct Alias"]),
+        (["First Alias", "Second Alias"], ["first alias", "second alias"], ["First Alias", "Second Alias"]),
+    ],
+)
+def test_reconcile_aliases_collapses_normalized_duplicates(
+    values: list[str], expected_normalized: list[str], expected_aliases: list[str]
+) -> None:
+    reconciled = reconcile_aliases(values)
+
+    assert [alias.normalized_alias for alias in reconciled] == expected_normalized
+    assert [alias.alias for alias in reconciled] == expected_aliases
 
 
 @pytest.mark.asyncio
