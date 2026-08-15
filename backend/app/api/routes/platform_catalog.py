@@ -268,11 +268,13 @@ async def upload_image(product_id: UUID, request: Request, primary: bool = False
         width=asset.width,
         height=asset.height,
         has_transparent_background=asset.has_alpha,
-        quality_status="needs_review",
+        # A manually uploaded platform-admin image is already reviewed.
+        # Import pipelines keep their explicit needs_review state.
+        quality_status="good",
         is_primary=primary,
     )
     session.add(image); await session.commit(); await session.refresh(image)
-    return {"id": image.id, "product_id": row.id, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "is_primary": image.is_primary}
+    return {"id": image.id, "product_id": row.id, "mime_type": image.mime_type, "size_bytes": image.size_bytes, "quality_status": image.quality_status, "is_primary": image.is_primary}
 
 
 @router.patch("/products/{product_id}/images/{image_id}/primary", response_model=dict)
