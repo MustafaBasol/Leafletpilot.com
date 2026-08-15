@@ -1,4 +1,4 @@
-﻿import { demoMarketId, isRealApiEnabled } from "../api/config.js";
+import { demoMarketId, isRealApiEnabled } from "../api/config.js";
 import * as catalogApi from "../api/catalogApi.js";
 import { getSelectedMarketId } from "../api/authSession.js";
 import * as campaignApi from "../api/campaignApi.js";
@@ -220,6 +220,9 @@ function mapProduct(product, { brandsById = new Map(), categoriesById = new Map(
     category: categoryName,
     barcode: product.barcode || "-",
     packageSize: product.package_size || "",
+    packageAmount: product.package_amount ?? "",
+    packageUnit: product.package_unit || "",
+    packageTypeCanonical: product.package_type_canonical || "",
     packageType: product.package_type || "",
     regularPrice: product.regular_price ?? "",
     promoPrice: product.promo_price ?? "",
@@ -547,6 +550,9 @@ function buildProductPayload(form, { includeAliases = false } = {}) {
     category_id: cleanOptionalId(form.categoryId),
     package_size: cleanText(form.packageSize),
     package_type: cleanText(form.packageType),
+    package_amount: form.packageAmount === "" || form.packageAmount === null ? null : Number(form.packageAmount),
+    package_unit: cleanText(form.packageUnit),
+    package_type_canonical: cleanText(form.packageTypeCanonical),
     regular_price: form.regularPrice === "" || form.regularPrice === null ? null : Number(form.regularPrice),
     promo_price: form.promoPrice === "" || form.promoPrice === null ? null : Number(form.promoPrice),
     currency: cleanText(form.currency || "EUR")?.toUpperCase(),

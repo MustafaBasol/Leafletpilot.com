@@ -110,22 +110,24 @@ async def list_brands(
     return await _list(session, statement.order_by(Brand.name), limit, offset)
 
 
-async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: UUID | None) -> Brand:
-    if payload.is_global:
-        raise _global_mutation_forbidden()
-    data = payload.model_dump()
-    data["name"] = data["name"].strip()
-    data["slug"] = data["slug"] or slugify(data["name"])
-    data["market_id"] = resolve_market_scope(data["is_global"], market_id)
-    existing = await session.scalar(select(Brand).where(Brand.market_id == data["market_id"], Brand.slug == data["slug"]))
-    if existing:
-        return existing
-    brand = Brand(**data)
-    # Keeping the submitted spelling as an alias makes punctuation/case variants
-    # discoverable without turning local brands into global records.
-    brand.aliases = [BrandAlias(alias=data["name"], normalized_alias=normalize_alias(data["name"]))]
-    return await _persist(session, brand)
+async def _brands_for_normalized_name(session: AsyncSession, normalized: str, market_id: UUID | None) -> list[Brand]:
+    statement = select(Brand).options(selectinload(Brand.aliases)).where(or_(Brand.aliases.any(BrandAlias.normalized_alias == normalized), Brand.name.ilike(normalized)))
+    statement = statement.where(Brand.is_global.is_(True)) if market_id is None else statement.where(Brand.market_id == market_id)
+    return [brand for brand in (await session.scalars(statement)).unique().all() if normalize_alias(brand.name) == normalized or any(alias.normalized_alias == normalized for alias in brand.aliases)]
 
+
+async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: UUID | None) -> Brand:
+    if payload.is_global: raise _global_mutation_forbidden()
+    data = payload.model_dump(); data["name"] = data["name"].strip(); normalized = normalize_alias(data["name"])
+    global_matches = await _brands_for_normalized_name(session, normalized, None)
+    if len(global_matches) == 1: return global_matches[0]
+    if len(global_matches) > 1: raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Brand alias is ambiguous in the global catalog.")
+    scoped_market_id = resolve_market_scope(False, market_id); local_matches = await _brands_for_normalized_name(session, normalized, scoped_market_id)
+    if len(local_matches) == 1: return local_matches[0]
+    if len(local_matches) > 1: raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Brand alias is ambiguous in this market.")
+    data["slug"] = data["slug"] or slugify(data["name"]); data["market_id"] = scoped_market_id
+    brand = Brand(**data); brand.aliases = [BrandAlias(alias=data["name"], normalized_alias=normalized)]
+    return await _persist(session, brand)
 
 async def get_brand(session: AsyncSession, brand_id: UUID, market_id: UUID | None) -> Brand:
     brand = await _get_scoped(session, Brand, brand_id, market_id)
@@ -627,9 +629,9 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
         "category": row.category_override.name if row.category_override else global_category,
         "package_size": row.private_package_size or format_package(row.package_amount, row.package_unit) or (product.package_size if product else None),
         "package_type": row.private_package_type or (product.package_type if product else None),
-        "package_amount": row.package_amount or (product.package_amount if product else None),
-        "package_unit": row.package_unit or (product.package_unit if product else None),
-        "package_type_canonical": row.package_type_canonical or (product.package_type_canonical if product else None),
+        "package_amount": row.package_amount if row.package_amount is not None else (product.package_amount if product else None),
+        "package_unit": row.package_unit if row.package_unit is not None else (product.package_unit if product else None),
+        "package_type_canonical": row.package_type_canonical if row.package_type_canonical is not None else (product.package_type_canonical if product else None),
         "regular_price": row.regular_price if row.regular_price is not None else (product.regular_price if product else None),
         "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
         "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),

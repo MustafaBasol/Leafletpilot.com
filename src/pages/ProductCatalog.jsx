@@ -18,6 +18,9 @@ const emptyProduct = {
   categoryId: "",
   barcode: "",
   packageSize: "",
+  packageAmount: "",
+  packageUnit: "",
+  packageTypeCanonical: "",
   packageType: "",
   regularPrice: "",
   promoPrice: "",
@@ -122,12 +125,10 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
             <option value="Pasif">Pasif</option>
           </select>
         </Field>
-        <Field label="Paket boyutu">
-          <input value={form.packageSize || ""} onChange={(event) => update("packageSize", event.target.value)} />
-        </Field>
-        <Field label="Paket tipi">
-          <select value={form.packageType || ""} onChange={(event) => update("packageType", event.target.value)}><option value="">Seçilmedi</option><option value="şişe">Şişe</option><option value="kutu">Kutu</option><option value="poşet">Poşet</option><option value="kavanoz">Kavanoz</option><option value="paket">Paket</option></select>
-        </Field>
+        <Field label="Paket miktarı"><input type="number" min="0.001" step="0.001" value={form.packageAmount ?? ""} onChange={(event) => update("packageAmount", event.target.value)} /></Field>
+        <Field label="Paket birimi"><select value={form.packageUnit || ""} onChange={(event) => update("packageUnit", event.target.value)}><option value="">Seçilmedi</option><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="cl">cl</option><option value="l">l</option><option value="pcs">adet</option></select></Field>
+        <Field label="Paket tipi"><select value={form.packageTypeCanonical || ""} onChange={(event) => update("packageTypeCanonical", event.target.value)}><option value="">Seçilmedi</option><option value="bottle">Şişe</option><option value="can">Teneke</option><option value="box">Kutu</option><option value="bag">Poşet</option><option value="jar">Kavanoz</option><option value="packet">Paket</option></select></Field>
+        <Field label="Eski paket metni"><input value={form.packageSize || ""} onChange={(event) => update("packageSize", event.target.value)} /></Field>
         <Field label="Normal fiyat">
           <input type="number" min="0" step="0.01" value={form.regularPrice ?? ""} onChange={(event) => update("regularPrice", event.target.value)} />
         </Field>
@@ -135,7 +136,7 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
           <input type="number" min="0" step="0.01" value={form.promoPrice ?? ""} onChange={(event) => update("promoPrice", event.target.value)} required />
         </Field>
         <Field label="Para birimi">
-          <select value={form.currency || "EUR"} onChange={(event) => update("currency", event.target.value)}><option value="TRY">TRY</option><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option></select>
+          <select value={form.currency || "EUR"} onChange={(event) => update("currency", event.target.value)}><option value="TRY">TRY</option><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option><option value="CHF">CHF</option></select>
         </Field>
         <Field label="Kampanya rozeti">
           <input placeholder="TOP DEAL" value={form.badgeText || ""} onChange={(event) => update("badgeText", event.target.value)} />

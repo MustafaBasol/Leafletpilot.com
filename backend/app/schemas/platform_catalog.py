@@ -2,7 +2,8 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.services.product_normalization import normalize_currency, normalize_package_type, normalize_package_unit
 
 
 class PlatformCatalogBase(BaseModel):
@@ -73,9 +74,12 @@ class PlatformProductCreate(BaseModel):
     category_id: UUID | None = None
     package_size: str | None = Field(default=None, max_length=64)
     package_type: str | None = Field(default=None, max_length=64)
-    package_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=3)
+    package_amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
     package_unit: str | None = Field(default=None, max_length=16)
     package_type_canonical: str | None = Field(default=None, max_length=64)
+
+    _canonical_unit = field_validator("package_unit", mode="before")(lambda value: normalize_package_unit(value, strict=value is not None))
+    _canonical_type = field_validator("package_type_canonical", mode="before")(lambda value: normalize_package_type(value, strict=value is not None))
     sort_order: int = 0
     is_active: bool = True
     quality_score: int | None = Field(default=None, ge=0, le=100)
@@ -118,4 +122,3 @@ class PlatformImageIdsPayload(BaseModel):
 class PlatformBulkImageResolution(BaseModel):
     row_index: int
     product_id: UUID
-

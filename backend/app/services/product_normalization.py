@@ -1,21 +1,35 @@
-"""Small, deterministic normalizers for product catalogue input.
-
-The display fields remain additive compatibility fields; callers can safely send
-the historical ``package_size`` / ``package_type`` values during rollout.
-"""
+"""Small, deterministic normalizers for product catalogue input."""
 from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
 
-_PACKAGE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(ml|cl|l|g|kg|mg|adet|pcs?|pack)\b", re.I)
-_UNITS = {"ml": "ml", "cl": "cl", "l": "L", "g": "g", "kg": "kg", "mg": "mg", "adet": "adet", "pc": "adet", "pcs": "adet", "pack": "paket"}
-_TYPES = {"bottle": "şişe", "şişe": "şişe", "can": "kutu", "kutu": "kutu", "box": "kutu", "bag": "poşet", "poşet": "poşet", "jar": "kavanoz", "kavanoz": "kavanoz", "packet": "paket", "paket": "paket"}
+PACKAGE_UNITS = ("g", "kg", "ml", "cl", "l", "pcs")
+PACKAGE_TYPES = ("bottle", "can", "box", "bag", "jar", "packet")
+CURRENCIES = ("EUR", "TRY", "USD", "GBP", "CHF")
+_PACKAGE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(grammes?|gr|g|kilogrammes?|kilogram|kilo|kg|millilitres?|ml|cl|litres?|lt|l|pi[eè]ces?|pcs?|adet)\s*$", re.I)
+_UNITS = {"g": "g", "gr": "g", "gram": "g", "gramme": "g", "grammes": "g", "kg": "kg", "kilo": "kg", "kilogram": "kg", "kilogramme": "kg", "kilogrammes": "kg", "ml": "ml", "millilitre": "ml", "millilitres": "ml", "cl": "cl", "l": "l", "lt": "l", "litre": "l", "litres": "l", "pc": "pcs", "pcs": "pcs", "adet": "pcs", "pièce": "pcs", "piece": "pcs", "pièces": "pcs", "pieces": "pcs"}
+_TYPES = {"bottle": "bottle", "şişe": "bottle", "sise": "bottle", "can": "can", "teneke": "can", "box": "box", "kutu": "box", "bag": "bag", "poşet": "bag", "poset": "bag", "jar": "jar", "kavanoz": "jar", "packet": "packet", "paket": "packet"}
 
 
-def normalize_currency(value: str | None, default: str = "EUR") -> str:
-    value = (value or default).strip().upper()
-    return value if value in {"EUR", "TRY", "USD", "GBP"} else default
+def normalize_currency(value: str | None, default: str = "EUR", *, strict: bool = False) -> str:
+    if value is None or not str(value).strip():
+        return default
+    currency = str(value).strip().upper()
+    if currency in CURRENCIES:
+        return currency
+    if strict:
+        raise ValueError(f"Unsupported currency: {value}")
+    return default
+
+
+def normalize_package_unit(value: str | None, *, strict: bool = False) -> str | None:
+    if value is None or not str(value).strip():
+        return None
+    unit = _UNITS.get(str(value).strip().casefold())
+    if unit is None and strict:
+        raise ValueError(f"Unsupported package unit: {value}")
+    return unit
 
 
 def parse_package(value: str | None, unit: str | None = None) -> tuple[Decimal | None, str | None]:
@@ -23,10 +37,10 @@ def parse_package(value: str | None, unit: str | None = None) -> tuple[Decimal |
         match = _PACKAGE.match(value)
         if match:
             try:
-                return Decimal(match.group(1).replace(",", ".")), _UNITS[match.group(2).lower()]
+                return Decimal(match.group(1).replace(",", ".")), _UNITS[match.group(2).casefold()]
             except (InvalidOperation, KeyError):
                 pass
-    return None, (_UNITS.get((unit or "").strip().lower()) or unit)
+    return None, normalize_package_unit(unit)
 
 
 def format_package(amount: Decimal | None, unit: str | None, fallback: str | None = None) -> str | None:
@@ -38,20 +52,31 @@ def format_package(amount: Decimal | None, unit: str | None, fallback: str | Non
     return f"{text} {unit}"
 
 
-def normalize_package_type(value: str | None) -> str | None:
+def normalize_package_type(value: str | None, *, strict: bool = False) -> str | None:
     if not value:
         return None
-    return _TYPES.get(value.strip().casefold(), value.strip().casefold())
+    normalized = _TYPES.get(value.strip().casefold())
+    if normalized is None and strict:
+        raise ValueError(f"Unsupported package type: {value}")
+    return normalized
 
 
 def normalized_package_values(data: dict) -> dict:
-    """Fill additive canonical package fields without changing legacy display input."""
+    """Add normalized fields without overwriting omitted PATCH fields."""
     result = dict(data)
-    amount, unit = parse_package(result.get("package_size"), result.get("package_unit"))
-    if result.get("package_amount") is None:
-        result["package_amount"] = amount
-    if not result.get("package_unit"):
-        result["package_unit"] = unit
-    result["package_type_canonical"] = normalize_package_type(result.get("package_type_canonical") or result.get("package_type"))
-    result["currency"] = normalize_currency(result.get("currency"))
+    parsed_amount, parsed_unit = parse_package(result.get("package_size")) if "package_size" in result else (None, None)
+    if "package_amount" not in result and parsed_amount is not None:
+        result["package_amount"] = parsed_amount
+    if "package_unit" in result:
+        result["package_unit"] = normalize_package_unit(result["package_unit"], strict=result["package_unit"] is not None)
+    elif parsed_unit is not None:
+        result["package_unit"] = parsed_unit
+    if "package_type_canonical" in result:
+        result["package_type_canonical"] = normalize_package_type(result["package_type_canonical"], strict=result["package_type_canonical"] is not None)
+    elif result.get("package_type"):
+        result["package_type_canonical"] = normalize_package_type(result["package_type"])
+    if "currency" in result:
+        result["currency"] = normalize_currency(result["currency"], strict=result["currency"] is not None)
+    if "package_size" not in result and result.get("package_amount") is not None and result.get("package_unit"):
+        result["package_size"] = format_package(result["package_amount"], result["package_unit"])
     return result
