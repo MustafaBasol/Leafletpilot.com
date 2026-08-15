@@ -16,7 +16,7 @@ from app.schemas.platform_catalog import (
     PlatformCategoryCreate, PlatformCategoryRead, PlatformCategoryUpdate, PlatformImageIdsPayload,
     PlatformProductCreate, PlatformProductRead, PlatformProductUpdate,
 )
-from app.services.catalog import normalize_alias, slugify
+from app.services.catalog import normalize_alias, reconcile_aliases, slugify
 from app.services.product_identity import normalize_product_identity
 from app.services.global_catalog_excel import COLUMNS, MAX_ROWS, build_template, parse_workbook
 from app.services.global_catalog_bulk_images import (
@@ -198,6 +198,28 @@ def _product_read(row):
     )
 
 
+def _product_aliases(values, *, source: str | None = None, product_id: UUID | None = None) -> list[ProductAlias]:
+    """Build one alias row per normalized identity, retaining the first source."""
+    source_by_normalized_alias: dict[str, str | None] = {}
+    aliases: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            alias, alias_source = value, source
+        else:
+            alias, alias_source = value.alias, value.source
+        source_by_normalized_alias.setdefault(normalize_alias(alias), alias_source)
+        aliases.append(alias)
+    return [
+        ProductAlias(
+            product_id=product_id,
+            alias=alias.alias,
+            normalized_alias=alias.normalized_alias,
+            source=source_by_normalized_alias[alias.normalized_alias],
+        )
+        for alias in reconcile_aliases(aliases)
+    ]
+
+
 @router.get("/products", response_model=ListResponse[PlatformProductRead])
 async def list_products(search: str | None = None, barcode: str | None = None, brand_id: UUID | None = None, category_id: UUID | None = None, is_active: bool | None = None, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     conditions = [Product.is_global.is_(True)]
@@ -219,7 +241,7 @@ async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admi
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
     if any(_canonical_identity(product.name, product.package_size) == _canonical_identity(payload.name, payload.package_size) for product in (await session.scalars(select(Product).where(Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     data = payload.model_dump(exclude={"aliases"}); row = Product(**data, is_global=True, market_id=None)
-    row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
+    row.aliases = _product_aliases(payload.aliases)
     session.add(row); await session.commit()
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == row.id))
     return _product_read(row)
@@ -234,7 +256,7 @@ async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: Pl
     if "name" in data and data["name"] and any(_canonical_identity(product.name, product.package_size) == _canonical_identity(data["name"], data.get("package_size", row.package_size)) for product in (await session.scalars(select(Product).where(Product.id != product_id, Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     for key, value in data.items(): setattr(row, key, value)
     if payload.aliases is not None:
-        row.aliases = [ProductAlias(alias=a.alias, normalized_alias=normalize_alias(a.alias), source=a.source) for a in payload.aliases]
+        row.aliases = _product_aliases(payload.aliases)
     await session.commit()
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == row.id))
     return _product_read(row)
@@ -486,7 +508,9 @@ async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str
         match = code_matches[0] if code_matches else (name_matches[0] if name_matches else None)
         row["product_id"] = str(match.id) if match else None; row["identity"] = identity
         row["aliases"] = [item.strip() for item in row["aliases"].split(";") if item.strip()]
-        desired_aliases = {normalize_alias(alias) for alias in row["aliases"]}
+        reconciled_aliases = reconcile_aliases(row["aliases"])
+        row["aliases"] = [alias.alias for alias in reconciled_aliases]
+        desired_aliases = {alias.normalized_alias for alias in reconciled_aliases}
         current_aliases = {alias.normalized_alias for alias in match.aliases} if match else set()
         unchanged = match and (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"] and current_aliases == desired_aliases)
         row["status"] = "new" if not match else ("unchanged" if unchanged else "update")
@@ -526,7 +550,7 @@ async def import_products(request: Request, _: PlatformAdmin = admin, session: A
                 result["updated"] += 1
             await session.flush()
             await session.execute(delete(ProductAlias).where(ProductAlias.product_id == product.id))
-            session.add_all([ProductAlias(product_id=product.id, alias=alias, normalized_alias=normalize_alias(alias), source="platform_import") for alias in row.get("aliases", [])])
+            session.add_all(_product_aliases(row.get("aliases", []), source="platform_import", product_id=product.id))
         await session.flush()
         if row.get("image_status") == "ready":
             asset = store_flyer_image(namespace=f"global/catalog/{product.id}", original_content=images[row["image_filename"]], declared_mime_type=row["image_mime_type"])

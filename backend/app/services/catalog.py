@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -33,6 +34,27 @@ def slugify(value: str) -> str:
 def normalize_alias(value: str) -> str:
     return normalize_product_text(value)
 
+
+@dataclass(frozen=True)
+class ReconciledAlias:
+    """The deterministic display value for one normalized alias identity."""
+
+    alias: str
+    normalized_alias: str
+
+
+def reconcile_aliases(values: Iterable[str]) -> list[ReconciledAlias]:
+    """Collapse blank and equivalent aliases while preserving first display text."""
+    reconciled: list[ReconciledAlias] = []
+    seen: set[str] = set()
+    for value in values:
+        alias = value.strip()
+        normalized_alias = normalize_alias(alias)
+        if not normalized_alias or normalized_alias in seen:
+            continue
+        seen.add(normalized_alias)
+        reconciled.append(ReconciledAlias(alias=alias, normalized_alias=normalized_alias))
+    return reconciled
 
 def resolve_market_scope(is_global: bool, market_id: UUID | None) -> UUID | None:
     if is_global:
@@ -248,7 +270,7 @@ async def create_product(
     data = payload.model_dump(exclude={"aliases", "images"})
     data["market_id"] = resolve_market_scope(data["is_global"], market_id)
     product = Product(**data)
-    product.aliases = [_build_alias(alias) for alias in payload.aliases]
+    product.aliases = _build_aliases(payload.aliases)
     product.images = [ProductImage(**image.model_dump()) for image in payload.images]
     return await _persist(session, product)
 
@@ -378,6 +400,26 @@ def _build_alias(alias: str | ProductAliasCreate) -> ProductAlias:
         source = alias.source
     return ProductAlias(alias=value, normalized_alias=normalize_alias(value), source=source)
 
+
+def _build_aliases(aliases: Iterable[str | ProductAliasCreate]) -> list[ProductAlias]:
+    source_by_normalized_alias: dict[str, str | None] = {}
+    values: list[str] = []
+    for alias in aliases:
+        if isinstance(alias, str):
+            value, source = alias, None
+        else:
+            value, source = alias.alias, alias.source
+        normalized_alias = normalize_alias(value)
+        source_by_normalized_alias.setdefault(normalized_alias, source)
+        values.append(value)
+    return [
+        ProductAlias(
+            alias=alias.alias,
+            normalized_alias=alias.normalized_alias,
+            source=source_by_normalized_alias[alias.normalized_alias],
+        )
+        for alias in reconcile_aliases(values)
+    ]
 
 def _not_found(label: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} not found.")
