@@ -44,9 +44,15 @@ async function request(path, { method = "GET", params, body, headers: extraHeade
       options.body = JSON.stringify(body);
     }
   }
-  const response = await fetch(url.toString(), options);
+  let response;
+  try {
+    response = await fetch(url.toString(), options);
+  } catch {
+    throw new ApiError("Sunucuya ulaşılamadı. Lütfen tekrar deneyin.", { status: 0 });
+  }
   const text = await response.text();
-  const responseBody = text ? JSON.parse(text) : null;
+  let responseBody = null;
+  try { responseBody = text ? JSON.parse(text) : null; } catch { responseBody = null; }
   if (!response.ok) {
     throwPlatformErrorIfNeeded(response, responseBody);
   }
