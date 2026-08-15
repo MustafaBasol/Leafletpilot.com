@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -462,7 +462,7 @@ def _image_preview(rows: list[dict], images: dict[str, bytes]) -> None:
 
 async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str, bytes] | None = None) -> list[dict]:
     rows = parse_workbook(content)
-    products = list((await session.scalars(select(Product).where(Product.is_global.is_(True)))).all())
+    products = list((await session.scalars(select(Product).options(selectinload(Product.aliases)).where(Product.is_global.is_(True)))).all())
     by_barcode: dict[str, list[Product]] = {}
     by_identity: dict[str, list[Product]] = {}
     for product in products:
@@ -484,8 +484,12 @@ async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str
         code_matches = by_barcode.get(barcode, []) if barcode else []; name_matches = by_identity.get(identity, [])
         if len(code_matches) > 1 or len(name_matches) > 1 or (code_matches and name_matches and code_matches[0].id != name_matches[0].id): row.update(status="ambiguous", error="Barkod ve ürün kimliği farklı veya birden çok global ürünle eşleşiyor."); continue
         match = code_matches[0] if code_matches else (name_matches[0] if name_matches else None)
-        row["product_id"] = str(match.id) if match else None; row["identity"] = identity; row["aliases"] = [item.strip() for item in row["aliases"].split(";") if item.strip()]
-        row["status"] = "new" if not match else ("unchanged" if (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"]) else "update")
+        row["product_id"] = str(match.id) if match else None; row["identity"] = identity
+        row["aliases"] = [item.strip() for item in row["aliases"].split(";") if item.strip()]
+        desired_aliases = {normalize_alias(alias) for alias in row["aliases"]}
+        current_aliases = {alias.normalized_alias for alias in match.aliases} if match else set()
+        unchanged = match and (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"] and current_aliases == desired_aliases)
+        row["status"] = "new" if not match else ("unchanged" if unchanged else "update")
     _image_preview(rows, images or {})
     return rows
 
@@ -520,7 +524,9 @@ async def import_products(request: Request, _: PlatformAdmin = admin, session: A
             else:
                 for key, value in values.items(): setattr(product, key, value)
                 result["updated"] += 1
-            product.aliases = [ProductAlias(alias=alias, normalized_alias=normalize_alias(alias), source="platform_import") for alias in row.get("aliases", [])]
+            await session.flush()
+            await session.execute(delete(ProductAlias).where(ProductAlias.product_id == product.id))
+            session.add_all([ProductAlias(product_id=product.id, alias=alias, normalized_alias=normalize_alias(alias), source="platform_import") for alias in row.get("aliases", [])])
         await session.flush()
         if row.get("image_status") == "ready":
             asset = store_flyer_image(namespace=f"global/catalog/{product.id}", original_content=images[row["image_filename"]], declared_mime_type=row["image_mime_type"])
