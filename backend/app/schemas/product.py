@@ -3,6 +3,8 @@ from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import field_validator
+from app.services.product_normalization import normalize_currency, normalize_package_type, normalize_package_unit
 
 
 class ProductAliasCreate(BaseModel):
@@ -60,6 +62,9 @@ class ProductBase(BaseModel):
     category_id: UUID | None = None
     package_size: str | None = Field(default=None, max_length=64)
     package_type: str | None = Field(default=None, max_length=64)
+    package_amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+    package_unit: str | None = Field(default=None, max_length=16)
+    package_type_canonical: str | None = Field(default=None, max_length=64)
     regular_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     promo_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
@@ -68,6 +73,18 @@ class ProductBase(BaseModel):
     is_global: bool = False
     is_active: bool = True
     quality_score: int | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def canonical_currency(cls, value): return normalize_currency(value, strict=value is not None)
+
+    @field_validator("package_type_canonical", mode="before")
+    @classmethod
+    def canonical_type(cls, value): return normalize_package_type(value, strict=value is not None)
+
+    @field_validator("package_unit", mode="before")
+    @classmethod
+    def canonical_unit(cls, value): return normalize_package_unit(value, strict=value is not None)
 
 
 class ProductCreate(ProductBase):
@@ -83,9 +100,24 @@ class ProductUpdate(BaseModel):
     category_id: UUID | None = None
     package_size: str | None = Field(default=None, max_length=64)
     package_type: str | None = Field(default=None, max_length=64)
+    package_amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+    package_unit: str | None = Field(default=None, max_length=16)
+    package_type_canonical: str | None = Field(default=None, max_length=64)
     regular_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     promo_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def canonical_currency(cls, value): return normalize_currency(value, strict=value is not None)
+
+    @field_validator("package_unit", mode="before")
+    @classmethod
+    def canonical_unit(cls, value): return normalize_package_unit(value, strict=value is not None)
+
+    @field_validator("package_type_canonical", mode="before")
+    @classmethod
+    def canonical_type(cls, value): return normalize_package_type(value, strict=value is not None)
     sort_order: int | None = None
     badge_text: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
@@ -104,6 +136,9 @@ class ProductRead(BaseModel):
     barcode: str | None
     package_size: str | None
     package_type: str | None
+    package_amount: Decimal | None
+    package_unit: str | None
+    package_type_canonical: str | None
     regular_price: Decimal | None
     promo_price: Decimal | None
     currency: str

@@ -11,13 +11,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Brand, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
+from app.models import Brand, BrandAlias, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
 from app.schemas.brand import BrandCreate, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
 from app.services.image_pipeline import store_flyer_image
+from app.services.product_normalization import format_package, normalized_package_values
 from app.services.product_identity import normalize_product_text
 
 PUNCTUATION_RE = re.compile(r"[!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-]+")
@@ -99,7 +100,8 @@ async def list_brands(
 ) -> tuple[list[Brand], int]:
     statement = apply_scope_filters(select(Brand), Brand, market_id, include_global)
     if search:
-        statement = statement.where(Brand.name.ilike(f"%{search}%"))
+        normalized = normalize_alias(search)
+        statement = statement.where(or_(Brand.name.ilike(f"%{search}%"), Brand.aliases.any(BrandAlias.normalized_alias.ilike(f"%{normalized}%"))))
     if is_active is not None:
         statement = statement.where(Brand.is_active.is_(is_active))
     if is_global is not None:
@@ -108,15 +110,24 @@ async def list_brands(
     return await _list(session, statement.order_by(Brand.name), limit, offset)
 
 
-async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: UUID | None) -> Brand:
-    if payload.is_global:
-        raise _global_mutation_forbidden()
-    data = payload.model_dump()
-    data["slug"] = data["slug"] or slugify(data["name"])
-    data["market_id"] = resolve_market_scope(data["is_global"], market_id)
-    brand = Brand(**data)
-    return await _persist(session, brand)
+async def _brands_for_normalized_name(session: AsyncSession, normalized: str, market_id: UUID | None) -> list[Brand]:
+    statement = select(Brand).options(selectinload(Brand.aliases)).where(or_(Brand.aliases.any(BrandAlias.normalized_alias == normalized), Brand.name.ilike(normalized)))
+    statement = statement.where(Brand.is_global.is_(True)) if market_id is None else statement.where(Brand.market_id == market_id)
+    return [brand for brand in (await session.scalars(statement)).unique().all() if normalize_alias(brand.name) == normalized or any(alias.normalized_alias == normalized for alias in brand.aliases)]
 
+
+async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: UUID | None) -> Brand:
+    if payload.is_global: raise _global_mutation_forbidden()
+    data = payload.model_dump(); data["name"] = data["name"].strip(); normalized = normalize_alias(data["name"])
+    global_matches = await _brands_for_normalized_name(session, normalized, None)
+    if len(global_matches) == 1: return global_matches[0]
+    if len(global_matches) > 1: raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Brand alias is ambiguous in the global catalog.")
+    scoped_market_id = resolve_market_scope(False, market_id); local_matches = await _brands_for_normalized_name(session, normalized, scoped_market_id)
+    if len(local_matches) == 1: return local_matches[0]
+    if len(local_matches) > 1: raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Brand alias is ambiguous in this market.")
+    data["slug"] = data["slug"] or slugify(data["name"]); data["market_id"] = scoped_market_id
+    brand = Brand(**data); brand.aliases = [BrandAlias(alias=data["name"], normalized_alias=normalized)]
+    return await _persist(session, brand)
 
 async def get_brand(session: AsyncSession, brand_id: UUID, market_id: UUID | None) -> Brand:
     brand = await _get_scoped(session, Brand, brand_id, market_id)
@@ -267,7 +278,7 @@ async def create_product(
 ) -> Product:
     if payload.is_global:
         raise _global_mutation_forbidden()
-    data = payload.model_dump(exclude={"aliases", "images"})
+    data = normalized_package_values(payload.model_dump(exclude={"aliases", "images"}))
     data["market_id"] = resolve_market_scope(data["is_global"], market_id)
     product = Product(**data)
     product.aliases = _build_aliases(payload.aliases)
@@ -297,7 +308,7 @@ async def update_product(
     product = await get_product(session, product_id, market_id)
     if product.is_global:
         raise _global_mutation_forbidden()
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
         setattr(product, key, value)
     return await _persist(session, product)
 
@@ -502,6 +513,7 @@ async def adopt_global_product(
     )
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Global product is already adopted by this market.")
+    values = normalized_package_values(values)
     association = MarketProduct(
         market_id=market_id,
         product_id=product_id,
@@ -585,7 +597,7 @@ async def get_market_product(session: AsyncSession, market_product_id: UUID, mar
 
 async def update_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID, payload: MarketProductUpdate) -> MarketProduct:
     row = await get_market_product(session, market_product_id, market_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
         setattr(row, key, value)
     return await _persist(session, row)
 
@@ -615,8 +627,11 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
         "id": row.id, "market_id": row.market_id, "product_id": row.product_id or row.legacy_product_id,
         "name": effective.name, "brand": row.private_brand_text or global_brand,
         "category": row.category_override.name if row.category_override else global_category,
-        "package_size": row.private_package_size or (product.package_size if product else None),
+        "package_size": row.private_package_size or format_package(row.package_amount, row.package_unit) or (product.package_size if product else None),
         "package_type": row.private_package_type or (product.package_type if product else None),
+        "package_amount": row.package_amount if row.package_amount is not None else (product.package_amount if product else None),
+        "package_unit": row.package_unit if row.package_unit is not None else (product.package_unit if product else None),
+        "package_type_canonical": row.package_type_canonical if row.package_type_canonical is not None else (product.package_type_canonical if product else None),
         "regular_price": row.regular_price if row.regular_price is not None else (product.regular_price if product else None),
         "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
         "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),

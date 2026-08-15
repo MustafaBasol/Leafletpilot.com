@@ -54,6 +54,16 @@ class Brand(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     market: Mapped[Market | None] = relationship(back_populates="brands")
     products: Mapped[list[Product]] = relationship(back_populates="brand")
+    aliases: Mapped[list[BrandAlias]] = relationship(back_populates="brand", cascade="all, delete-orphan")
+
+
+class BrandAlias(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    __tablename__ = "brand_aliases"
+    __table_args__ = (UniqueConstraint("brand_id", "normalized_alias", name="uq_brand_alias_brand_normalized"), Index("ix_brand_aliases_normalized_alias", "normalized_alias"))
+    brand_id: Mapped[UUID] = mapped_column(ForeignKey("brands.id"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[Brand] = relationship(back_populates="aliases")
 
 
 class Category(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -121,6 +131,9 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     barcode: Mapped[str | None] = mapped_column(String(64))
     package_size: Mapped[str | None] = mapped_column(String(64))
     package_type: Mapped[str | None] = mapped_column(String(64))
+    package_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    package_unit: Mapped[str | None] = mapped_column(String(16))
+    package_type_canonical: Mapped[str | None] = mapped_column(String(64))
     regular_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     promo_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
@@ -231,6 +244,9 @@ class MarketProduct(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     private_sku: Mapped[str | None] = mapped_column(String(64))
     private_package_size: Mapped[str | None] = mapped_column(String(64))
     private_package_type: Mapped[str | None] = mapped_column(String(64))
+    package_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    package_unit: Mapped[str | None] = mapped_column(String(16))
+    package_type_canonical: Mapped[str | None] = mapped_column(String(64))
     display_name_override: Mapped[str | None] = mapped_column(String(255))
     category_override_id: Mapped[UUID | None] = mapped_column(ForeignKey("categories.id"))
     regular_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
