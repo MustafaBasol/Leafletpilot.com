@@ -29,3 +29,28 @@ test("image requests use the shared expired-session recovery", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("manual image upload sends a browser File as raw PNG bytes with primary=true", async () => {
+  const values = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  const originalFile = globalThis.File;
+  const file = new Blob([Uint8Array.of(137, 80, 78, 71)], { type: "image/png" });
+  globalThis.File = class File extends Blob { constructor(parts, name, options) { super(parts, options); this.name = name; } };
+  const browserFile = new File([file], "coca-cola-1l.png", { type: "image/png" });
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return { ok: true, text: async () => JSON.stringify({ id: "image-id", quality_status: "good" }) };
+  };
+  try {
+    await platformApi.uploadGlobalProductImage("2fda604d-77e9-4aa9-a58b-92522ce3f966", browserFile, { mimeType: browserFile.type, primary: true });
+    assert.match(captured.url, /\/images\?primary=true$/);
+    assert.equal(captured.options.headers["Content-Type"], "image/png");
+    assert.equal(captured.options.body, browserFile);
+    assert.equal(captured.options.headers.Authorization, "Bearer expired-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.File = originalFile;
+    values.clear();
+  }
+});

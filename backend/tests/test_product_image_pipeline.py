@@ -325,3 +325,14 @@ def test_frozen_snapshot_image_survives_source_product_replacement(tmp_path, mon
 
     assert before == after
     assert (tmp_path / first.storage_key).is_file()
+
+@pytest.mark.parametrize(
+    ("image_format", "mime_type", "expected_mime_type"),
+    [("PNG", "image/png", "image/png"), ("JPEG", "image/jpeg", "image/jpeg"), ("WEBP", "image/webp", "image/jpeg")],
+)
+def test_browser_declared_valid_upload_types_normalize_safely(image_format: str, mime_type: str, expected_mime_type: str) -> None:
+    content = _encode(Image.new("RGB", (64, 64), (220, 30, 60)), image_format)
+    normalized = normalize_flyer_image(content, mime_type)
+    assert normalized.mime_type == expected_mime_type
+    assert normalized.width == 64
+    assert normalized.height == 64

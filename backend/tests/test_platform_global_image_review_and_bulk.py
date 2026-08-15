@@ -89,12 +89,12 @@ async def test_review_lifecycle_and_resolver_eligibility() -> None:
         # (2) Only platform admin may upload/approve/reject global images.
         assert (await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**market_headers, "Content-Type": "image/png"}, content=_png_bytes())).status_code == 401
 
-        # (1)/(3) Platform admin upload starts in needs_review.
+        # (1)/(3) A manual platform-admin upload is trusted immediately.
         uploaded = await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": "image/png"}, content=_png_bytes(), params={"primary": True})
         assert uploaded.status_code == 201
         image_id = uploaded.json()["id"]
         uploaded_image = (await client.get("/api/platform/catalog/products", headers=platform_headers, params={"search": product_name})).json()["items"][0]["images"][0]
-        assert uploaded_image["quality_status"] == "needs_review"
+        assert uploaded_image["quality_status"] == "good"
 
         assert (await client.patch(f"/api/platform/catalog/products/{product_id}/images/{image_id}/approve", headers=market_headers)).status_code == 401
         assert (await client.patch(f"/api/platform/catalog/products/{product_id}/images/{image_id}/reject", headers=market_headers)).status_code == 401
@@ -105,12 +105,12 @@ async def test_review_lifecycle_and_resolver_eligibility() -> None:
             session.add(campaign)
             await session.commit()
 
-        # (6) needs_review is not resolver-eligible.
+        # (6) The trusted manual upload is resolver-eligible immediately.
         async with AsyncSessionLocal() as session:
             summary = await resolve_campaign_product_images(session, seeded["market"].id, campaign.id)
-        assert summary.resolved_count == 0
+        assert summary.resolved_count == 1
 
-        # (4) Approval makes the image resolver-eligible.
+        # (4) Approval remains available for imported images and is idempotent for a trusted one.
         approved = await client.patch(f"/api/platform/catalog/products/{product_id}/images/{image_id}/approve", headers=platform_headers)
         assert approved.status_code == 200 and approved.json()["quality_status"] == "good"
 
