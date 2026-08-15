@@ -113,7 +113,7 @@ def test_exif_orientation_and_opaque_photo_normalization() -> None:
     ("content", "mime_type", "detail"),
     [
         (b"not-an-image", "image/png", "invalid or corrupt"),
-        (_encode(Image.new("RGB", (4, 4)), "PNG"), "image/jpeg", "does not match"),
+        (_encode(Image.new("RGB", (4, 4)), "GIF"), "image/png", "Only PNG"),
         (_encode(Image.new("RGB", (4, 4)), "GIF"), "image/gif", "Only PNG"),
     ],
 )
@@ -212,8 +212,14 @@ def test_missing_or_legacy_alpha_metadata_remains_safe(tmp_path, monkeypatch) ->
 
 
 def _request_that_must_not_stream(content_type: str) -> Request:
+    sent = False
+
     async def receive():
-        raise AssertionError("unsupported MIME body was streamed")
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": b"not-an-image", "more_body": False}
 
     return Request(
         {
@@ -228,7 +234,7 @@ def _request_that_must_not_stream(content_type: str) -> Request:
 
 
 @pytest.mark.asyncio
-async def test_platform_upload_rejects_unsupported_mime_before_stream(monkeypatch) -> None:
+async def test_platform_upload_rejects_invalid_content_even_with_unsupported_declared_mime(monkeypatch) -> None:
     product_id = uuid4()
 
     async def global_product(*_args):
@@ -243,8 +249,8 @@ async def test_platform_upload_rejects_unsupported_mime_before_stream(monkeypatc
             session=object(),
         )
 
-    assert error.value.status_code == 415
-    assert error.value.detail == "Only PNG, JPEG, and WebP images are allowed."
+    assert error.value.status_code == 422
+    assert "invalid or corrupt" in error.value.detail
 
 
 @pytest.mark.asyncio
@@ -336,3 +342,11 @@ def test_browser_declared_valid_upload_types_normalize_safely(image_format: str,
     assert normalized.mime_type == expected_mime_type
     assert normalized.width == 64
     assert normalized.height == 64
+
+@pytest.mark.parametrize(
+    ("image_format", "declared_mime"),
+    [("JPEG", "image/png"), ("WEBP", "image/png"), ("PNG", "image/jpeg")],
+)
+def test_supported_actual_content_is_accepted_despite_browser_mime_mismatch(image_format: str, declared_mime: str) -> None:
+    normalized = normalize_flyer_image(_encode(Image.new("RGB", (64, 64)), image_format), declared_mime)
+    assert normalized.mime_type in {"image/png", "image/jpeg"}

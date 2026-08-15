@@ -22,11 +22,13 @@ test("revokes each object URL once, including duplicate references", () => {
 });
 
 const editorSource = await readFile("src/pages/platform/PlatformCatalog.jsx", "utf8");
-test("manual upload keeps the selected preview on failure and reports the saved trusted status", () => {
-  assert.match(editorSource, /catch \(err\) \{ setError\(imageUploadErrorText\(err\)\); \}/);
-  assert.match(editorSource, /Görsel kaydedildi\./);
-  assert.match(editorSource, /await refreshProduct\(\); setReplaceTarget\(null\); setNotice\("Görsel kaydedildi\."\)/);
-  assert.match(editorSource, /"Image content is invalid or corrupt\.": "Seçilen dosya geçerli bir PNG\/JPEG\/WebP görseli değil\."/);
-  assert.match(editorSource, /qualityStatusLabels = \{ excellent: "Onaylandı", good: "Onaylandı"/);
-  assert.doesNotMatch(editorSource, /Görsel yüklendi ve incelemeye gönderildi/);
+test("single save owns image upload and retains preview on partial failure", () => {
+  assert.match(editorSource, /const saveProduct = async/);
+  assert.match(editorSource, /await platformApi\.uploadGlobalProductImage\(saved\.id, file/);
+  assert.match(editorSource, /Ürün bilgileri kaydedildi ancak görsel yüklenemedi:/);
+  assert.match(editorSource, /className="visually-hidden" type="file"/);
+  assert.match(editorSource, /Ürünü Kaydet/);
+  assert.doesNotMatch(editorSource, /Görseli yükle/);
+  assert.doesNotMatch(editorSource, /Choisir un fichier/);
+  assert.match(editorSource, /quality_status === "needs_review"/);
 });
