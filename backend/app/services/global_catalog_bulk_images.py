@@ -379,13 +379,16 @@ async def import_bulk_rows(
             width=asset.width,
             height=asset.height,
             has_transparent_background=asset.has_alpha,
-            quality_status="needs_review",
-            is_primary=False,
+            # This route is Platform Admin-only: accepted rows have the same
+            # trusted manual provenance as the single-image upload route.
+            # The strict ZIP, image validation and match guards above remain.
+            quality_status="good",
+            is_primary=not bool(await session.scalar(select(ProductImage.id).where(ProductImage.product_id == product.id, ProductImage.is_primary.is_(True)))),
         )
         session.add(image)
         await session.flush()
         summary.uploaded += 1
-        summary.needs_review += 1
+        summary.approved += 1
         entry["product_id"] = str(product.id)
         entry["image_id"] = str(image.id)
         summary.rows.append(entry)

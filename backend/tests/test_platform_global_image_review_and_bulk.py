@@ -333,7 +333,8 @@ async def test_bulk_zip_import_matching_and_safety() -> None:
         assert unresolved_import.status_code == 200
         unresolved_body = unresolved_import.json()
         assert unresolved_body["uploaded"] == 3
-        assert unresolved_body["needs_review"] == unresolved_body["uploaded"]
+        assert unresolved_body["approved"] == unresolved_body["uploaded"]
+        assert unresolved_body["needs_review"] == 0
         assert unresolved_body["ambiguous"] == 1
         assert unresolved_body["unmatched"] == 1
         assert unresolved_body["invalid"] == 1
@@ -344,7 +345,7 @@ async def test_bulk_zip_import_matching_and_safety() -> None:
             for product_id in (exact_id_product.id, barcode_product.id, name_product.id):
                 images_row = (await session.scalars(select(ProductImage).where(ProductImage.product_id == product_id))).all()
                 assert len(images_row) == 1
-                assert images_row[0].quality_status == "needs_review"
+                assert images_row[0].quality_status == "good"
             ambiguous_images_a = (await session.scalars(select(ProductImage).where(ProductImage.product_id == ambiguous_a.id))).all()
             ambiguous_images_b = (await session.scalars(select(ProductImage).where(ProductImage.product_id == ambiguous_b.id))).all()
         assert len(ambiguous_images_a) == 0
@@ -372,9 +373,23 @@ async def test_bulk_zip_import_matching_and_safety() -> None:
             for product_id in (exact_id_product.id, barcode_product.id, name_product.id, ambiguous_a.id):
                 images_row = (await session.scalars(select(ProductImage).where(ProductImage.product_id == product_id))).all()
                 assert len(images_row) == 1
-                assert images_row[0].quality_status == "needs_review"
+                assert images_row[0].quality_status == "good"
             no_images = (await session.scalars(select(ProductImage).where(ProductImage.product_id == ambiguous_b.id))).all()
             assert len(no_images) == 0
+
+        # Trusted bulk images are shared-catalog and resolver eligible without
+        # an explicit approve endpoint call.
+        shared = await client.get("/api/catalog/shared", headers=market_headers, params={"search": f"{prefix} Exact Id Product"})
+        assert shared.status_code == 200
+        assert shared.json()["items"][0]["image_url"]
+
+        campaign = Campaign(id=uuid4(), market_id=seeded["market"].id, title="Trusted Bulk Campaign")
+        campaign.items = [CampaignItem(id=uuid4(), market_id=seeded["market"].id, raw_line=f"{prefix} Exact Id Product", incoming_name=f"{prefix} Exact Id Product", price=Decimal("9.90"), sort_order=0)]
+        async with AsyncSessionLocal() as session:
+            session.add(campaign)
+            await session.commit()
+            resolution = await resolve_campaign_product_images(session, seeded["market"].id, campaign.id)
+        assert resolution.resolved_count == 1
 
 
 @pytest.mark.asyncio

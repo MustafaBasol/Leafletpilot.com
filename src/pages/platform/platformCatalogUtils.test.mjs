@@ -32,3 +32,15 @@ test("single save owns image upload and retains preview on partial failure", () 
   assert.doesNotMatch(editorSource, /Choisir un fichier/);
   assert.match(editorSource, /quality_status === "needs_review"/);
 });
+
+const bulkImageModalSource = await readFile("src/pages/platform/PlatformBulkImageImportModal.jsx", "utf8");
+test("bulk image import uses the trusted Turkish footer workflow", () => {
+  assert.match(bulkImageModalSource, /className="visually-hidden" type="file"/);
+  assert.match(bulkImageModalSource, /import \{ Button \}/);
+  assert.match(bulkImageModalSource, /Paketi Analiz Et/);
+  assert.match(bulkImageModalSource, /görseli yükle/);
+  assert.match(bulkImageModalSource, /Önizleme özeti/);
+  assert.match(bulkImageModalSource, /catalog-import-table bulk-image-preview-table/);
+  assert.match(bulkImageModalSource, /global katalogda kullanıma hazır/);
+  assert.doesNotMatch(bulkImageModalSource, /Choisir un fichier|Analyze package|Confirm import|Upload a products\.zip|<button/);
+});
