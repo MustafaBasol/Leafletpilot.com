@@ -213,7 +213,13 @@ async def test_when_test_database_url_is_configured_global_catalog_http_acceptan
     assert len(files_after_upload - files_before_upload) == 6  # original + canonical flyer asset
 
     before_failed = (await client.get(f"/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]["images"]
-    assert (await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": "image/gif"}, content=b"GIF89a")).status_code == 415
+    invalid_gif = await client.post(
+        f"/api/platform/catalog/products/{product_id}/images",
+        headers={**platform_headers, "Content-Type": "image/gif"},
+        content=b"GIF89a",
+    )
+    assert invalid_gif.status_code == 422
+    assert invalid_gif.json()["detail"] == "Image content is invalid or corrupt."
     assert (await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": "image/png"}, content=b"not-png")).status_code == 422
     assert (await client.post(f"/api/platform/catalog/products/{product_id}/images", headers={**platform_headers, "Content-Type": "image/png"}, content=b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024 + 1))).status_code == 413
     after_failed = (await client.get(f"/api/platform/catalog/products", headers=platform_headers, params={"search": product.name})).json()["items"][0]["images"]
