@@ -7,3 +7,10 @@ export function revokeObjectUrls(urls) {
     URL.revokeObjectURL(url);
   }
 }
+
+export function selectEditorImage(images = []) {
+  return images.find((image) => image.is_primary)
+    || images.find((image) => ["good", "excellent"].includes(image.quality_status))
+    || images[0]
+    || null;
+}
