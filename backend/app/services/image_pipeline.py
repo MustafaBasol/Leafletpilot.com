@@ -79,8 +79,6 @@ def normalize_flyer_image(content: bytes, declared_mime_type: str) -> Normalized
     products appear at wildly different visual scales. Opaque photography is
     never cropped. Background removal is intentionally outside this boundary.
     """
-    mime_type = require_supported_image_mime_type(declared_mime_type)
-    expected = SUPPORTED_IMAGE_TYPES[mime_type]
     if not content:
         raise HTTPException(status_code=422, detail="Image content is empty.")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -91,11 +89,11 @@ def normalize_flyer_image(content: bytes, declared_mime_type: str) -> Normalized
 
     try:
         with Image.open(io.BytesIO(content)) as probe:
-            if probe.format != expected[0]:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Image content does not match the declared MIME type.",
-                )
+            actual = next((item for item in SUPPORTED_IMAGE_TYPES.items() if item[1][0] == probe.format), None)
+            if actual is None:
+                raise HTTPException(status_code=415, detail=UNSUPPORTED_IMAGE_TYPE_DETAIL)
+            # Decoded bytes are authoritative; browser MIME is only an audit hint.
+            mime_type = actual[0]
             if getattr(probe, "n_frames", 1) != 1:
                 raise HTTPException(status_code=422, detail="Animated images are not supported.")
             width, height = probe.size
@@ -163,7 +161,11 @@ def store_flyer_image(
     from app.services.rendering import storage_path_for_key
 
     normalized = normalize_flyer_image(original_content, declared_mime_type)
-    source_extension = SUPPORTED_IMAGE_TYPES[declared_mime_type.split(";", 1)[0].strip().lower()][1]
+    with Image.open(io.BytesIO(original_content)) as probe:
+        actual = next((item for item in SUPPORTED_IMAGE_TYPES.items() if item[1][0] == probe.format), None)
+    if actual is None:
+        raise HTTPException(status_code=415, detail=UNSUPPORTED_IMAGE_TYPE_DETAIL)
+    source_extension = actual[1][1]
     normalized_extension = ".png" if normalized.mime_type == "image/png" else ".jpg"
     source_digest = hashlib.sha256(original_content).hexdigest()
     source_key = f"{namespace}/source/{source_digest}{source_extension}"

@@ -252,12 +252,11 @@ async def deactivate_product(product_id: UUID, _: PlatformAdmin = admin, session
 @router.post("/products/{product_id}/images", response_model=dict, status_code=201)
 async def upload_image(product_id: UUID, request: Request, primary: bool = False, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     row = await _global(session, Product, product_id)
-    mime_type = require_supported_image_mime_type(request.headers.get("content-type", ""))
     content = await read_bounded_image_body(request)
     asset = store_flyer_image(
         namespace=f"global/catalog/{row.id}",
         original_content=content,
-        declared_mime_type=mime_type,
+        declared_mime_type=request.headers.get("content-type", ""),
     )
     if primary: await session.execute(ProductImage.__table__.update().where(ProductImage.product_id == row.id).values(is_primary=False))
     image = ProductImage(
