@@ -3,26 +3,60 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Brand, BrandAlias, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
+from app.models import (
+    ActivityLog,
+    Brand,
+    BrandAlias,
+    Category,
+    Market,
+    MarketProduct,
+    Product,
+    ProductAlias,
+    ProductImage,
+)
 from app.schemas.brand import BrandCreate, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
+from app.services.catalog_matching import (
+    CatalogMatchResult,
+    canonical_name_key,
+    canonical_package_key,
+    eligible_global_product_conditions,
+    match_global_products,
+)
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
 from app.services.image_pipeline import store_flyer_image
-from app.services.product_normalization import format_package, normalized_package_values
-from app.services.product_identity import normalize_product_text
+from app.services.product_identity import normalize_barcode, normalize_product_text, normalize_words
+from app.services.product_normalization import (
+    format_package,
+    normalize_package_type,
+    normalized_package_values,
+)
 
 PUNCTUATION_RE = re.compile(r"[!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-]+")
 SPACES_RE = re.compile(r"\s+")
+_MARKET_IDENTITY_FIELDS = frozenset(
+    {
+        "display_name_override",
+        "private_brand_text",
+        "private_barcode",
+        "private_sku",
+        "private_package_size",
+        "private_package_type",
+        "package_amount",
+        "package_unit",
+        "package_type_canonical",
+    }
+)
 
 
 def slugify(value: str) -> str:
@@ -56,6 +90,7 @@ def reconcile_aliases(values: Iterable[str]) -> list[ReconciledAlias]:
         seen.add(normalized_alias)
         reconciled.append(ReconciledAlias(alias=alias, normalized_alias=normalized_alias))
     return reconciled
+
 
 def resolve_market_scope(is_global: bool, market_id: UUID | None) -> UUID | None:
     if is_global:
@@ -128,6 +163,7 @@ async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: U
     data["slug"] = data["slug"] or slugify(data["name"]); data["market_id"] = scoped_market_id
     brand = Brand(**data); brand.aliases = [BrandAlias(alias=data["name"], normalized_alias=normalized)]
     return await _persist(session, brand)
+
 
 async def get_brand(session: AsyncSession, brand_id: UUID, market_id: UUID | None) -> Brand:
     brand = await _get_scoped(session, Brand, brand_id, market_id)
@@ -278,19 +314,72 @@ async def create_product(
 ) -> Product:
     if payload.is_global:
         raise _global_mutation_forbidden()
-    data = normalized_package_values(payload.model_dump(exclude={"aliases", "images"}))
-    data["market_id"] = resolve_market_scope(data["is_global"], market_id)
-    product = Product(**data)
+    scoped_market_id = resolve_market_scope(False, market_id)
+    await _lock_market(session, scoped_market_id)
+    brand = await _validate_scoped_reference(
+        session, Brand, payload.brand_id, scoped_market_id, "Brand"
+    )
+    await _validate_scoped_reference(
+        session, Category, payload.category_id, scoped_market_id, "Category"
+    )
+    await _ensure_no_local_duplicate(
+        session,
+        market_id=scoped_market_id,
+        name=payload.name,
+        brand=brand.name if brand else None,
+        barcode=payload.barcode,
+        package_size=payload.package_size,
+        package_amount=payload.package_amount,
+        package_unit=payload.package_unit,
+        package_type=payload.package_type_canonical or payload.package_type,
+    )
+    match = await match_global_products(
+        session,
+        market_id=scoped_market_id,
+        name=payload.name,
+        barcode=payload.barcode,
+        brand_id=payload.brand_id,
+        package_size=payload.package_size,
+        package_type=payload.package_type,
+        package_amount=payload.package_amount,
+        package_unit=payload.package_unit,
+        package_type_canonical=payload.package_type_canonical,
+    )
+    _enforce_global_match_decision(match, allow_override=payload.allow_global_match_override)
+    data = normalized_package_values(
+        payload.model_dump(
+            exclude={"aliases", "images", "allow_global_match_override"},
+            exclude_unset=True,
+        )
+    )
+    _validate_structured_package_pair(data)
+    data["market_id"] = scoped_market_id
+    product = Product(id=uuid4(), **data)
     product.aliases = _build_aliases(payload.aliases)
     product.images = [ProductImage(**image.model_dump()) for image in payload.images]
+    if match.match_type != "none":
+        _add_catalog_activity(
+            session,
+            market_id=scoped_market_id,
+            entity_type="product",
+            entity_id=product.id,
+            action="local_product_created_despite_global_match",
+            metadata={"match_type": match.match_type, "legacy_endpoint": True},
+        )
     return await _persist(session, product)
 
 
 async def get_product(session: AsyncSession, product_id: UUID, market_id: UUID | None) -> Product:
     statement = (
         select(Product)
-        .options(selectinload(Product.aliases), selectinload(Product.images))
+        .options(
+            selectinload(Product.aliases),
+            selectinload(Product.images),
+            selectinload(Product.brand).selectinload(Brand.aliases),
+            selectinload(Product.category),
+        )
         .where(Product.id == product_id)
+        .execution_options(populate_existing=True)
     )
     statement = apply_scope_filters(statement, Product, market_id, include_global=True)
     product = await session.scalar(statement)
@@ -308,7 +397,39 @@ async def update_product(
     product = await get_product(session, product_id, market_id)
     if product.is_global:
         raise _global_mutation_forbidden()
-    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
+    if market_id is not None:
+        await _lock_market(session, market_id)
+        # The pre-lock read supports the established global-mutation guard. The
+        # post-lock populated read is authoritative for concurrent local PATCHes.
+        product = await get_product(session, product_id, market_id)
+    data = normalized_package_values(payload.model_dump(exclude_unset=True))
+    _validate_structured_package_pair(data)
+    brand_id = data.get("brand_id", product.brand_id)
+    brand = product.brand
+    if "brand_id" in data:
+        brand = await _validate_scoped_reference(
+            session, Brand, brand_id, product.market_id, "Brand"
+        )
+    if "category_id" in data:
+        await _validate_scoped_reference(
+            session, Category, data["category_id"], product.market_id, "Category"
+        )
+    await _ensure_no_local_duplicate(
+        session,
+        market_id=product.market_id,
+        name=data.get("name", product.name),
+        brand=brand.name if brand else None,
+        barcode=data.get("barcode", product.barcode),
+        package_size=data.get("package_size", product.package_size),
+        package_amount=data.get("package_amount", product.package_amount),
+        package_unit=data.get("package_unit", product.package_unit),
+        package_type=data.get(
+            "package_type_canonical",
+            data.get("package_type", product.package_type_canonical or product.package_type),
+        ),
+        exclude_product_id=product.id,
+    )
+    for key, value in data.items():
         setattr(product, key, value)
     return await _persist(session, product)
 
@@ -432,6 +553,7 @@ def _build_aliases(aliases: Iterable[str | ProductAliasCreate]) -> list[ProductA
         for alias in reconcile_aliases(values)
     ]
 
+
 def _not_found(label: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} not found.")
 
@@ -444,7 +566,9 @@ class EffectiveProduct:
     category_id: UUID | None
 
 
-def resolve_effective_product(product: Product | None, market_product: MarketProduct | None) -> EffectiveProduct:
+def resolve_effective_product(
+    product: Product | None, market_product: MarketProduct | None
+) -> EffectiveProduct:
     global_image = next(
         (
             image
@@ -454,12 +578,18 @@ def resolve_effective_product(product: Product | None, market_product: MarketPro
         None,
     )
     return EffectiveProduct(
-        name=(market_product.display_name_override if market_product and market_product.display_name_override else None)
+        name=(
+            market_product.display_name_override
+            if market_product and market_product.display_name_override
+            else None
+        )
         or (product.name if product is not None else None)
-        or (market_product.private_name if market_product else "Unnamed product"),
+        or (market_product.private_name if market_product else None)
+        or "Unnamed product",
         image_storage_key=(market_product.image_storage_key if market_product else None)
         or (global_image.storage_key if global_image else None),
-        image_url=(market_product.image_url if market_product else None) or (global_image.url if global_image else None),
+        image_url=(market_product.image_url if market_product else None)
+        or (global_image.url if global_image else None),
         category_id=(market_product.category_override_id if market_product else None)
         or (product.category_id if product is not None else None),
     )
@@ -473,7 +603,16 @@ async def search_global_products(
     limit: int,
     offset: int,
 ) -> tuple[list[Product], int]:
-    statement = select(Product).options(selectinload(Product.aliases), selectinload(Product.images), selectinload(Product.brand), selectinload(Product.category)).where(Product.is_global.is_(True))
+    statement = (
+        select(Product)
+        .options(
+            selectinload(Product.aliases),
+            selectinload(Product.images),
+            selectinload(Product.brand),
+            selectinload(Product.category),
+        )
+        .where(*eligible_global_product_conditions())
+    )
     if search:
         normalized = normalize_alias(search)
         statement = statement.where(
@@ -501,20 +640,48 @@ async def adopt_global_product(
     currency: str = "EUR",
     **values: Any,
 ) -> MarketProduct:
-    market = await session.get(Market, market_id)
+    market = await _lock_market(session, market_id)
     product = await session.scalar(
-        select(Product).options(selectinload(Product.images)).where(Product.id == product_id, Product.is_global.is_(True))
+        select(Product)
+        .options(
+            selectinload(Product.images),
+            selectinload(Product.aliases),
+            selectinload(Product.brand).selectinload(Brand.aliases),
+            selectinload(Product.category),
+        )
+        .where(Product.id == product_id, *eligible_global_product_conditions())
     )
-    if market is None or product is None or not product.is_active:
+    if product is None:
         raise _not_found("Global product")
     require_capability(market, "global_catalog_access")
+    await _validate_scoped_reference(
+        session,
+        Category,
+        values.get("category_override_id"),
+        market_id,
+        "Category",
+    )
     existing = await session.scalar(
-        select(MarketProduct).where(MarketProduct.market_id == market_id, MarketProduct.product_id == product_id)
+        select(MarketProduct).where(
+            MarketProduct.market_id == market_id, MarketProduct.product_id == product_id
+        )
     )
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Global product is already adopted by this market.")
-    values = normalized_package_values(values)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Global product is already adopted by this market.",
+        )
+    values = _normalized_market_product_values(values)
+    _validate_structured_package_pair(values)
+    effective_identity = _effective_global_identity(product, values)
+    await _ensure_no_local_duplicate(
+        session,
+        market_id=market_id,
+        **effective_identity,
+        canonical_product=product,
+    )
     association = MarketProduct(
+        id=uuid4(),
         market_id=market_id,
         product_id=product_id,
         regular_price=regular_price,
@@ -523,6 +690,14 @@ async def adopt_global_product(
         **{key: value for key, value in values.items() if value is not None},
     )
     session.add(association)
+    _add_catalog_activity(
+        session,
+        market_id=market_id,
+        entity_type="market_product",
+        entity_id=association.id,
+        action="global_product_adopted",
+        metadata={"global_product_id": str(product_id)},
+    )
     return await _persist(session, association)
 
 
@@ -534,25 +709,58 @@ async def create_private_market_product(
     regular_price: Any = None,
     promo_price: Any = None,
     currency: str = "EUR",
+    allow_global_match_override: bool = False,
     **values: Any,
 ) -> MarketProduct:
-    market = await session.get(Market, market_id)
-    if market is None:
-        raise _not_found("Market")
+    market = await _lock_market(session, market_id)
     capabilities = resolve_capabilities(market)
     current_count = await session.scalar(
-        select(func.count(MarketProduct.id)).where(MarketProduct.market_id == market_id, MarketProduct.product_id.is_(None))
+        select(func.count(MarketProduct.id)).where(
+            MarketProduct.market_id == market_id, MarketProduct.product_id.is_(None)
+        )
     )
     if not has_capacity(current_count or 0, capabilities.private_products_limit):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Private product limit reached for this plan.")
-    duplicate_conditions = [MarketProduct.market_id == market_id]
-    if values.get("private_barcode"):
-        duplicate_conditions.append(MarketProduct.private_barcode == values["private_barcode"])
-    if values.get("private_sku"):
-        duplicate_conditions.append(MarketProduct.private_sku == values["private_sku"])
-    if len(duplicate_conditions) > 1 and await session.scalar(select(MarketProduct).where(*duplicate_conditions, MarketProduct.product_id.is_(None))):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Barcode or SKU is already used by a custom product in this market.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Private product limit reached for this plan.",
+        )
+    await _validate_scoped_reference(
+        session,
+        Category,
+        values.get("category_override_id"),
+        market_id,
+        "Category",
+    )
+    values = _normalized_market_product_values(values)
+    _validate_structured_package_pair(values)
+    effective_name = values.get("display_name_override") or private_name
+    await _ensure_no_local_duplicate(
+        session,
+        market_id=market_id,
+        name=effective_name,
+        brand=values.get("private_brand_text"),
+        barcode=values.get("private_barcode"),
+        sku=values.get("private_sku"),
+        package_size=values.get("private_package_size"),
+        package_amount=values.get("package_amount"),
+        package_unit=values.get("package_unit"),
+        package_type=values.get("package_type_canonical") or values.get("private_package_type"),
+    )
+    match = await match_global_products(
+        session,
+        market_id=market_id,
+        name=effective_name,
+        barcode=values.get("private_barcode"),
+        brand=values.get("private_brand_text"),
+        package_size=values.get("private_package_size"),
+        package_type=values.get("private_package_type"),
+        package_amount=values.get("package_amount"),
+        package_unit=values.get("package_unit"),
+        package_type_canonical=values.get("package_type_canonical"),
+    )
+    _enforce_global_match_decision(match, allow_override=allow_global_match_override)
     association = MarketProduct(
+        id=uuid4(),
         market_id=market_id,
         private_name=private_name,
         regular_price=regular_price,
@@ -561,6 +769,18 @@ async def create_private_market_product(
         **{key: value for key, value in values.items() if value is not None},
     )
     session.add(association)
+    if match.match_type != "none":
+        _add_catalog_activity(
+            session,
+            market_id=market_id,
+            entity_type="market_product",
+            entity_id=association.id,
+            action="local_product_created_despite_global_match",
+            metadata={
+                "match_type": match.match_type,
+                "candidate_ids": [str(candidate.product.id) for candidate in match.candidates],
+            },
+        )
     return await _persist(session, association)
 
 
@@ -571,73 +791,355 @@ async def list_my_market_products(session: AsyncSession, market_id: UUID) -> lis
             selectinload(MarketProduct.product).selectinload(Product.brand),
             selectinload(MarketProduct.product).selectinload(Product.category),
             selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.legacy_product),
             selectinload(MarketProduct.category_override),
         )
         .where(MarketProduct.market_id == market_id)
         .order_by(MarketProduct.sort_order, MarketProduct.created_at)
     )
-    return list(result.unique().all())
+    return [
+        row
+        for row in result.unique().all()
+        if row.product_id is None or _is_shared_product(row.product)
+    ]
 
 
-async def get_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID) -> MarketProduct:
+async def get_market_product(
+    session: AsyncSession, market_product_id: UUID, market_id: UUID
+) -> MarketProduct:
+    row = await session.scalar(
+        select(MarketProduct)
+        .options(
+            selectinload(MarketProduct.product).selectinload(Product.brand),
+            selectinload(MarketProduct.product).selectinload(Product.aliases),
+            selectinload(MarketProduct.product)
+            .selectinload(Product.brand)
+            .selectinload(Brand.aliases),
+            selectinload(MarketProduct.product).selectinload(Product.category),
+            selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.legacy_product),
+            selectinload(MarketProduct.category_override),
+        )
+        .where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id)
+        .execution_options(populate_existing=True)
+    )
+    if row is None or (row.product_id is not None and not _is_shared_product(row.product)):
+        raise _not_found("Market product")
+    return row
+
+
+async def update_market_product(
+    session: AsyncSession, market_product_id: UUID, market_id: UUID, payload: MarketProductUpdate
+) -> MarketProduct:
+    await _lock_market(session, market_id)
+    row = await get_market_product(session, market_product_id, market_id)
+    data = _normalized_market_product_values(payload.model_dump(exclude_unset=True))
+    await _validate_scoped_reference(
+        session,
+        Category,
+        data.get("category_override_id"),
+        market_id,
+        "Category",
+    )
+    if data.get("private_package_size", object()) is None:
+        data.setdefault("package_amount", None)
+        data.setdefault("package_unit", None)
+    if data.get("private_package_type", object()) is None:
+        data.setdefault("package_type_canonical", None)
+    _validate_structured_package_pair(data)
+    merged = {
+        "private_name": row.private_name,
+        "display_name_override": row.display_name_override,
+        "private_brand_text": row.private_brand_text,
+        "private_barcode": row.private_barcode,
+        "private_sku": row.private_sku,
+        "private_package_size": row.private_package_size,
+        "private_package_type": row.private_package_type,
+        "package_amount": row.package_amount,
+        "package_unit": row.package_unit,
+        "package_type_canonical": row.package_type_canonical,
+        **data,
+    }
+    if row.product_id is None:
+        if not merged.get("private_name"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A local product name is required.",
+            )
+        await _ensure_no_local_duplicate(
+            session,
+            market_id=market_id,
+            name=merged.get("display_name_override") or merged["private_name"],
+            brand=merged.get("private_brand_text"),
+            barcode=merged.get("private_barcode"),
+            sku=merged.get("private_sku"),
+            package_size=merged.get("private_package_size"),
+            package_amount=merged.get("package_amount"),
+            package_unit=merged.get("package_unit"),
+            package_type=merged.get("package_type_canonical") or merged.get("private_package_type"),
+            exclude_market_product_id=row.id,
+            exclude_product_id=row.legacy_product_id,
+        )
+    elif _MARKET_IDENTITY_FIELDS.intersection(data):
+        effective_identity = _effective_global_identity(row.product, merged)
+        await _ensure_no_local_duplicate(
+            session,
+            market_id=market_id,
+            **effective_identity,
+            exclude_market_product_id=row.id,
+            exclude_product_id=row.legacy_product_id,
+            canonical_product=row.product,
+        )
+    for key, value in data.items():
+        setattr(row, key, value)
+    return await _persist(session, row)
+
+
+async def link_local_market_product(
+    session: AsyncSession,
+    *,
+    market_product_id: UUID,
+    market_id: UUID,
+    product_id: UUID,
+) -> MarketProduct:
+    market = await _lock_market(session, market_id)
+    require_capability(market, "global_catalog_access")
     row = await session.scalar(
         select(MarketProduct)
         .options(
             selectinload(MarketProduct.product).selectinload(Product.brand),
             selectinload(MarketProduct.product).selectinload(Product.category),
-            selectinload(MarketProduct.product).selectinload(Product.images),
+            selectinload(MarketProduct.legacy_product).selectinload(Product.brand),
             selectinload(MarketProduct.category_override),
         )
-        .where(MarketProduct.id == market_product_id, MarketProduct.market_id == market_id)
+        .where(
+            MarketProduct.id == market_product_id,
+            MarketProduct.market_id == market_id,
+        )
+        .with_for_update()
     )
-    if row is None:
+    if row is None or (row.product_id is not None and not _is_shared_product(row.product)):
         raise _not_found("Market product")
-    return row
-
-
-async def update_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID, payload: MarketProductUpdate) -> MarketProduct:
-    row = await get_market_product(session, market_product_id, market_id)
-    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
-        setattr(row, key, value)
-    return await _persist(session, row)
+    if row.legacy_product_id is not None and not _is_local_legacy_product(
+        row.legacy_product,
+        market_id,
+    ):
+        raise _not_found("Market product")
+    if row.product_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Market product is already linked to the global catalog.",
+        )
+    if not _is_visible_category(row.category_override, market_id):
+        raise _not_found("Category")
+    target = await session.scalar(
+        select(Product)
+        .options(
+            selectinload(Product.aliases),
+            selectinload(Product.brand).selectinload(Brand.aliases),
+            selectinload(Product.category),
+        )
+        .where(Product.id == product_id, *eligible_global_product_conditions())
+    )
+    if target is None:
+        raise _not_found("Global product")
+    existing = await session.scalar(
+        select(MarketProduct.id).where(
+            MarketProduct.market_id == market_id,
+            MarketProduct.product_id == product_id,
+            MarketProduct.id != row.id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Global product is already adopted by this market.",
+        )
+    link_values = {
+        "display_name_override": row.display_name_override or row.private_name,
+        "private_brand_text": row.private_brand_text,
+        "private_barcode": row.private_barcode,
+        "private_sku": row.private_sku,
+        "private_package_size": row.private_package_size,
+        "private_package_type": row.private_package_type,
+        "package_amount": row.package_amount,
+        "package_unit": row.package_unit,
+        "package_type_canonical": row.package_type_canonical,
+    }
+    await _ensure_no_local_duplicate(
+        session,
+        market_id=market_id,
+        **_effective_global_identity(target, link_values),
+        exclude_market_product_id=row.id,
+        exclude_product_id=row.legacy_product_id,
+        canonical_product=target,
+    )
+    if row.private_name and not row.display_name_override:
+        row.display_name_override = row.private_name
+    row.product_id = product_id
+    _add_catalog_activity(
+        session,
+        market_id=market_id,
+        entity_type="market_product",
+        entity_id=row.id,
+        action="local_product_linked_to_global",
+        metadata={
+            "global_product_id": str(product_id),
+            "legacy_product_id": str(row.legacy_product_id) if row.legacy_product_id else None,
+        },
+    )
+    await _persist(session, row)
+    return await get_market_product(session, row.id, market_id)
 
 
 def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
     product = row.product
+    if product is not None and not _is_shared_product(product):
+        product = None
+    public_product_id = (
+        product.id
+        if product is not None
+        else (
+            row.legacy_product_id
+            if row.product_id is None
+            and row.legacy_product_id is not None
+            and _is_local_legacy_product(row.legacy_product, row.market_id)
+            else None
+        )
+    )
     effective = resolve_effective_product(product, row)
     global_brand = product.brand.name if product and product.brand else None
     global_category = product.category.name if product and product.category else None
-    image_url = effective.image_url if effective.image_url and urlparse(effective.image_url).scheme in {"http", "https"} else None
+    category_override = (
+        row.category_override
+        if _is_visible_category(row.category_override, row.market_id)
+        else None
+    )
+    market_image_url = (
+        row.image_url
+        if row.image_url and urlparse(row.image_url).scheme in {"http", "https"}
+        else None
+    )
+    image_url = (
+        effective.image_url
+        if effective.image_url and urlparse(effective.image_url).scheme in {"http", "https"}
+        else None
+    )
     if effective.image_storage_key:
-        image_url = f"/api/catalog/my-products/{row.id}/image/content" if row.image_storage_key else f"/api/catalog/shared/{row.product_id}/image/content"
+        image_url = (
+            f"/api/catalog/my-products/{row.id}/image/content"
+            if row.image_storage_key
+            else f"/api/catalog/shared/{row.product_id}/image/content"
+        )
+    inherited_image_url = None
+    if product is not None:
+        inherited = resolve_effective_product(product, None)
+        if inherited.image_storage_key:
+            inherited_image_url = f"/api/catalog/shared/{product.id}/image/content"
+        elif inherited.image_url and urlparse(inherited.image_url).scheme in {"http", "https"}:
+            inherited_image_url = inherited.image_url
     has_override = bool(
-        row.display_name_override
+        row.private_name
+        or row.display_name_override
         or row.category_override_id
         or row.badge_text
         or row.stock_note
         or row.image_storage_key
+        or market_image_url
         or row.regular_price is not None
         or row.promo_price is not None
         or row.private_brand_text
+        or row.private_barcode
+        or row.private_sku
         or row.private_package_size
         or row.private_package_type
+        or row.package_amount is not None
+        or row.package_unit is not None
+        or row.package_type_canonical is not None
+        or row.sort_order
+        or not row.is_active
         or (product is not None and row.currency != (product.currency or "EUR"))
     )
+    source_state = "local" if product is None else ("global_override" if has_override else "global")
+    inherited_values = {
+        "name": product.name if product else None,
+        "brand": global_brand if product else None,
+        "package_size": product.package_size if product else None,
+        "package_type": product.package_type if product else None,
+        "package_amount": product.package_amount if product else None,
+        "package_unit": product.package_unit if product else None,
+        "package_type_canonical": product.package_type_canonical if product else None,
+        "regular_price": product.regular_price if product else None,
+        "promo_price": product.promo_price if product else None,
+        "currency": product.currency if product else None,
+        "badge_text": product.badge_text if product else None,
+        "image_url": inherited_image_url,
+    }
+    override_values = {
+        "private_name": row.private_name,
+        "display_name_override": row.display_name_override,
+        "private_brand_text": row.private_brand_text,
+        "private_barcode": row.private_barcode,
+        "private_sku": row.private_sku,
+        "private_package_size": row.private_package_size,
+        "private_package_type": row.private_package_type,
+        "package_amount": row.package_amount,
+        "package_unit": row.package_unit,
+        "package_type_canonical": row.package_type_canonical,
+        "regular_price": row.regular_price,
+        "promo_price": row.promo_price,
+        "currency": row.currency,
+        "badge_text": row.badge_text,
+        "stock_note": row.stock_note,
+        "sort_order": row.sort_order,
+        "is_active": row.is_active,
+        "image_url": (
+            f"/api/catalog/my-products/{row.id}/image/content"
+            if row.image_storage_key
+            else market_image_url
+        ),
+    }
+    has_market_package_override = row.package_amount is not None and row.package_unit is not None
     return {
-        "id": row.id, "market_id": row.market_id, "product_id": row.product_id or row.legacy_product_id,
-        "name": effective.name, "brand": row.private_brand_text or global_brand,
-        "category": row.category_override.name if row.category_override else global_category,
-        "package_size": row.private_package_size or format_package(row.package_amount, row.package_unit) or (product.package_size if product else None),
+        "id": row.id,
+        "market_id": row.market_id,
+        "product_id": public_product_id,
+        "global_product_id": product.id if product is not None else None,
+        "name": effective.name,
+        "brand": row.private_brand_text or global_brand,
+        "category": category_override.name if category_override else global_category,
+        "package_size": row.private_package_size
+        or format_package(row.package_amount, row.package_unit)
+        or (product.package_size if product else None),
         "package_type": row.private_package_type or (product.package_type if product else None),
-        "package_amount": row.package_amount if row.package_amount is not None else (product.package_amount if product else None),
-        "package_unit": row.package_unit if row.package_unit is not None else (product.package_unit if product else None),
-        "package_type_canonical": row.package_type_canonical if row.package_type_canonical is not None else (product.package_type_canonical if product else None),
-        "regular_price": row.regular_price if row.regular_price is not None else (product.regular_price if product else None),
-        "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
-        "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),
-        "stock_note": row.stock_note, "sort_order": row.sort_order, "is_active": row.is_active,
-        "source_type": ("Global with tenant override" if has_override else "Global") if row.product_id else "Private", "image_url": image_url,
-        "image_override_active": bool(row.image_storage_key),
+        "package_amount": row.package_amount
+        if has_market_package_override
+        else (product.package_amount if product else None),
+        "package_unit": row.package_unit
+        if has_market_package_override
+        else (product.package_unit if product else None),
+        "package_type_canonical": row.package_type_canonical
+        if row.package_type_canonical is not None
+        else (product.package_type_canonical if product else None),
+        "regular_price": row.regular_price
+        if row.regular_price is not None
+        else (product.regular_price if product else None),
+        "promo_price": row.promo_price
+        if row.promo_price is not None
+        else (product.promo_price if product else None),
+        "currency": row.currency or (product.currency if product else "EUR"),
+        "badge_text": row.badge_text or (product.badge_text if product else None),
+        "stock_note": row.stock_note,
+        "sort_order": row.sort_order,
+        "is_active": row.is_active,
+        "source_type": ("Global with tenant override" if has_override else "Global")
+        if product is not None
+        else "Private",
+        "source_state": source_state,
+        "inherited_values": inherited_values,
+        "override_values": override_values,
+        "image_url": image_url,
+        "image_override_active": bool(row.image_storage_key or market_image_url),
         "promo_active": row.promo_price is not None,
     }
 
@@ -664,6 +1166,423 @@ async def remove_market_product_image(session: AsyncSession, market_product_id: 
     require_capability(market, "product_image_override")
     row.image_storage_key = row.image_url = row.image_mime_type = row.image_quality_status = None
     await session.commit()
+
+
+async def _lock_market(session: AsyncSession, market_id: UUID) -> Market:
+    market = await session.scalar(select(Market).where(Market.id == market_id).with_for_update())
+    if market is None:
+        raise _not_found("Market")
+    return market
+
+
+async def _validate_scoped_reference(
+    session: AsyncSession,
+    model: type[Brand] | type[Category],
+    item_id: UUID | None,
+    market_id: UUID,
+    label: str,
+) -> Brand | Category | None:
+    if item_id is None:
+        return None
+    row = await session.scalar(
+        select(model).where(
+            model.id == item_id,
+            model.is_active.is_(True),
+            or_(
+                and_(model.is_global.is_(True), model.market_id.is_(None)),
+                and_(model.is_global.is_(False), model.market_id == market_id),
+            ),
+        )
+    )
+    if row is None:
+        raise _not_found(label)
+    return row
+
+
+def _normalized_market_product_values(values: dict[str, Any]) -> dict[str, Any]:
+    data = normalized_package_values(values)
+    # MarketProduct calls its legacy display field private_package_size. The
+    # shared parser remains authoritative for deriving its structured identity.
+    data.pop("package_size", None)
+    if data.get("private_package_size"):
+        parsed = normalized_package_values({"package_size": data["private_package_size"]})
+        if parsed.get("package_amount") is not None and data.get("package_amount") is None:
+            data["package_amount"] = parsed["package_amount"]
+        if parsed.get("package_unit") is not None and data.get("package_unit") is None:
+            data["package_unit"] = parsed["package_unit"]
+    if data.get("private_package_type") and not data.get("package_type_canonical"):
+        data["package_type_canonical"] = normalize_package_type(data["private_package_type"])
+    if data.get("private_barcode"):
+        normalized_barcode = normalize_barcode(data["private_barcode"])
+        data["private_barcode"] = (
+            normalized_barcode
+            if normalized_barcode and not normalized_barcode.startswith("raw:")
+            else data["private_barcode"].strip()
+        )
+    if data.get("private_sku"):
+        data["private_sku"] = data["private_sku"].strip()
+    return data
+
+
+def _validate_structured_package_pair(values: dict[str, Any]) -> None:
+    amount_present = "package_amount" in values
+    unit_present = "package_unit" in values
+    if not amount_present and not unit_present:
+        return
+    if amount_present != unit_present or (values.get("package_amount") is None) != (
+        values.get("package_unit") is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=("package_amount and package_unit must be provided or cleared together."),
+        )
+
+
+def _enforce_global_match_decision(
+    match: CatalogMatchResult,
+    *,
+    allow_override: bool,
+) -> None:
+    if any(candidate.already_adopted for candidate in match.candidates):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A matching global product is already adopted by this market.",
+        )
+    if match.match_type != "none" and not allow_override:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A global catalog match is available. Adopt it or explicitly "
+                "continue as a local product."
+            ),
+        )
+
+
+async def _ensure_no_local_duplicate(
+    session: AsyncSession,
+    *,
+    market_id: UUID,
+    name: str,
+    brand: str | None = None,
+    barcode: str | None = None,
+    sku: str | None = None,
+    package_size: str | None = None,
+    package_amount: Any = None,
+    package_unit: str | None = None,
+    package_type: str | None = None,
+    exclude_market_product_id: UUID | None = None,
+    exclude_product_id: UUID | None = None,
+    canonical_product: Product | None = None,
+) -> None:
+    incoming = _local_identity(
+        name=name,
+        brand=brand,
+        barcode=barcode,
+        sku=sku,
+        package_size=package_size,
+        package_amount=package_amount,
+        package_unit=package_unit,
+        package_type=package_type,
+    )
+    market_rows = list(
+        (
+            await session.scalars(
+                select(MarketProduct)
+                .options(
+                    selectinload(MarketProduct.product).selectinload(Product.brand),
+                    selectinload(MarketProduct.product).selectinload(Product.aliases),
+                    selectinload(MarketProduct.product)
+                    .selectinload(Product.brand)
+                    .selectinload(Brand.aliases),
+                    selectinload(MarketProduct.product).selectinload(Product.category),
+                    selectinload(MarketProduct.legacy_product).selectinload(Product.aliases),
+                    selectinload(MarketProduct.legacy_product)
+                    .selectinload(Product.brand)
+                    .selectinload(Brand.aliases),
+                )
+                .where(MarketProduct.market_id == market_id)
+            )
+        ).unique()
+    )
+    canonical_incoming = (
+        _product_identity_variants(canonical_product)
+        if canonical_product is not None
+        else []
+    )
+    for row in market_rows:
+        if row.id == exclude_market_product_id or (
+            exclude_product_id is not None and row.legacy_product_id == exclude_product_id
+        ):
+            continue
+        for existing in _market_product_identity_variants(row, market_id):
+            _raise_if_local_duplicate(incoming, existing)
+            for canonical_identity in canonical_incoming:
+                _raise_if_local_duplicate(canonical_identity, existing)
+
+    linked_legacy_ids = select(MarketProduct.legacy_product_id).where(
+        MarketProduct.market_id == market_id,
+        MarketProduct.legacy_product_id.is_not(None),
+    )
+    statement = (
+        select(Product)
+        .options(
+            selectinload(Product.aliases),
+            selectinload(Product.brand).selectinload(Brand.aliases),
+        )
+        .where(
+            Product.market_id == market_id,
+            Product.is_global.is_(False),
+            Product.id.not_in(linked_legacy_ids),
+        )
+    )
+    if exclude_product_id is not None:
+        statement = statement.where(Product.id != exclude_product_id)
+    for product in (await session.scalars(statement)).unique():
+        for existing in _product_identity_variants(product):
+            _raise_if_local_duplicate(incoming, existing)
+
+
+def _effective_global_identity(
+    product: Product | None,
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    if product is None:
+        raise ValueError("A global product is required for effective identity checks.")
+    has_package_override = (
+        values.get("package_amount") is not None and values.get("package_unit") is not None
+    )
+    return {
+        "name": values.get("display_name_override") or product.name,
+        "brand": values.get("private_brand_text")
+        or (product.brand.name if product.brand else None),
+        "barcode": values.get("private_barcode") or product.barcode,
+        "sku": values.get("private_sku"),
+        "package_size": values.get("private_package_size") or product.package_size,
+        "package_amount": values.get("package_amount")
+        if has_package_override
+        else product.package_amount,
+        "package_unit": values.get("package_unit")
+        if has_package_override
+        else product.package_unit,
+        "package_type": values.get("package_type_canonical")
+        or values.get("private_package_type")
+        or product.package_type_canonical
+        or product.package_type,
+    }
+
+
+def _product_identity_variants(product: Product) -> list[dict[str, str | None]]:
+    names = [product.name, *(alias.alias for alias in product.aliases)]
+    brands: list[str | None] = [None]
+    if product.brand is not None:
+        brands = [
+            product.brand.name,
+            *(alias.alias for alias in product.brand.aliases),
+        ]
+    identities = [
+        _local_identity(
+            name=name,
+            brand=brand,
+            barcode=product.barcode,
+            package_size=product.package_size,
+            package_amount=product.package_amount,
+            package_unit=product.package_unit,
+            package_type=product.package_type_canonical or product.package_type,
+        )
+        for name in dict.fromkeys(names)
+        for brand in dict.fromkeys(brands)
+    ]
+    return _unique_identities(identities)
+
+
+def _market_product_identity_variants(
+    row: MarketProduct,
+    market_id: UUID,
+) -> list[dict[str, str | None]]:
+    if row.product_id is not None:
+        if not _is_shared_product(row.product):
+            return []
+        values = {
+            "display_name_override": row.display_name_override,
+            "private_brand_text": row.private_brand_text,
+            "private_barcode": row.private_barcode,
+            "private_sku": row.private_sku,
+            "private_package_size": row.private_package_size,
+            "private_package_type": row.private_package_type,
+            "package_amount": row.package_amount,
+            "package_unit": row.package_unit,
+            "package_type_canonical": row.package_type_canonical,
+        }
+        return _unique_identities(
+            [
+                _local_identity(**_effective_global_identity(row.product, values)),
+                *_product_identity_variants(row.product),
+            ]
+        )
+
+    legacy = row.legacy_product
+    if not _is_local_legacy_product(legacy, market_id):
+        legacy = None
+    has_structured_package = row.package_amount is not None and row.package_unit is not None
+    effective = _local_identity(
+        name=row.display_name_override or row.private_name or (legacy.name if legacy else ""),
+        brand=row.private_brand_text or (legacy.brand.name if legacy and legacy.brand else None),
+        barcode=row.private_barcode or (legacy.barcode if legacy else None),
+        sku=row.private_sku,
+        package_size=row.private_package_size or (legacy.package_size if legacy else None),
+        package_amount=row.package_amount
+        if has_structured_package
+        else (legacy.package_amount if legacy else None),
+        package_unit=row.package_unit
+        if has_structured_package
+        else (legacy.package_unit if legacy else None),
+        package_type=row.package_type_canonical
+        or row.private_package_type
+        or (legacy.package_type_canonical or legacy.package_type if legacy else None),
+    )
+    return _unique_identities(
+        [
+            effective,
+            *(_product_identity_variants(legacy) if legacy is not None else []),
+        ]
+    )
+
+
+def _unique_identities(
+    identities: list[dict[str, str | None]],
+) -> list[dict[str, str | None]]:
+    return list({tuple(identity.items()): identity for identity in identities}.values())
+
+
+def _local_identity(
+    *,
+    name: str,
+    brand: str | None,
+    barcode: str | None,
+    package_size: str | None,
+    package_amount: Any,
+    package_unit: str | None,
+    package_type: str | None,
+    sku: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "name": canonical_name_key(name, brand),
+        "brand": normalize_words(brand),
+        "barcode": _duplicate_barcode_key(barcode),
+        "sku": sku.strip().casefold() if sku and sku.strip() else None,
+        "package": canonical_package_key(
+            amount=package_amount,
+            unit=package_unit,
+            package_size=package_size,
+            fallback_name=name,
+        ),
+        "package_type": normalize_package_type(package_type),
+    }
+
+
+def _duplicate_barcode_key(value: str | None) -> str | None:
+    normalized = normalize_barcode(value)
+    if normalized:
+        return normalized if normalized.startswith("raw:") else f"digits:{normalized}"
+    if value and value.strip():
+        return f"raw:{value.strip().casefold()}"
+    return None
+
+
+def _raise_if_local_duplicate(
+    incoming: dict[str, str | None], existing: dict[str, str | None]
+) -> None:
+    if incoming["barcode"] and incoming["barcode"] == existing["barcode"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Barcode is already used by a product in this market.",
+        )
+    if incoming["sku"] and incoming["sku"] == existing["sku"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="SKU is already used by a product in this market.",
+        )
+    same_type = (
+        not incoming["package_type"]
+        or not existing["package_type"]
+        or incoming["package_type"] == existing["package_type"]
+    )
+    distinct_explicit_identity = bool(
+        (incoming["barcode"] and existing["barcode"] and incoming["barcode"] != existing["barcode"])
+        or (incoming["sku"] and existing["sku"] and incoming["sku"] != existing["sku"])
+    )
+    if (
+        _same_canonical_name_and_brand(incoming, existing)
+        and incoming["package"] == existing["package"]
+        and same_type
+        and not distinct_explicit_identity
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A product with this canonical identity already exists in this market.",
+        )
+
+
+def _same_canonical_name_and_brand(
+    incoming: dict[str, str | None], existing: dict[str, str | None]
+) -> bool:
+    incoming_name, existing_name = incoming["name"], existing["name"]
+    incoming_brand, existing_brand = incoming["brand"], existing["brand"]
+    if not incoming_name or not existing_name:
+        return False
+    if incoming_name == existing_name:
+        return not incoming_brand or not existing_brand or incoming_brand == existing_brand
+    if incoming_brand and not existing_brand:
+        return existing_name == f"{incoming_brand} {incoming_name}"
+    if existing_brand and not incoming_brand:
+        return incoming_name == f"{existing_brand} {existing_name}"
+    return False
+
+
+def _add_catalog_activity(
+    session: AsyncSession,
+    *,
+    market_id: UUID,
+    entity_type: str,
+    entity_id: UUID | None,
+    action: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    session.add(
+        ActivityLog(
+            market_id=market_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            description=action.replace("_", " "),
+            metadata_=metadata or {},
+        )
+    )
+
+
+def _is_shared_product(product: Product | None) -> bool:
+    if product is None or not product.is_global or product.market_id is not None:
+        return False
+    if product.brand is not None and (
+        not product.brand.is_global or product.brand.market_id is not None
+    ):
+        return False
+    return not (
+        product.category is not None
+        and (not product.category.is_global or product.category.market_id is not None)
+    )
+
+
+def _is_visible_category(category: Category | None, market_id: UUID) -> bool:
+    if category is None:
+        return True
+    return (category.is_global and category.market_id is None) or (
+        not category.is_global and category.market_id == market_id
+    )
+
+
+def _is_local_legacy_product(product: Product | None, market_id: UUID) -> bool:
+    return bool(product is not None and not product.is_global and product.market_id == market_id)
 
 
 def _global_mutation_forbidden() -> HTTPException:

@@ -5,19 +5,32 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Market, MarketProduct, Product
-
 from app.api.deps import get_catalog_session, get_current_market_id, require_market_role
 from app.core.roles import MARKET_MUTATION_ROLES
+from app.models import Market, MarketProduct, Product
 from app.schemas.brand import BrandCreate, BrandRead, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
 from app.schemas.common import ListResponse
 from app.schemas.market_product import (
-    MarketProductAdoptCreate, MarketProductRead, MarketProductUpdate, PrivateMarketProductCreate,
-    ResolvedMarketProductRead, SharedCatalogProductRead,
+    CatalogProductMatchRequest,
+    CatalogProductMatchResponse,
+    MarketProductAdoptCreate,
+    MarketProductLinkGlobalRequest,
+    MarketProductRead,
+    MarketProductUpdate,
+    PrivateMarketProductCreate,
+    ResolvedMarketProductRead,
+    SharedCatalogProductRead,
 )
-from app.schemas.product import ProductAliasCreate, ProductAliasRead, ProductCreate, ProductRead, ProductUpdate
+from app.schemas.product import (
+    ProductAliasCreate,
+    ProductAliasRead,
+    ProductCreate,
+    ProductRead,
+    ProductUpdate,
+)
 from app.services import catalog as catalog_service
+from app.services.catalog_matching import match_global_products
 from app.services.image_pipeline import read_bounded_image_body, require_supported_image_mime_type
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -207,6 +220,20 @@ async def create_product(
     return await catalog_service.create_product(session, payload, market_id)
 
 
+@router.post("/products/match", response_model=CatalogProductMatchResponse)
+async def match_products(
+    payload: CatalogProductMatchRequest,
+    market_id: UUID = Depends(get_current_market_id),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> CatalogProductMatchResponse:
+    result = await match_global_products(
+        session,
+        market_id=market_id,
+        **payload.model_dump(),
+    )
+    return CatalogProductMatchResponse.model_validate(result.as_dict())
+
+
 @router.post("/market-products/adopt", response_model=MarketProductRead, status_code=status.HTTP_201_CREATED)
 async def adopt_global_product(
     payload: MarketProductAdoptCreate,
@@ -217,15 +244,7 @@ async def adopt_global_product(
         session,
         market_id=market_id,
         product_id=payload.product_id,
-        regular_price=payload.regular_price,
-        promo_price=payload.promo_price,
-        currency=payload.currency,
-        display_name_override=payload.display_name_override,
-        category_override_id=payload.category_override_id,
-        badge_text=payload.badge_text,
-        stock_note=payload.stock_note,
-        sort_order=payload.sort_order,
-        is_active=payload.is_active,
+        **payload.model_dump(exclude={"product_id"}),
     )
 
 
@@ -239,20 +258,8 @@ async def create_private_market_product(
         session,
         market_id=market_id,
         private_name=payload.private_name,
-        regular_price=payload.regular_price,
-        promo_price=payload.promo_price,
-        currency=payload.currency,
-        display_name_override=payload.display_name_override,
-        category_override_id=payload.category_override_id,
-        badge_text=payload.badge_text,
-        stock_note=payload.stock_note,
-        sort_order=payload.sort_order,
-        is_active=payload.is_active,
-        private_brand_text=payload.private_brand_text,
-        private_barcode=payload.private_barcode,
-        private_sku=payload.private_sku,
-        private_package_size=payload.private_package_size,
-        private_package_type=payload.private_package_type,
+        allow_global_match_override=payload.allow_global_match_override,
+        **payload.model_dump(exclude={"private_name", "allow_global_match_override"}),
     )
 
 
@@ -306,6 +313,25 @@ async def my_products(limit: int = Query(100, ge=1, le=200), offset: int = Query
 async def patch_my_product(market_product_id: UUID, payload: MarketProductUpdate, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), session: AsyncSession = Depends(get_catalog_session)):
     row = await catalog_service.update_market_product(session, market_product_id, market_id, payload)
     return catalog_service.resolved_market_product(await catalog_service.get_market_product(session, row.id, market_id))
+
+
+@router.post(
+    "/my-products/{market_product_id}/link-global",
+    response_model=ResolvedMarketProductRead,
+)
+async def link_my_product_to_global(
+    market_product_id: UUID,
+    payload: MarketProductLinkGlobalRequest,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> ResolvedMarketProductRead:
+    row = await catalog_service.link_local_market_product(
+        session,
+        market_product_id=market_product_id,
+        market_id=market_id,
+        product_id=payload.product_id,
+    )
+    return catalog_service.resolved_market_product(row)
 
 
 @router.post("/shared/{product_id}/adopt", response_model=ResolvedMarketProductRead, status_code=status.HTTP_201_CREATED)

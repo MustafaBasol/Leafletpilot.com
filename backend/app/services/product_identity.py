@@ -194,6 +194,24 @@ def normalize_product_text(value: str) -> str:
     return normalize_product_identity(value).normalized_full_name
 
 
+def normalize_barcode(value: str | None) -> str | None:
+    """Return a collision-safe identity shared by catalog and campaign matching."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    # Keep exact alphanumeric SKU-style identifiers in their own namespace so
+    # legacy barcode_sku imports remain resolvable without collapsing SKU123
+    # onto the numeric barcode 123.
+    if any(character.isalpha() for character in stripped):
+        return (
+            f"raw:{stripped.casefold()}"
+            if any(character.isdigit() for character in stripped)
+            else None
+        )
+    normalized = re.sub(r"\D", "", stripped)
+    return normalized or None
+
+
 def normalize_words(value: str | None) -> str:
     if not value:
         return ""
