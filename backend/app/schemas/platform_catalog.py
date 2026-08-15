@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -72,6 +73,9 @@ class PlatformProductCreate(BaseModel):
     category_id: UUID | None = None
     package_size: str | None = Field(default=None, max_length=64)
     package_type: str | None = Field(default=None, max_length=64)
+    package_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=3)
+    package_unit: str | None = Field(default=None, max_length=16)
+    package_type_canonical: str | None = Field(default=None, max_length=64)
     sort_order: int = 0
     is_active: bool = True
     quality_score: int | None = Field(default=None, ge=0, le=100)
@@ -95,6 +99,9 @@ class PlatformProductRead(BaseModel):
     barcode: str | None
     package_size: str | None
     package_type: str | None
+    package_amount: Decimal | None
+    package_unit: str | None
+    package_type_canonical: str | None
     sort_order: int
     is_global: bool
     is_active: bool

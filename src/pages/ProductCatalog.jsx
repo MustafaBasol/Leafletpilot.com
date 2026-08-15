@@ -4,6 +4,7 @@ import { isRealApiEnabled } from "../api/config.js";
 import { products as initialProducts } from "../data/mockData.js";
 import {
   createCatalogProduct,
+  createCatalogBrand,
   getProductCatalogData,
   updateCatalogProduct,
   updateCatalogProductStatus,
@@ -103,12 +104,9 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
           <input value={form.barcode || ""} onChange={(event) => update("barcode", event.target.value)} />
         </Field>
         <Field label="Marka">
-          <select value={form.brandId || ""} onChange={(event) => update("brandId", event.target.value)}>
-            <option value="">Seçilmedi</option>
-            {brands.map((brand) => (
-              <option value={brand.id} key={brand.id}>{brand.name}</option>
-            ))}
-          </select>
+          <input list="market-brand-options" value={form.brandName || brands.find((brand) => brand.id === form.brandId)?.name || ""} placeholder="Marka ara veya yeni marka yazın" onChange={(event) => update("brandName", event.target.value)} />
+          <datalist id="market-brand-options">{brands.map((brand) => <option value={brand.name} key={brand.id} />)}</datalist>
+          <small>Listede yoksa bu market için yeni marka oluşturulur.</small>
         </Field>
         <Field label="Kategori">
           <select value={form.categoryId || ""} onChange={(event) => update("categoryId", event.target.value)}>
@@ -128,7 +126,7 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
           <input value={form.packageSize || ""} onChange={(event) => update("packageSize", event.target.value)} />
         </Field>
         <Field label="Paket tipi">
-          <input value={form.packageType || ""} onChange={(event) => update("packageType", event.target.value)} />
+          <select value={form.packageType || ""} onChange={(event) => update("packageType", event.target.value)}><option value="">Seçilmedi</option><option value="şişe">Şişe</option><option value="kutu">Kutu</option><option value="poşet">Poşet</option><option value="kavanoz">Kavanoz</option><option value="paket">Paket</option></select>
         </Field>
         <Field label="Normal fiyat">
           <input type="number" min="0" step="0.01" value={form.regularPrice ?? ""} onChange={(event) => update("regularPrice", event.target.value)} />
@@ -137,7 +135,7 @@ function ProductFormModal({ product, brands, categories, onClose, onSave, isSavi
           <input type="number" min="0" step="0.01" value={form.promoPrice ?? ""} onChange={(event) => update("promoPrice", event.target.value)} required />
         </Field>
         <Field label="Para birimi">
-          <input maxLength="3" value={form.currency || "EUR"} onChange={(event) => update("currency", event.target.value.toUpperCase())} required />
+          <select value={form.currency || "EUR"} onChange={(event) => update("currency", event.target.value)}><option value="TRY">TRY</option><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option></select>
         </Field>
         <Field label="Kampanya rozeti">
           <input placeholder="TOP DEAL" value={form.badgeText || ""} onChange={(event) => update("badgeText", event.target.value)} />
@@ -257,6 +255,9 @@ export function ProductCatalog() {
       try {
         setIsSaving(true);
         setModalError("");
+        const chosenBrand = brands.find((brand) => normalizeSearch(brand.name) === normalizeSearch(form.brandName));
+        const brandId = chosenBrand?.id || (form.brandName?.trim() ? (await createCatalogBrand({ name: form.brandName.trim() })).id : form.brandId);
+        form = { ...form, brandId };
         if (form.id) {
           await updateCatalogProduct(form.id, form);
           setSuccessMessage("Ürün kaydedildi.");

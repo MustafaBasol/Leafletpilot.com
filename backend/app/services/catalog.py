@@ -11,13 +11,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Brand, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
+from app.models import Brand, BrandAlias, Category, Market, MarketProduct, Product, ProductAlias, ProductImage
 from app.schemas.brand import BrandCreate, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.market_product import MarketProductUpdate
 from app.schemas.product import ProductAliasCreate, ProductCreate, ProductUpdate
 from app.services.entitlements import has_capacity, require_capability, resolve_capabilities
 from app.services.image_pipeline import store_flyer_image
+from app.services.product_normalization import format_package, normalized_package_values
 from app.services.product_identity import normalize_product_text
 
 PUNCTUATION_RE = re.compile(r"[!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-]+")
@@ -99,7 +100,8 @@ async def list_brands(
 ) -> tuple[list[Brand], int]:
     statement = apply_scope_filters(select(Brand), Brand, market_id, include_global)
     if search:
-        statement = statement.where(Brand.name.ilike(f"%{search}%"))
+        normalized = normalize_alias(search)
+        statement = statement.where(or_(Brand.name.ilike(f"%{search}%"), Brand.aliases.any(BrandAlias.normalized_alias.ilike(f"%{normalized}%"))))
     if is_active is not None:
         statement = statement.where(Brand.is_active.is_(is_active))
     if is_global is not None:
@@ -112,9 +114,16 @@ async def create_brand(session: AsyncSession, payload: BrandCreate, market_id: U
     if payload.is_global:
         raise _global_mutation_forbidden()
     data = payload.model_dump()
+    data["name"] = data["name"].strip()
     data["slug"] = data["slug"] or slugify(data["name"])
     data["market_id"] = resolve_market_scope(data["is_global"], market_id)
+    existing = await session.scalar(select(Brand).where(Brand.market_id == data["market_id"], Brand.slug == data["slug"]))
+    if existing:
+        return existing
     brand = Brand(**data)
+    # Keeping the submitted spelling as an alias makes punctuation/case variants
+    # discoverable without turning local brands into global records.
+    brand.aliases = [BrandAlias(alias=data["name"], normalized_alias=normalize_alias(data["name"]))]
     return await _persist(session, brand)
 
 
@@ -267,7 +276,7 @@ async def create_product(
 ) -> Product:
     if payload.is_global:
         raise _global_mutation_forbidden()
-    data = payload.model_dump(exclude={"aliases", "images"})
+    data = normalized_package_values(payload.model_dump(exclude={"aliases", "images"}))
     data["market_id"] = resolve_market_scope(data["is_global"], market_id)
     product = Product(**data)
     product.aliases = _build_aliases(payload.aliases)
@@ -297,7 +306,7 @@ async def update_product(
     product = await get_product(session, product_id, market_id)
     if product.is_global:
         raise _global_mutation_forbidden()
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
         setattr(product, key, value)
     return await _persist(session, product)
 
@@ -502,6 +511,7 @@ async def adopt_global_product(
     )
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Global product is already adopted by this market.")
+    values = normalized_package_values(values)
     association = MarketProduct(
         market_id=market_id,
         product_id=product_id,
@@ -585,7 +595,7 @@ async def get_market_product(session: AsyncSession, market_product_id: UUID, mar
 
 async def update_market_product(session: AsyncSession, market_product_id: UUID, market_id: UUID, payload: MarketProductUpdate) -> MarketProduct:
     row = await get_market_product(session, market_product_id, market_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in normalized_package_values(payload.model_dump(exclude_unset=True)).items():
         setattr(row, key, value)
     return await _persist(session, row)
 
@@ -615,8 +625,11 @@ def resolved_market_product(row: MarketProduct) -> dict[str, Any]:
         "id": row.id, "market_id": row.market_id, "product_id": row.product_id or row.legacy_product_id,
         "name": effective.name, "brand": row.private_brand_text or global_brand,
         "category": row.category_override.name if row.category_override else global_category,
-        "package_size": row.private_package_size or (product.package_size if product else None),
+        "package_size": row.private_package_size or format_package(row.package_amount, row.package_unit) or (product.package_size if product else None),
         "package_type": row.private_package_type or (product.package_type if product else None),
+        "package_amount": row.package_amount or (product.package_amount if product else None),
+        "package_unit": row.package_unit or (product.package_unit if product else None),
+        "package_type_canonical": row.package_type_canonical or (product.package_type_canonical if product else None),
         "regular_price": row.regular_price if row.regular_price is not None else (product.regular_price if product else None),
         "promo_price": row.promo_price if row.promo_price is not None else (product.promo_price if product else None),
         "currency": row.currency or (product.currency if product else "EUR"), "badge_text": row.badge_text or (product.badge_text if product else None),

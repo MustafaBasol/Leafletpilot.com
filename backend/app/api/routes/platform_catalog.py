@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_catalog_session, get_current_platform_admin
-from app.models import Brand, Category, MarketProduct, PlatformAdmin, Product, ProductAlias, ProductImage
+from app.models import Brand, BrandAlias, Category, MarketProduct, PlatformAdmin, Product, ProductAlias, ProductImage
 from app.schemas.common import ListResponse
 from app.schemas.platform_catalog import (
     PlatformBrandCreate, PlatformBrandRead, PlatformBrandUpdate, PlatformBulkImageResolution,
@@ -18,6 +18,7 @@ from app.schemas.platform_catalog import (
 )
 from app.services.catalog import normalize_alias, reconcile_aliases, slugify
 from app.services.product_identity import normalize_product_identity
+from app.services.product_normalization import normalized_package_values
 from app.services.global_catalog_excel import COLUMNS, MAX_ROWS, build_template, parse_workbook
 from app.services.global_catalog_bulk_images import (
     BulkImportError,
@@ -110,7 +111,7 @@ async def deactivate_category(category_id: UUID, _: PlatformAdmin = admin, sessi
 @router.get("/brands", response_model=ListResponse[PlatformBrandRead])
 async def list_brands(search: str | None = None, is_active: bool | None = None, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     conditions = [Brand.is_global.is_(True)]
-    if search: conditions.append(Brand.name.ilike(f"%{search}%"))
+    if search: conditions.append(or_(Brand.name.ilike(f"%{search}%"), Brand.aliases.any(BrandAlias.normalized_alias.ilike(f"%{normalize_alias(search)}%"))))
     if is_active is not None: conditions.append(Brand.is_active.is_(is_active))
     rows = list((await session.scalars(select(Brand).where(*conditions).order_by(Brand.name).limit(limit).offset(offset))).all())
     total = await session.scalar(select(func.count()).select_from(Brand).where(*conditions)) or 0
@@ -129,6 +130,7 @@ async def create_brand(payload: PlatformBrandCreate, _: PlatformAdmin = admin, s
     if duplicate: raise _conflict("A global brand with this name already exists.")
     data = payload.model_dump(); data["slug"] = payload.slug or slugify(payload.name)
     row = Brand(**data, is_global=True, market_id=None)
+    row.aliases = [BrandAlias(alias=payload.name.strip(), normalized_alias=normalize_alias(payload.name))]
     session.add(row)
     try:
         await session.commit()
@@ -162,6 +164,9 @@ def _product_read(row):
         barcode=row.barcode,
         package_size=row.package_size,
         package_type=row.package_type,
+        package_amount=row.package_amount,
+        package_unit=row.package_unit,
+        package_type_canonical=row.package_type_canonical,
         sort_order=row.sort_order,
         is_global=row.is_global,
         is_active=row.is_active,
@@ -240,7 +245,7 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
 async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
     if any(_canonical_identity(product.name, product.package_size) == _canonical_identity(payload.name, payload.package_size) for product in (await session.scalars(select(Product).where(Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
-    data = payload.model_dump(exclude={"aliases"}); row = Product(**data, is_global=True, market_id=None)
+    data = normalized_package_values(payload.model_dump(exclude={"aliases"})); row = Product(**data, is_global=True, market_id=None)
     row.aliases = _product_aliases(payload.aliases)
     session.add(row); await session.commit()
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == row.id))
@@ -251,7 +256,7 @@ async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admi
 async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     await _global(session, Product, product_id)
     row = await session.scalar(select(Product).options(selectinload(Product.aliases), selectinload(Product.images)).where(Product.id == product_id))
-    data = payload.model_dump(exclude_unset=True, exclude={"aliases"})
+    data = normalized_package_values(payload.model_dump(exclude_unset=True, exclude={"aliases"}))
     if "barcode" in data and data["barcode"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), Product.barcode == data["barcode"])): raise _conflict("A global product with this barcode already exists.")
     if "name" in data and data["name"] and any(_canonical_identity(product.name, product.package_size) == _canonical_identity(data["name"], data.get("package_size", row.package_size)) for product in (await session.scalars(select(Product).where(Product.id != product_id, Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
     for key, value in data.items(): setattr(row, key, value)

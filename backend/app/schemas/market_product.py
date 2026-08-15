@@ -20,6 +20,9 @@ class MarketProductBase(BaseModel):
     private_sku: str | None = Field(default=None, max_length=64)
     private_package_size: str | None = Field(default=None, max_length=64)
     private_package_type: str | None = Field(default=None, max_length=64)
+    package_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=3)
+    package_unit: str | None = Field(default=None, max_length=16)
+    package_type_canonical: str | None = Field(default=None, max_length=64)
 
 
 class MarketProductAdoptCreate(MarketProductBase):
@@ -59,6 +62,9 @@ class ResolvedMarketProductRead(BaseModel):
     category: str | None
     package_size: str | None
     package_type: str | None
+    package_amount: Decimal | None = None
+    package_unit: str | None = None
+    package_type_canonical: str | None = None
     regular_price: Decimal | None
     promo_price: Decimal | None
     currency: str
