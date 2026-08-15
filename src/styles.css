@@ -4568,3 +4568,19 @@ tbody tr:hover {
   .catalog-import-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .catalog-import-file-card { align-items: flex-start; flex-direction: column; }
 }
+
+/* Trusted Platform Admin bulk image import workflow. */
+.bulk-image-import-modal { width: min(1180px, calc(100vw - 32px)); }
+.bulk-image-file-card { align-items: center; }
+.bulk-image-file-icon, .bulk-image-success-icon { display: grid; place-items: center; flex: 0 0 auto; width: 52px; height: 52px; border-radius: 14px; background: var(--primary-50); color: var(--primary-600); font-size: 28px; font-weight: 700; }
+.bulk-image-file-card > div:nth-child(2) { flex: 1; }
+.bulk-image-file-card small { display: block; }
+.bulk-image-summary { grid-template-columns: repeat(7, minmax(110px, 1fr)); }
+.bulk-image-preview-table { width: 100%; max-height: 400px; }
+.bulk-image-preview-table table { min-width: 940px; }
+.bulk-image-preview-table select { min-width: 170px; }
+.bulk-image-success { display: flex; gap: 16px; align-items: center; padding: 22px; border: 1px solid var(--success-200, #a7e3c0); border-radius: var(--radius-md); background: var(--success-50, #effcf4); }
+.bulk-image-success-icon { background: var(--success-100, #d8f5e2); color: var(--success-700, #16733a); }
+.bulk-image-success h3, .bulk-image-success p { margin: 0; }
+.bulk-image-success p { margin-top: 4px; color: var(--neutral-600); }
+@media (max-width: 900px) { .bulk-image-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

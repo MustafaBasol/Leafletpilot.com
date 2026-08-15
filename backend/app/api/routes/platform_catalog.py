@@ -339,10 +339,14 @@ async def _global_image(session, product_id: UUID, image_id: UUID) -> ProductIma
 
 @router.patch("/products/{product_id}/images/{image_id}/approve", response_model=dict)
 async def approve_image(product_id: UUID, image_id: UUID, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
+    await session.scalar(select(Product).where(Product.id == product_id, Product.is_global.is_(True)).with_for_update())
     image = await _global_image(session, product_id, image_id)
     image.quality_status = "good"
+    has_primary = await session.scalar(select(ProductImage.id).where(ProductImage.product_id == product_id, ProductImage.is_primary.is_(True)))
+    if not has_primary:
+        image.is_primary = True
     await session.commit()
-    return {"id": image.id, "product_id": product_id, "quality_status": image.quality_status}
+    return {"id": image.id, "product_id": product_id, "quality_status": image.quality_status, "is_primary": image.is_primary}
 
 
 @router.patch("/products/{product_id}/images/{image_id}/reject", response_model=dict)
@@ -366,10 +370,26 @@ async def _bulk_set_quality_status(session: AsyncSession, image_ids: list[UUID],
         ).all()
     )
     found_ids = {row.id for row in rows}
-    for row in rows:
+    rows_by_id = {row.id: row for row in rows}
+    # Request order is the deterministic tie-breaker. When several approved
+    # images belong to a product with no primary, the first distinct ID wins.
+    ordered_rows, seen_ids = [], set()
+    for image_id in image_ids:
+        if image_id not in seen_ids and image_id in rows_by_id:
+            ordered_rows.append(rows_by_id[image_id])
+            seen_ids.add(image_id)
+    locked_products = set()
+    for row in ordered_rows:
+        if quality_status == "good" and row.product_id not in locked_products:
+            await session.scalar(select(Product).where(Product.id == row.product_id).with_for_update())
+            locked_products.add(row.product_id)
         row.quality_status = quality_status
         if quality_status == "rejected" and row.is_primary:
             row.is_primary = False
+        elif quality_status == "good":
+            has_primary = await session.scalar(select(ProductImage.id).where(ProductImage.product_id == row.product_id, ProductImage.is_primary.is_(True)))
+            if not has_primary:
+                row.is_primary = True
     await session.commit()
     return {
         "updated": len(rows),
