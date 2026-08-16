@@ -37,6 +37,13 @@ from app.services.plans import plan_rank
 FULL_ENTITLEMENT_STATUSES = {"active", "trialing"}
 DOWNGRADE_TO_UNASSIGNED_STATUSES = {"unpaid", "canceled", "incomplete_expired"}
 
+# A market in one of these local states already has an active or in-progress
+# Stripe subscription — a second Checkout Session would create an overlapping
+# subscription rather than modifying the existing one. Statuses not listed
+# here (no row at all, or a row left over from a terminated subscription —
+# canceled/unpaid/incomplete_expired) are terminal/absent and may resubscribe.
+CHECKOUT_BLOCKING_STATUSES = {"active", "trialing", "past_due", "incomplete", "paused"}
+
 _PORTAL_CONFIGURATION_CACHE: str | None = None
 _PRICE_CACHE: dict[str, "stripe.Price"] = {}
 
@@ -110,9 +117,23 @@ async def create_checkout_session(session: AsyncSession, market: Market, plan_co
     _require_enabled()
     if not is_sellable_plan_code(plan_code):
         raise BillingError("Geçersiz plan. Yalnızca starter, standard veya pro seçilebilir.")
-    price = await _resolve_price(plan_code)
     existing = await _get_subscription_row(session, market.id)
 
+    # Guard against overlapping Stripe subscriptions: if the local mirror
+    # already shows an active/in-progress subscription, the caller must use
+    # change-plan/cancel instead of starting a brand-new Checkout Session —
+    # including on a naive frontend retry, since this check is keyed off
+    # already-committed local state, not anything the request itself claims.
+    # Checked before any Stripe call, so a rejected request never reaches
+    # the Stripe API at all.
+    if existing is not None and existing.status in CHECKOUT_BLOCKING_STATUSES:
+        raise BillingError(
+            "Bu market için zaten devam eden bir abonelik var. Plan değiştirmek için mevcut abonelik "
+            "yönetimini (plan değiştir/iptal et) kullanın.",
+            status_code=409,
+        )
+
+    price = await _resolve_price(plan_code)
     checkout_kwargs: dict = {
         "mode": "subscription",
         "line_items": [{"price": price.id, "quantity": 1}],
@@ -129,6 +150,8 @@ async def create_checkout_session(session: AsyncSession, market: Market, plan_co
             },
         },
     }
+    if settings.stripe_automatic_tax_enabled:
+        checkout_kwargs["automatic_tax"] = {"enabled": True}
     if existing and existing.stripe_customer_id:
         checkout_kwargs["customer"] = existing.stripe_customer_id
     else:
@@ -385,7 +408,13 @@ async def sync_subscription_from_stripe_object(
         session.add(row)
         await session.flush()
 
-    if row.last_stripe_event_at is not None and event_created_at <= row.last_stripe_event_at:
+    if row.last_subscription_event_at is not None and event_created_at < row.last_subscription_event_at:
+        # Strictly older than the last *applied* subscription-state event —
+        # a genuine out-of-order redelivery, discard. Equal timestamps are
+        # NOT discarded here: Stripe's `created` is only second-granularity,
+        # so two distinct events can legitimately share one, and duplicate
+        # delivery of the *same* event id is already excluded by webhook
+        # idempotency before this function is ever called.
         return row, False
 
     items = stripe_subscription.get("items", {}).get("data") or []
@@ -433,7 +462,7 @@ async def sync_subscription_from_stripe_object(
         )
     _apply_entitlement(market, row)
 
-    row.last_stripe_event_at = event_created_at
+    row.last_subscription_event_at = event_created_at
     row.last_synced_at = utc_now()
     row.sync_error = None
     return row, True
@@ -470,7 +499,10 @@ async def apply_invoice_event(
     )
     if row is None:
         raise PermanentSyncError(f"No local subscription found for Stripe subscription {subscription_id}.")
-    if row.last_stripe_event_at is not None and event_created_at <= row.last_stripe_event_at:
+    # Own ordering cursor, independent of last_subscription_event_at — an
+    # invoice/payment event must never suppress a later subscription-state
+    # transition (or be suppressed by one); see the model docstring.
+    if row.last_invoice_event_at is not None and event_created_at < row.last_invoice_event_at:
         return row, False
 
     status_map = {"paid": "paid", "payment_failed": "payment_failed", "payment_action_required": "requires_action"}
@@ -478,7 +510,7 @@ async def apply_invoice_event(
     if kind == "paid":
         row.last_payment_at = _to_datetime((invoice.get("status_transitions") or {}).get("paid_at")) or utc_now()
     row.latest_invoice_id = invoice.get("id")
-    row.last_stripe_event_at = event_created_at
+    row.last_invoice_event_at = event_created_at
     row.last_synced_at = utc_now()
     row.sync_error = None
     return row, True

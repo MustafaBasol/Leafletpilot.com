@@ -622,10 +622,10 @@ export const plans = [
   },
   {
     code: "standard",
-    name: "Standart",
+    name: "Plus",
     monthly_price: 119,
     currency: "EUR",
-    tagline: "Düzenli kampanya yapan marketler için",
+    tagline: "Büyüyen ve düzenli kampanya yapan marketler için",
     campaigns_per_month: 10,
     private_products_limit: 250,
     export_formats: ["pdf", "png"],

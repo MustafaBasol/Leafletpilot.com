@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -209,6 +210,111 @@ async def test_create_checkout_session_rejects_unassigned_plan_when_test_databas
 
 
 # ---------------------------------------------------------------------------
+# Checkout guard — reject a second Checkout Session while one already exists
+# locally in an active/in-progress state (overlapping-subscription guard).
+# ---------------------------------------------------------------------------
+
+
+class _FakePrice:
+    def __init__(self, price_id: str) -> None:
+        self.id = price_id
+
+
+class _FakeCheckoutSession:
+    def __init__(self, checkout_url: str, session_id: str) -> None:
+        self.url = checkout_url
+        self.id = session_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocking_status", ["active", "trialing", "past_due", "incomplete", "paused"])
+async def test_checkout_rejected_when_market_has_in_progress_subscription_when_test_database_url_is_configured(
+    blocking_status, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="starter",
+                    status=blocking_status,
+                    stripe_customer_id="cus_existing",
+                    stripe_subscription_id=f"sub_existing_{blocking_status}",
+                )
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.create_checkout_session(session, market, "standard")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_allowed_when_market_has_no_local_subscription_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    monkeypatch.setattr(
+        "stripe.checkout.Session.create_async",
+        lambda **kwargs: _fake_checkout_session("cs_no_prior_sub"),
+    )
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            result = await billing_service.create_checkout_session(session, market, "starter")
+            assert result["checkout_url"].endswith("cs_no_prior_sub")
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["canceled", "unpaid", "incomplete_expired"])
+async def test_checkout_allowed_after_terminal_subscription_when_test_database_url_is_configured(
+    terminal_status, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    monkeypatch.setattr(
+        "stripe.checkout.Session.create_async",
+        lambda **kwargs: _fake_checkout_session("cs_resubscribe"),
+    )
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="unassigned",
+                    status=terminal_status,
+                    stripe_customer_id="cus_old",
+                    stripe_subscription_id=f"sub_old_{terminal_status}",
+                )
+            )
+            await session.commit()
+
+            result = await billing_service.create_checkout_session(session, market, "starter")
+            assert result["checkout_url"].endswith("cs_resubscribe")
+    finally:
+        await engine.dispose()
+
+
+async def _resolved_price(plan_code: str) -> _FakePrice:
+    return _FakePrice(f"price_{plan_code}")
+
+
+async def _fake_checkout_session(checkout_id: str) -> _FakeCheckoutSession:
+    return _FakeCheckoutSession(f"https://stripe.test/checkout/{checkout_id}", checkout_id)
+
+
+# ---------------------------------------------------------------------------
 # Core sync: entitlement policy per status bucket.
 # ---------------------------------------------------------------------------
 
@@ -362,7 +468,7 @@ async def test_stale_event_does_not_regress_subscription_state_when_test_databas
             await session.commit()
             assert applied is True
             assert row.plan_code == "pro"
-            assert row.last_stripe_event_at == _dt(2_000)
+            assert row.last_subscription_event_at == _dt(2_000)
 
             older_sub = _subscription(market_id=market.id, plan_code="starter", status="active")
             row_after, applied_after = await sync_subscription_from_stripe_object(
@@ -372,7 +478,7 @@ async def test_stale_event_does_not_regress_subscription_state_when_test_databas
 
             assert applied_after is False
             assert row_after.plan_code == "pro"
-            assert row_after.last_stripe_event_at == _dt(2_000)
+            assert row_after.last_subscription_event_at == _dt(2_000)
             await session.refresh(market)
             assert market.subscription_plan == "pro"
     finally:
@@ -578,7 +684,223 @@ async def test_duplicate_webhook_delivery_applies_state_exactly_once_when_test_d
                 select(MarketSubscription).where(MarketSubscription.market_id == market_id)
             )
             assert subscription_row.plan_code == "standard"
-            assert subscription_row.last_stripe_event_at == _dt(1_700_000_100)
+            assert subscription_row.last_subscription_event_at == _dt(1_700_000_100)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_transient_dispatch_failure_is_retryable_by_a_later_delivery_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            market_id = market.id
+
+            sub = _subscription(market_id=market_id, plan_code="starter", status="active", sub_id="sub_transient")
+            event = _event("evt_transient", "customer.subscription.created", sub, created_ts=1_700_000_100)
+
+            original_sync = billing_service.sync_subscription_from_stripe_object
+            call_count = {"n": 0}
+
+            async def flaky_sync(session, stripe_subscription, *, event_created_at, market_id_hint=None):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise RuntimeError("simulated transient Stripe/network error")
+                return await original_sync(
+                    session, stripe_subscription, event_created_at=event_created_at, market_id_hint=market_id_hint
+                )
+
+            monkeypatch.setattr("app.services.billing.webhook.sync_subscription_from_stripe_object", flaky_sync)
+
+            # First delivery: dispatch fails transiently. process_event must
+            # propagate the failure (so the webhook route returns a failure
+            # response and Stripe schedules a retry) and must leave the event
+            # row retryable rather than permanently stuck.
+            with pytest.raises(RuntimeError):
+                await process_event(session, event)
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_transient")
+            )
+            assert webhook_row.status == "received"
+            assert webhook_row.error is not None
+
+            # Second delivery (Stripe retrying the same event id) must
+            # actually reprocess — not be treated as an already-handled dup.
+            await process_event(session, event)
+
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_transient")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+            assert rows[0].error is None
+            assert call_count["n"] == 2
+
+            subscription_row = await session.scalar(
+                select(MarketSubscription).where(MarketSubscription.market_id == market_id)
+            )
+            assert subscription_row.plan_code == "starter"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_deliveries_apply_business_transition_exactly_once_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as setup_session:
+            market = await _create_market(setup_session)
+            await setup_session.commit()
+            market_id = market.id
+
+        sub = _subscription(market_id=market_id, plan_code="pro", status="active", sub_id="sub_concurrent")
+        event = _event("evt_concurrent", "customer.subscription.created", sub, created_ts=1_700_000_100)
+
+        original_sync = billing_service.sync_subscription_from_stripe_object
+        call_count = {"n": 0}
+
+        async def slow_sync(session, stripe_subscription, *, event_created_at, market_id_hint=None):
+            call_count["n"] += 1
+            # Widen the race window so a genuinely concurrent second delivery
+            # reliably reaches the row lock while this one still holds it.
+            await asyncio.sleep(0.3)
+            return await original_sync(
+                session, stripe_subscription, event_created_at=event_created_at, market_id_hint=market_id_hint
+            )
+
+        monkeypatch.setattr("app.services.billing.webhook.sync_subscription_from_stripe_object", slow_sync)
+
+        async def deliver():
+            async with session_factory() as session:
+                await process_event(session, event)
+
+        await asyncio.gather(deliver(), deliver())
+
+        async with session_factory() as session:
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_concurrent")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+
+            subscription_row = await session.scalar(
+                select(MarketSubscription).where(MarketSubscription.market_id == market_id)
+            )
+            assert subscription_row.plan_code == "pro"
+
+        # Only the delivery that won the row lock ever reached dispatch — the
+        # other blocked on `SELECT ... FOR UPDATE` until the winner
+        # committed, then saw a terminal status and returned without
+        # reprocessing.
+        assert call_count["n"] == 1
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Webhook ordering hardening — separate cursors per event kind, strict '<'.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_distinct_events_with_identical_created_timestamp_both_apply_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            first_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_tie")
+            row, applied = await sync_subscription_from_stripe_object(session, first_sub, event_created_at=_dt(5_000))
+            await session.commit()
+            assert applied is True
+            assert row.plan_code == "starter"
+
+            # A genuinely different event with the exact same `created` second
+            # (Stripe timestamps are second-granularity) must not be
+            # discarded just because the timestamp ties with the last one.
+            second_sub = _subscription(market_id=market.id, plan_code="standard", status="active", sub_id="sub_tie")
+            row_after, applied_after = await sync_subscription_from_stripe_object(
+                session, second_sub, event_created_at=_dt(5_000)
+            )
+            await session.commit()
+
+            assert applied_after is True
+            assert row_after.plan_code == "standard"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_invoice_event_does_not_suppress_later_subscription_transition_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_order")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_000))
+            await session.commit()
+
+            # An invoice event with a much later timestamp must only advance
+            # the invoice cursor, not the subscription cursor.
+            invoice = {"id": "in_order", "subscription": "sub_order"}
+            await apply_invoice_event(session, invoice, event_created_at=_dt(5_000), kind="paid")
+            await session.commit()
+
+            # A subscription-state event timestamped before the invoice
+            # cursor (but after the subscription cursor) must still apply —
+            # proving the invoice event did not suppress it.
+            upgraded_sub = _subscription(market_id=market.id, plan_code="pro", status="active", sub_id="sub_order")
+            row, applied = await sync_subscription_from_stripe_object(session, upgraded_sub, event_created_at=_dt(2_000))
+            await session.commit()
+
+            assert applied is True
+            assert row.plan_code == "pro"
+            await session.refresh(market)
+            assert market.subscription_plan == "pro"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_subscription_event_does_not_suppress_later_invoice_event_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_order2")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_000))
+            await session.commit()
+
+            # A subscription-state event with a much later timestamp must
+            # only advance the subscription cursor, not the invoice cursor.
+            later_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_order2")
+            await sync_subscription_from_stripe_object(session, later_sub, event_created_at=_dt(9_000))
+            await session.commit()
+
+            # An invoice event timestamped before the subscription cursor
+            # (but after the unset invoice cursor) must still apply.
+            invoice = {"id": "in_order2", "subscription": "sub_order2"}
+            row, applied = await apply_invoice_event(session, invoice, event_created_at=_dt(2_000), kind="paid")
+            await session.commit()
+
+            assert applied is True
+            assert row.last_payment_status == "paid"
     finally:
         await engine.dispose()
 

@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     stripe_checkout_success_url: str = Field(default="", alias="STRIPE_CHECKOUT_SUCCESS_URL")
     stripe_checkout_cancel_url: str = Field(default="", alias="STRIPE_CHECKOUT_CANCEL_URL")
     stripe_portal_return_url: str = Field(default="", alias="STRIPE_PORTAL_RETURN_URL")
+    # VAT/TVA is not currently collected; Stripe Automatic Tax must stay off
+    # until that changes. Kept as a flag (not deleted) so enabling it later is
+    # a config change, not a code change — see docs/backend/09_STRIPE_BILLING_SANDBOX.md.
+    stripe_automatic_tax_enabled: bool = Field(default=False, alias="STRIPE_AUTOMATIC_TAX_ENABLED")
     demo_operations_enabled: bool = Field(default=False, alias="DEMO_OPERATIONS_ENABLED")
     demo_market_id: UUID | None = Field(default=None, alias="DEMO_MARKET_ID")
     demo_market_slug: str = Field(default="", alias="DEMO_MARKET_SLUG")

@@ -3,7 +3,7 @@ import { platformApi } from "../../api/platformApi.js";
 import { Badge, Card, Table } from "../../components/ui/index.js";
 import { normalizeApiError } from "./platformOps.js";
 
-const PLAN_LABELS = { starter: "Başlangıç", standard: "Standart", pro: "Pro" };
+const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro" };
 
 const HEALTH_LABELS = {
   ok: "Sağlıklı",

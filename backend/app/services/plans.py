@@ -81,10 +81,10 @@ STARTER = PlanDefinition(
 
 STANDARD = PlanDefinition(
     code="standard",
-    name="Standart",
+    name="Plus",
     monthly_price=119,
     currency="EUR",
-    tagline="Düzenli kampanya yapan marketler için",
+    tagline="Büyüyen ve düzenli kampanya yapan marketler için",
     monthly_campaigns_limit=10,
     private_products_limit=250,
     template_policy=TEMPLATE_POLICY_ALL,

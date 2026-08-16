@@ -132,7 +132,7 @@ async def test_when_test_database_url_is_configured_phase_29a_plan_acceptance():
         )
         assert legacy_growth.status_code == 200
         assert legacy_growth.json()["subscription_plan"] == "growth"
-        assert legacy_growth.json()["subscription_plan_display"] == "Standart"
+        assert legacy_growth.json()["subscription_plan_display"] == "Plus"
 
         invalid_plan = await client.patch(
             f"/api/platform/markets/{starter_market_id}/plan",

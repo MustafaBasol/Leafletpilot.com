@@ -12,7 +12,7 @@ import {
 } from "../data/dataSource.js";
 import { Button, Card, ConfirmDialog, PageHeader, StatusBadge, Table } from "../components/ui/index.js";
 
-const PLAN_LABELS = { starter: "Başlangıç", standard: "Standart", pro: "Pro", unassigned: "Atanmamış" };
+const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro", unassigned: "Atanmamış" };
 const PLAN_ORDER = ["starter", "standard", "pro"];
 
 const STATUS_LABELS = {

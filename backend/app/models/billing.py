@@ -85,7 +85,12 @@ class MarketSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sync_error: Mapped[str | None] = mapped_column(String(1000))
-    last_stripe_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Separate ordering cursors so an invoice/payment event can never
+    # suppress a later subscription-state transition (or vice versa) —
+    # each Stripe event stream is only ever compared against its own kind.
+    last_subscription_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_invoice_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     market: Mapped[Market] = relationship()
 

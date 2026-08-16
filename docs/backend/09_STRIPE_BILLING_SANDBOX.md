@@ -49,7 +49,7 @@ Stripe, ödeme/abonelik durumunun tek otoritesidir; LeafletPilot plan hakları (
 1. `stripe listen --forward-to localhost:8000/api/billing/stripe/webhook`
 2. Panelden `Başlangıç` seç → Checkout → test kartı `4242 4242 4242 4242` ile tamamla.
 3. Webhook sonrası panelde plan/durum güncellenmesini doğrula.
-4. `Standart`'a yükselt (senkron veya `stripe trigger` ile pending/SCA senaryosu) → hakkın yalnızca onay sonrası verildiğini doğrula.
+4. `Plus`'a yükselt (senkron veya `stripe trigger` ile pending/SCA senaryosu) → hakkın yalnızca onay sonrası verildiğini doğrula.
 5. `Başlangıç`'a düşür → hakkın dönem sonuna kadar değişmediğini, `stripe trigger customer.subscription.updated` ile dönem sonu simülasyonunda geçişin gerçekleştiğini doğrula.
 6. İptal et → `cancel_at_period_end` → `stripe trigger customer.subscription.deleted` ile erişimin kalktığını doğrula.
 
