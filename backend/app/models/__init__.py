@@ -14,7 +14,7 @@ from app.models.export import CampaignFile, ExportJob
 from app.models.invitation import INVITATION_STATUSES, MarketInvitation
 from app.models.market import MARKET_USER_ROLES, Market, MarketUser
 from app.models.messaging import Conversation, IncomingMessage
-from app.models.platform import PlatformAdmin, PlatformAuditLog
+from app.models.platform import MarketCatalogImport, PlatformAdmin, PlatformAuditLog
 from app.models.signup import SIGNUP_REQUEST_STATUSES, SignupRequest, SignupThrottle
 from app.models.template import Template
 from app.models.telegram import TelegramAccount, TelegramConversationState, TelegramUpdate
@@ -35,6 +35,7 @@ __all__ = [
     "INVITATION_STATUSES",
     "MARKET_USER_ROLES",
     "Market",
+    "MarketCatalogImport",
     "MarketProduct",
     "MarketInvitation",
     "MarketUser",

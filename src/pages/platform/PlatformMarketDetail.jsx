@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api/platformApi.js";
 import { Badge, Button, Card, Table } from "../../components/ui/index.js";
+import { PlatformMarketProductImportModal } from "./PlatformMarketProductImportModal.jsx";
 import {
   hasEffectiveOwnerInvitation,
   needsManualInvitationDelivery,
@@ -25,6 +26,7 @@ export function PlatformMarketDetail({ id }) {
   const [manualLinkCopied, setManualLinkCopied] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState("starter");
   const [planMessage, setPlanMessage] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
 
   async function load() {
     setError("");
@@ -201,6 +203,12 @@ export function PlatformMarketDetail({ id }) {
             </div>
             {planMessage ? <p className="inline-result">{planMessage}</p> : null}
           </Card>
+          <Card title="Katalog İçe Aktarma" className="span-6">
+            <p className="inline-result">Bu marketin ürün kataloğunu Excel dosyasından önizleme onaylı olarak içe aktarın.</p>
+            <div className="page-actions">
+              <Button onClick={() => setShowImportModal(true)}>Excel ile Ürün Yükle</Button>
+            </div>
+          </Card>
           <Card title={t("ownerInvitation")} className="span-6">
             <dl className="detail-list">
               <div><dt>{t("email")}</dt><dd>{market.owner_invitation?.email || market.contact_email || "-"}</dd></div>
@@ -254,6 +262,13 @@ export function PlatformMarketDetail({ id }) {
             </Table>
           </Card>
         </section>
+      ) : null}
+      {showImportModal ? (
+        <PlatformMarketProductImportModal
+          marketId={id}
+          onClose={() => setShowImportModal(false)}
+          onImported={load}
+        />
       ) : null}
     </>
   );

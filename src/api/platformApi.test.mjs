@@ -50,6 +50,54 @@ test("updateMarketPlan PATCHes the market plan endpoint with the selected plan c
   }
 });
 
+test("previewMarketProductImport posts the workbook to the market-scoped preview endpoint", async () => {
+  const values = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  const originalFile = globalThis.File;
+  globalThis.File = class File extends Blob { constructor(parts, name, options) { super(parts, options); this.name = name; } };
+  const file = new File([new Blob(["xlsx-bytes"])], "market.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return { ok: true, text: async () => JSON.stringify({ import_id: "import-1", rows: [], counts: {} }) };
+  };
+  try {
+    const result = await platformApi.previewMarketProductImport("market-1", file);
+    assert.match(captured.url, /\/platform\/markets\/market-1\/catalog-import\/preview$/);
+    assert.equal(captured.options.method, "POST");
+    assert.ok(captured.options.body instanceof FormData);
+    const submitted = captured.options.body.get("workbook");
+    assert.equal(submitted.size, file.size);
+    assert.equal(submitted.type, file.type);
+    assert.equal(result.import_id, "import-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.File = originalFile;
+    values.clear();
+  }
+});
+
+test("commitMarketProductImport posts row decisions to the commit endpoint", async () => {
+  const values = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return { ok: true, text: async () => JSON.stringify({ status: "committed", imported_rows: 1 }) };
+  };
+  try {
+    const decisions = { "2": { action: "adopt_global", target_id: "product-1" } };
+    const result = await platformApi.commitMarketProductImport("market-1", "import-1", decisions);
+    assert.match(captured.url, /\/platform\/markets\/market-1\/catalog-import\/import-1\/commit$/);
+    assert.equal(captured.options.method, "POST");
+    assert.deepEqual(JSON.parse(captured.options.body), { decisions });
+    assert.equal(result.status, "committed");
+  } finally {
+    globalThis.fetch = originalFetch;
+    values.clear();
+  }
+});
+
 test("manual image upload sends a browser File as raw PNG bytes with primary=true", async () => {
   const values = installBrowserGlobals();
   const originalFetch = globalThis.fetch;
