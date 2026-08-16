@@ -291,7 +291,11 @@ async def _handle_plain_text(
             language=membership.market.language,
             generate_suggestions=False,
         )
-        result = await campaign_service.create_campaign_from_text(session, payload, membership.market_id, commit=False)
+        try:
+            result = await campaign_service.create_campaign_from_text(session, payload, membership.market_id, commit=False)
+        except HTTPException as exc:
+            await client.send_message(chat_id, _campaign_creation_error_message(exc))
+            return
         state.pending_title = title
         state.campaign_id = result.campaign_id
         state.state = TelegramState.AWAITING_CONFIRMATION.value
@@ -355,7 +359,11 @@ async def _create_and_send_flyer(
         language=membership.market.language,
         generate_suggestions=True,
     )
-    result = await campaign_service.create_campaign_from_text(session, payload, membership.market_id)
+    try:
+        result = await campaign_service.create_campaign_from_text(session, payload, membership.market_id)
+    except HTTPException as exc:
+        await client.send_message(chat_id, _campaign_creation_error_message(exc))
+        return
     state.campaign_id = result.campaign_id
     state.revision_count = 0
     state.last_edit_intent_json = None
@@ -1056,3 +1064,9 @@ def _export_job_error_message(exc: HTTPException) -> str:
     if exc.status_code == 404:
         return "Kampanya bulunamadi. /new ile yeniden baslatin."
     return "Brosur su anda olusturulamadi. Lutfen tekrar deneyin."
+
+
+def _campaign_creation_error_message(exc: HTTPException) -> str:
+    if exc.status_code == 403:
+        return "Bu ay icin kampanya kotanız doldu. Plani yukseltin veya gelecek ay tekrar deneyin."
+    return "Kampanya su anda olusturulamadi. Lutfen tekrar deneyin."
