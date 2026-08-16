@@ -1,11 +1,12 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 EXAMPLE_JWT_SECRETS = {
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     debug: bool = Field(default=False, alias="DEBUG")
     api_prefix: str = Field(default="/api", alias="API_PREFIX")
-    backend_cors_origins: list[str] = Field(
+    backend_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="BACKEND_CORS_ORIGINS",
     )
@@ -51,12 +52,14 @@ class Settings(BaseSettings):
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    trusted_hosts: list[str] = Field(
+    trusted_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "::1", "testserver"],
         alias="TRUSTED_HOSTS",
     )
     secure_proxy_headers: bool = Field(default=False, alias="SECURE_PROXY_HEADERS")
-    trusted_proxy_ips: list[str] = Field(default_factory=list, alias="TRUSTED_PROXY_IPS")
+    trusted_proxy_ips: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="TRUSTED_PROXY_IPS"
+    )
     jwt_secret_key: str = Field(
         default="change-this-development-secret",
         alias="JWT_SECRET_KEY",

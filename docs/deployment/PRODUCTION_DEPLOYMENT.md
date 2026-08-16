@@ -187,18 +187,57 @@ exist in production.
 
 Install `pg_dump`, `sha256sum`, and `tar` on the backup runner.
 
-Database backup:
+The `postgres` service in `docker-compose.production.yml` has no published
+host port (it only sits on the internal `app` network, by design, so the
+database is never reachable from outside the Docker host). `POSTGRES_HOST`
+must therefore resolve to the container itself, not a host-mapped port. Run
+the backup through `docker compose exec` on the deployment host so `pg_dump`
+executes inside the `postgres` container and connects over its own loopback,
+while the dump still streams out to the host's `BACKUP_DIR`:
 
 ```bash
-POSTGRES_HOST=127.0.0.1 \
-POSTGRES_DB=leafletpilot \
-POSTGRES_USER=leafletpilot \
-PGPASSWORD=... \
-BACKUP_DIR=/path/to/backups \
-deploy/backup/postgres_backup.sh
+BACKUP_DIR=/path/to/backups
+mkdir -p "${BACKUP_DIR}/postgres"
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUTPUT_FILE="${BACKUP_DIR}/postgres/leafletpilot_${TIMESTAMP}.dump"
+
+docker compose -f docker-compose.production.yml exec -T \
+  -e PGPASSWORD=... postgres \
+  pg_dump --host=localhost --username=leafletpilot --dbname=leafletpilot --format=custom \
+  > "${OUTPUT_FILE}"
+sha256sum "${OUTPUT_FILE}" > "${OUTPUT_FILE}.sha256"
 ```
 
+`deploy/backup/postgres_backup.sh` assumes a directly reachable
+`POSTGRES_HOST` (e.g. a managed/external Postgres, or a deployment that does
+publish a host-bound port for the database) and will fail to connect against
+the bundled `docker-compose.production.yml` topology as shipped; use the
+`docker compose exec` form above for that topology instead.
+
 Storage backup:
+
+`deploy/backup/storage_backup.sh` expects `STORAGE_DIR` to be a directly
+reachable host path. That only applies as written if the deployment uses a
+host bind mount for storage (see above). With the default named
+`leafletpilot_storage` volume, tar it via a throwaway helper container
+instead:
+
+```bash
+BACKUP_DIR=/path/to/backups
+mkdir -p "${BACKUP_DIR}/storage"
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUTPUT_FILE="${BACKUP_DIR}/storage/leafletpilot_storage_${TIMESTAMP}.tar.gz"
+
+docker run --rm \
+  -v <compose_project_name>_leafletpilot_storage:/data \
+  -v "${BACKUP_DIR}:/backup" \
+  alpine tar -czf "/backup/storage/leafletpilot_storage_${TIMESTAMP}.tar.gz" -C /data .
+sha256sum "${OUTPUT_FILE}" > "${OUTPUT_FILE}.sha256"
+```
+
+If using a host bind mount instead of the named volume, `STORAGE_DIR` points
+directly at that host path and `deploy/backup/storage_backup.sh` works as
+originally documented:
 
 ```bash
 STORAGE_DIR=/path/to/storage \
@@ -214,7 +253,11 @@ Restores overwrite data. Take a maintenance window, stop backend writes, and
 create a safety backup first. Database and storage backups should come from
 approximately the same point in time.
 
-Database restore into an empty or new database where possible:
+Database restore into an empty or new database where possible. Same topology
+note as Backups above: run these through `docker compose exec -T postgres
+<cmd>` (or `docker compose exec -T -e PGPASSWORD=... postgres pg_restore ...`
+with the dump piped over stdin) unless `POSTGRES_HOST`/`PGHOST` is set to a
+directly reachable Postgres:
 
 ```bash
 sha256sum -c backup.dump.sha256
@@ -222,6 +265,11 @@ createdb leafletpilot_restore
 pg_restore --dbname=leafletpilot_restore --no-owner backup.dump
 python -m alembic current
 ```
+
+This was verified end-to-end during Phase 28E readiness testing: a
+`postgres_backup.sh`-equivalent dump taken via `docker compose exec` restored
+cleanly into a fresh disposable Postgres via `pg_restore --no-owner`, with
+matching table and row counts.
 
 Verify ownership, extensions, app login, and `/api/health/db` before promoting
 the restored database.
