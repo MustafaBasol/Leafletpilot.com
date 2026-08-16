@@ -121,6 +121,11 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_products_name", "name"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_is_global", "is_global"),
+        Index("ix_products_merged_into_product_id", "merged_into_product_id"),
+        CheckConstraint(
+            "merged_into_product_id is null or merged_into_product_id <> id",
+            name="ck_products_merged_not_self",
+        ),
     )
 
     market_id: Mapped[UUID | None] = mapped_column(ForeignKey("markets.id"))
@@ -141,6 +146,11 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     badge_text: Mapped[str | None] = mapped_column(String(64))
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Merge sources stay as inactive redirects so historical references can
+    # resolve predictably without a destructive product deletion.
+    merged_into_product_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("products.id", name="fk_products_merged_into_product_id")
+    )
     quality_score: Mapped[int | None] = mapped_column(Integer)
     usage_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -155,6 +165,15 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     images: Mapped[list[ProductImage]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
+    )
+    merged_into: Mapped[Product | None] = relationship(
+        remote_side="Product.id",
+        foreign_keys=[merged_into_product_id],
+        back_populates="merged_products",
+    )
+    merged_products: Mapped[list[Product]] = relationship(
+        back_populates="merged_into",
+        foreign_keys=[merged_into_product_id],
     )
 
 
@@ -201,6 +220,48 @@ class ProductImage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     product: Mapped[Product] = relationship(back_populates="images")
+
+
+class CatalogQualityDecision(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """Persistent operator decisions for one canonical unordered product pair."""
+
+    __tablename__ = "catalog_quality_decisions"
+    __table_args__ = (
+        CheckConstraint(
+            "product_a_id <> product_b_id",
+            name="ck_catalog_quality_decisions_distinct_products",
+        ),
+        CheckConstraint(
+            "product_a_id < product_b_id",
+            name="ck_catalog_quality_decisions_ordered_pair",
+        ),
+        CheckConstraint(
+            "decision in ('ignored')",
+            name="ck_catalog_quality_decisions_decision",
+        ),
+        UniqueConstraint(
+            "product_a_id",
+            "product_b_id",
+            name="uq_catalog_quality_decisions_product_pair",
+        ),
+    )
+
+    product_a_id: Mapped[UUID] = mapped_column(
+        ForeignKey("products.id", name="fk_catalog_quality_decisions_product_a"),
+        nullable=False,
+    )
+    product_b_id: Mapped[UUID] = mapped_column(
+        ForeignKey("products.id", name="fk_catalog_quality_decisions_product_b"),
+        nullable=False,
+    )
+    decision: Mapped[str] = mapped_column(String(32), default="ignored", nullable=False)
+    note: Mapped[str | None] = mapped_column(String(1000))
+    created_by_platform_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "platform_admins.id",
+            name="fk_catalog_quality_decisions_created_by_platform_admin",
+        )
+    )
 
 
 class MarketProduct(UUIDPrimaryKeyMixin, TimestampMixin, Base):
