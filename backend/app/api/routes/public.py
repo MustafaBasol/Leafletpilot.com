@@ -11,9 +11,33 @@ from app.core.config import settings
 from app.core.security import hash_signup_throttle_key
 from app.models import ActivityLog, SignupRequest, SignupThrottle
 from app.models.base import utc_now
+from app.schemas.plans import PublicPlanRead
 from app.schemas.platform import PublicSignupAccepted, PublicSignupRequestCreate
+from app.services.plans import public_plans
 
 router = APIRouter(prefix="/public", tags=["public"])
+
+
+@router.get("/plans", response_model=list[PublicPlanRead])
+async def list_public_plans() -> list[PublicPlanRead]:
+    return [
+        PublicPlanRead(
+            code=plan.code,
+            name=plan.name,
+            monthly_price=plan.monthly_price,
+            currency=plan.currency,
+            tagline=plan.tagline,
+            campaigns_per_month=plan.monthly_campaigns_limit,
+            private_products_limit=plan.private_products_limit,
+            export_formats=list(plan.export_formats),
+            support_tier=plan.support_tier,
+            custom_template=plan.custom_template,
+            telegram_enabled=plan.telegram_enabled,
+            is_recommended=plan.is_recommended,
+            features=list(plan.features),
+        )
+        for plan in public_plans()
+    ]
 
 
 @router.post("/signup-requests", response_model=PublicSignupAccepted, status_code=status.HTTP_202_ACCEPTED)

@@ -186,11 +186,15 @@ async def test_cross_market_isolation_across_resources_when_test_database_url_is
         async with session_factory() as session:
             user_a = User(email=email_a, full_name="Tenant A Admin", password_hash=hash_password(password), is_active=True)
             user_b = User(email=email_b, full_name="Tenant B Admin", password_hash=hash_password(password), is_active=True)
+            # Pro plan: this test exercises cross-tenant isolation (including custom
+            # template creation, which is Pro-exclusive as of Phase 29A), not plan
+            # entitlements, and pro's unlimited quotas keep it clear of any campaign
+            # quota interference from the requests below.
             market_a = Market(
-                id=market_a_id, name=f"Market A {market_a_id}", slug=f"tenant-a-{market_a_id}", subscription_plan="growth"
+                id=market_a_id, name=f"Market A {market_a_id}", slug=f"tenant-a-{market_a_id}", subscription_plan="pro"
             )
             market_b = Market(
-                id=market_b_id, name=f"Market B {market_b_id}", slug=f"tenant-b-{market_b_id}", subscription_plan="growth"
+                id=market_b_id, name=f"Market B {market_b_id}", slug=f"tenant-b-{market_b_id}", subscription_plan="pro"
             )
             session.add_all([user_a, user_b, market_a, market_b])
             await session.flush()

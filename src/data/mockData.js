@@ -604,6 +604,54 @@ export const parsedWizardProducts = [
   { incomingName: "Bizim Yağ 5L", price: "8.99€", match: "Bizim Yağ 5L", score: 66, status: "Bulunamadı" },
 ];
 
+export const plans = [
+  {
+    code: "starter",
+    name: "Başlangıç",
+    monthly_price: 59,
+    currency: "EUR",
+    tagline: "Tek şubeli küçük marketler için",
+    campaigns_per_month: 4,
+    private_products_limit: 25,
+    export_formats: ["pdf", "png"],
+    support_tier: "standard",
+    custom_template: false,
+    telegram_enabled: true,
+    is_recommended: false,
+    features: ["Ayda 4 kampanya", "2 broşür şablonu", "A4 PDF + PNG çıktı", "Telegram üzerinden kullanım"],
+  },
+  {
+    code: "standard",
+    name: "Standart",
+    monthly_price: 119,
+    currency: "EUR",
+    tagline: "Düzenli kampanya yapan marketler için",
+    campaigns_per_month: 10,
+    private_products_limit: 250,
+    export_formats: ["pdf", "png"],
+    support_tier: "priority",
+    custom_template: false,
+    telegram_enabled: true,
+    is_recommended: true,
+    features: ["Ayda 10 kampanya", "Tüm broşür şablonları", "A4 PDF + PNG çıktı", "Öncelikli destek"],
+  },
+  {
+    code: "pro",
+    name: "Pro",
+    monthly_price: 199,
+    currency: "EUR",
+    tagline: "Zincir ve yoğun kullanım için",
+    campaigns_per_month: null,
+    private_products_limit: null,
+    export_formats: ["pdf", "png"],
+    support_tier: "phone",
+    custom_template: true,
+    telegram_enabled: true,
+    is_recommended: false,
+    features: ["Sınırsız kampanya", "Özel şablon çalışması", "Tüm çıktı formatları", "Telefonla destek"],
+  },
+];
+
 export function findCampaignById(id) {
   return campaigns.find((campaign) => campaign.id === id) || campaigns[0];
 }

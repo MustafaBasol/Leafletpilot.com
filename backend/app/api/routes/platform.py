@@ -17,6 +17,7 @@ from app.models.base import utc_now
 from app.schemas.common import ListResponse
 from app.schemas.platform import (
     LifecycleUpdateRequest,
+    MarketPlanUpdateRequest,
     OwnerInvitationActionRequest,
     OwnerInvitationActionResponse,
     PlatformAdminRead,
@@ -27,13 +28,16 @@ from app.schemas.platform import (
     PlatformMarketDetail,
     PlatformMarketListItem,
     PlatformOverview,
+    PlatformPlanQuotaSummary,
     PlatformReadinessSummary,
     ProvisionMarketRequest,
     ProvisionMarketResponse,
     SignupRequestRead,
     SignupRequestUpdate,
 )
+from app.services.entitlements import resolve_capabilities, resolve_plan_code
 from app.services.invitation_email import InvitationDeliveryDisabled, InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
+from app.services.plans import get_plan, is_valid_assignable_plan_code
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -237,7 +241,7 @@ async def provision_signup_request(
         timezone=payload.timezone,
         contact_email=signup_request.email,
         contact_phone=signup_request.phone,
-        subscription_plan="starter",
+        subscription_plan=payload.subscription_plan,
         lifecycle_status="trial",
         lifecycle_updated_at=now,
         lifecycle_updated_by_platform_admin_id=admin.id,
@@ -393,6 +397,44 @@ async def update_market_lifecycle(
     return await _market_detail(session, market)
 
 
+@router.patch("/markets/{market_id}/plan", response_model=PlatformMarketDetail)
+async def update_market_plan(
+    market_id: UUID,
+    payload: MarketPlanUpdateRequest,
+    admin: PlatformAdmin = Depends(get_current_platform_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> PlatformMarketDetail:
+    market = await session.get(Market, market_id, with_for_update=True)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
+    if not is_valid_assignable_plan_code(payload.subscription_plan):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown subscription plan.")
+    previous_plan = market.subscription_plan
+    if previous_plan == payload.subscription_plan:
+        return await _market_detail(session, market)
+
+    market.subscription_plan = payload.subscription_plan
+    _add_activity(
+        session,
+        market.id,
+        "market",
+        market.id,
+        "market_plan_changed",
+        {"from": previous_plan, "to": payload.subscription_plan},
+    )
+    _add_platform_audit(
+        session,
+        admin,
+        "market_plan_changed",
+        "market",
+        market.id,
+        {"from": previous_plan, "to": payload.subscription_plan, "reason": payload.reason},
+    )
+    await session.commit()
+    await session.refresh(market)
+    return await _market_detail(session, market)
+
+
 @router.post("/markets/{market_id}/owner-invitation", response_model=OwnerInvitationActionResponse)
 async def create_owner_invitation(
     market_id: UUID,
@@ -525,6 +567,8 @@ async def _market_item(session: AsyncSession, market: Market) -> PlatformMarketL
         campaign_count=campaign_count or 0,
         readiness=readiness,
         owner_invitation=_invitation_summary(invitation) if invitation else None,
+        subscription_plan=resolve_plan_code(market),
+        subscription_plan_display=get_plan(market.subscription_plan).name,
         created_at=market.created_at,
     )
 
@@ -556,7 +600,29 @@ def _market_item_from_counts(
         campaign_count=campaign_count,
         readiness=readiness,
         owner_invitation=_invitation_summary(invitation) if invitation else None,
+        subscription_plan=resolve_plan_code(market),
+        subscription_plan_display=get_plan(market.subscription_plan).name,
         created_at=market.created_at,
+    )
+
+
+async def _plan_quota_summary(session: AsyncSession, market: Market) -> PlatformPlanQuotaSummary:
+    capabilities = resolve_capabilities(market)
+    month_start = utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    campaigns_this_month = await session.scalar(
+        select(func.count(Campaign.id)).where(
+            Campaign.market_id == market.id,
+            Campaign.created_at >= month_start,
+            Campaign.status != "cancelled",
+        )
+    )
+    return PlatformPlanQuotaSummary(
+        monthly_campaigns_limit=capabilities.monthly_campaigns_limit,
+        monthly_campaigns_used=campaigns_this_month or 0,
+        monthly_exports_limit=capabilities.monthly_exports_limit,
+        private_products_limit=capabilities.private_products_limit,
+        private_templates_limit=capabilities.private_templates_limit,
+        branding_assets_limit=capabilities.branding_assets_limit,
     )
 
 
@@ -579,6 +645,7 @@ async def _market_detail(session: AsyncSession, market: Market) -> PlatformMarke
         lifecycle_reason=market.lifecycle_reason,
         lifecycle_updated_at=market.lifecycle_updated_at,
         lifecycle_updated_by_platform_admin_id=market.lifecycle_updated_by_platform_admin_id,
+        plan_quota=await _plan_quota_summary(session, market),
         recent_activity=await _recent_audit(session, target_type="market", target_id=market.id),
     )
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getPublicPlans } from "../data/dataSource.js";
 
 const painPoints = [
   {
@@ -18,7 +19,7 @@ const painPoints = [
 const steps = [
   {
     title: "Listenizi gönderin",
-    text: "Ürün ve fiyat listenizi Telegram veya WhatsApp'tan mesaj olarak yazın. Excel de gönderebilirsiniz.",
+    text: "Ürün ve fiyat listenizi Telegram'dan mesaj olarak yazın. Excel de gönderebilirsiniz.",
   },
   {
     title: "Sistem broşürü hazırlasın",
@@ -92,8 +93,8 @@ const features = [
   },
   {
     icon: "files",
-    title: "PDF + Instagram görseli",
-    text: "Tek listeden baskıya hazır A4 PDF, paylaşıma hazır PNG ve Instagram postu birlikte üretilir.",
+    title: "PDF + PNG çıktı",
+    text: "Tek listeden baskıya hazır A4 PDF ve paylaşıma hazır PNG görseli birlikte üretilir.",
   },
   {
     icon: "approve",
@@ -107,34 +108,62 @@ const features = [
   },
 ];
 
-const plans = [
+// Fallback used until the public plans API responds, and if it fails —
+// pricing must never make the landing page unusable. Mirrors the same
+// contract GET /api/public/plans returns.
+const fallbackPlans = [
   {
+    code: "starter",
     name: "Başlangıç",
-    price: "59€",
+    monthly_price: 59,
+    currency: "EUR",
     tagline: "Tek şubeli küçük marketler için",
-    items: ["Ayda 4 kampanya", "2 broşür şablonu", "A4 PDF + PNG çıktı", "Telegram üzerinden kullanım"],
-    highlighted: false,
+    features: ["Ayda 4 kampanya", "2 broşür şablonu", "A4 PDF + PNG çıktı", "Telegram üzerinden kullanım"],
+    is_recommended: false,
   },
   {
+    code: "standard",
     name: "Standart",
-    price: "119€",
+    monthly_price: 119,
+    currency: "EUR",
     tagline: "Düzenli kampanya yapan marketler için",
-    items: [
-      "Ayda 10 kampanya",
-      "Tüm broşür şablonları",
-      "A4 PDF + PNG + Instagram postu",
-      "Öncelikli destek",
-    ],
-    highlighted: true,
+    features: ["Ayda 10 kampanya", "Tüm broşür şablonları", "A4 PDF + PNG çıktı", "Öncelikli destek"],
+    is_recommended: true,
   },
   {
+    code: "pro",
     name: "Pro",
-    price: "199€",
+    monthly_price: 199,
+    currency: "EUR",
     tagline: "Zincir ve yoğun kullanım için",
-    items: ["Sınırsız kampanya", "Özel şablon çalışması", "Tüm çıktı formatları", "Telefonla destek"],
-    highlighted: false,
+    features: ["Sınırsız kampanya", "Özel şablon çalışması", "Tüm çıktı formatları", "Telefonla destek"],
+    is_recommended: false,
   },
 ];
+
+function formatPlanPrice(plan) {
+  if (plan.monthly_price == null) return "Bize sorun";
+  const symbol = plan.currency === "EUR" ? "€" : plan.currency;
+  return `${plan.monthly_price}${symbol}`;
+}
+
+function usePublicPlans() {
+  const [plans, setPlans] = useState(fallbackPlans);
+  useEffect(() => {
+    let cancelled = false;
+    getPublicPlans()
+      .then((response) => {
+        if (!cancelled && Array.isArray(response) && response.length > 0) setPlans(response);
+      })
+      .catch(() => {
+        // Keep the fallback plans; pricing must never block the landing page.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return plans;
+}
 
 const faqs = [
   {
@@ -328,6 +357,7 @@ function ChatMock() {
 export function Landing() {
   useReveal();
   const scrolled = useHeaderShadow();
+  const plans = usePublicPlans();
 
   return (
     <div className="landing">
@@ -437,23 +467,23 @@ export function Landing() {
           <div className="landing-pricing">
             {plans.map((plan, index) => (
               <article
-                key={plan.name}
-                className={`landing-plan reveal${plan.highlighted ? " landing-plan-highlighted" : ""}`}
+                key={plan.code || plan.name}
+                className={`landing-plan reveal${plan.is_recommended ? " landing-plan-highlighted" : ""}`}
                 style={{ transitionDelay: `${index * 110}ms` }}
               >
-                {plan.highlighted ? <span className="landing-plan-badge">En çok tercih edilen</span> : null}
+                {plan.is_recommended ? <span className="landing-plan-badge">En çok tercih edilen</span> : null}
                 <h3>{plan.name}</h3>
                 <div className="landing-plan-price">
-                  {plan.price}
+                  {formatPlanPrice(plan)}
                   <small>/ay</small>
                 </div>
                 <p>{plan.tagline}</p>
                 <ul>
-                  {plan.items.map((item) => (
+                  {(plan.features || []).map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
-                <a className={`landing-btn landing-btn-lg ${plan.highlighted ? "landing-btn-primary" : "landing-btn-ghost"}`} href="#/start">
+                <a className={`landing-btn landing-btn-lg ${plan.is_recommended ? "landing-btn-primary" : "landing-btn-ghost"}`} href="#/start">
                   Ücretsiz Dene
                 </a>
               </article>

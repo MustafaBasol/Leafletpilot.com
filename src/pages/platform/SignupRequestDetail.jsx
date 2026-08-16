@@ -23,6 +23,7 @@ export function SignupRequestDetail({ id }) {
     currency: "EUR",
     timezone: "Europe/Paris",
     trial_length_days: 14,
+    subscription_plan: "starter",
   });
 
   async function load() {
@@ -142,6 +143,17 @@ export function SignupRequestDetail({ id }) {
                   />
                 </label>
               ))}
+              <label>
+                {t("provisionPlan")}
+                <select
+                  value={provision.subscription_plan}
+                  onChange={(event) => setProvision({ ...provision, subscription_plan: event.target.value })}
+                >
+                  <option value="starter">starter</option>
+                  <option value="standard">standard</option>
+                  <option value="pro">pro</option>
+                </select>
+              </label>
             </div>
             <Button variant="primary" disabled={Boolean(action) || !canProvisionSignup(item)} onClick={provisionMarket}>{t("createMarketAndInvitation")}</Button>
             {inviteUrl ? (

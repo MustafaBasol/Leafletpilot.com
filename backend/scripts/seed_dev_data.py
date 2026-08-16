@@ -163,14 +163,17 @@ DEMO_MARKET_PRODUCTS = (
 DEMO_TEMPLATES = (
     {
         "name": "Supermarket Promo 4", "slug": "supermarket-promo-4", "description": "Commercial supermarket promotional flyer with a 2x2 product grid.", "template_type": "supermarket",
+        "minimum_plan": "starter",
         "config_json": {"layout": "supermarket-promo-4", "columns": 2, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
     },
     {
         "name": "Supermarket Promo 9", "slug": "supermarket-promo-9", "description": "Commercial supermarket promotional flyer with a 3x3 product grid.", "template_type": "supermarket",
+        "minimum_plan": "starter",
         "config_json": {"layout": "supermarket-promo-9", "columns": 3, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
     },
     {
         "name": "Supermarket Promo 16", "slug": "supermarket-promo-16", "description": "Commercial supermarket promotional flyer with a 4x4 product grid.", "template_type": "supermarket",
+        "minimum_plan": "standard",
         "config_json": {"layout": "supermarket-promo-16", "columns": 4, "show_old_price": True, "show_payment_icons": True, "show_additional_logos": True},
     },
     {
@@ -178,9 +181,10 @@ DEMO_TEMPLATES = (
         "slug": "premium-market",
         "description": "Modern market kampanyaları için geniş görsel alanlı temel şablon.",
         "template_type": "premium",
+        "minimum_plan": "standard",
         "config_json": {
             "layout": "premium-market",
-            "formats": ["A4 PDF", "A4 PNG", "Instagram Post", "WhatsApp Görseli"],
+            "formats": ["A4 PDF", "A4 PNG"],
             "max_products_per_page": 18,
             "preview_tone": "premium",
             "accent_color": "#b91c1c",
@@ -195,9 +199,10 @@ DEMO_TEMPLATES = (
         "slug": "compact-weekly",
         "description": "Haftalık fiyat listeleri için yoğun ve sade kampanya şablonu.",
         "template_type": "compact",
+        "minimum_plan": "standard",
         "config_json": {
             "layout": "compact-weekly",
-            "formats": ["A4 PNG", "Instagram Story", "WhatsApp Görseli"],
+            "formats": ["A4 PNG"],
             "max_products_per_page": 24,
             "preview_tone": "classic",
             "accent_color": "#0f766e",
@@ -512,6 +517,7 @@ async def upsert_templates(session: AsyncSession, counts: dict[str, int]) -> dic
             "is_active": True,
             "status": "published",
             "visibility": "shared",
+            "minimum_plan": seed.get("minimum_plan", "starter"),
             "config_json": seed["config_json"],
         }
         if template is None:
