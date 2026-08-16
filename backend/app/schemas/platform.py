@@ -102,6 +102,7 @@ class ProvisionMarketRequest(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     timezone: str = Field(default="Europe/Paris", min_length=3, max_length=64)
     trial_length_days: int = Field(default=14, ge=1, le=90)
+    subscription_plan: str = Field(default="starter", pattern="^(starter|standard|growth|pro)$")
 
     @field_validator("country_code")
     @classmethod
@@ -169,7 +170,18 @@ class PlatformMarketListItem(BaseModel):
     campaign_count: int
     readiness: PlatformReadinessSummary
     owner_invitation: PlatformInvitationSummary | None = None
+    subscription_plan: str
+    subscription_plan_display: str
     created_at: datetime
+
+
+class PlatformPlanQuotaSummary(BaseModel):
+    monthly_campaigns_limit: int | None
+    monthly_campaigns_used: int
+    monthly_exports_limit: int | None
+    private_products_limit: int | None
+    private_templates_limit: int | None
+    branding_assets_limit: int | None
 
 
 class PlatformMarketDetail(PlatformMarketListItem):
@@ -188,12 +200,18 @@ class PlatformMarketDetail(PlatformMarketListItem):
     lifecycle_reason: str | None
     lifecycle_updated_at: datetime | None
     lifecycle_updated_by_platform_admin_id: UUID | None
+    plan_quota: PlatformPlanQuotaSummary
     recent_activity: list[PlatformAuditLogRead] = Field(default_factory=list)
 
 
 class LifecycleUpdateRequest(BaseModel):
     lifecycle_status: str = Field(pattern="^(active|suspended|archived)$")
     confirm_archive: bool = False
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class MarketPlanUpdateRequest(BaseModel):
+    subscription_plan: str = Field(pattern="^(starter|standard|growth|pro)$")
     reason: str | None = Field(default=None, max_length=1000)
 
 

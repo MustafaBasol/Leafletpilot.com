@@ -11,6 +11,7 @@ from app.schemas.template import TemplateCreate, TemplatePreviewResponse, Templa
 from app.services import templates as template_service
 from app.services.template_presets import FLYER_PRESETS, SUPERMARKET_PRESETS, SUPERMARKET_STYLE_OPTIONS
 from app.services.entitlements import resolve_plan_code
+from app.services.plans import plan_rank
 from app.models import Market
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -37,9 +38,8 @@ async def list_template_builder_presets() -> dict:
 async def shared_templates(market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)):
     items, total = await template_service.list_templates(session, market_id=market_id, include_global=True, search=None, is_active=True, is_global=True, limit=100, offset=0)
     market = await session.get(Market, market_id)
-    ranks = {"starter": 0, "growth": 1, "pro": 2}
-    rank = ranks.get(resolve_plan_code(market), 0)
-    items = [item for item in items if ranks.get(item.minimum_plan, 0) <= rank]
+    rank = plan_rank(resolve_plan_code(market))
+    items = [item for item in items if plan_rank(item.minimum_plan) <= rank]
     return ListResponse(items=items, total=total, limit=100, offset=0)
 
 

@@ -9,6 +9,7 @@ from app.api.routes.platform import router as platform_router
 from app.api.routes.platform_catalog import router as platform_catalog_router
 from app.api.routes.platform_catalog_quality import router as platform_catalog_quality_router
 from app.api.routes.platform_templates import router as platform_templates_router
+from app.api.routes.plans import router as plans_router
 from app.api.routes.public import router as public_router
 from app.api.routes.team import router as team_router
 from app.api.routes.telegram import router as telegram_router
@@ -20,6 +21,7 @@ api_router.include_router(campaigns_router)
 api_router.include_router(catalog_router)
 api_router.include_router(templates_router)
 api_router.include_router(team_router)
+api_router.include_router(plans_router)
 api_router.include_router(onboarding_router)
 api_router.include_router(public_router)
 api_router.include_router(platform_router)

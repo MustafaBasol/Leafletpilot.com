@@ -3,6 +3,8 @@ import * as catalogApi from "../api/catalogApi.js";
 import { getSelectedMarketId } from "../api/authSession.js";
 import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
+import * as planApi from "../api/planApi.js";
+import { getPublicPlans as fetchPublicPlans } from "../api/publicApi.js";
 import {
   activities,
   campaigns,
@@ -10,6 +12,7 @@ import {
   metrics,
   missingProducts,
   parsedWizardProducts,
+  plans,
   products,
   templates,
   waitingApprovals,
@@ -639,6 +642,17 @@ export async function updateTemplateStatus(templateId, isActive) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
   return templateApi.updateTemplate(templateId, { is_active: isActive }, marketId);
+}
+
+export async function getPublicPlans() {
+  if (!isRealApiEnabled) return plans;
+  return fetchPublicPlans();
+}
+
+export async function getMarketPlan() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return planApi.getMyMarketPlan(marketId);
 }
 
 export const dataSourceInfo = {

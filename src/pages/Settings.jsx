@@ -1,7 +1,49 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiStatus } from "../components/ApiStatus.jsx";
 import { marketSettings, outputFormats, templates } from "../data/mockData.js";
+import { getMarketPlan } from "../data/dataSource.js";
 import { Button, Card, Checkbox, Input, PageHeader, SelectPlaceholder } from "../components/ui/index.js";
+
+function formatLimit(value) {
+  return value === null || value === undefined ? "Sınırsız" : value;
+}
+
+function PlanUsageCard() {
+  const [plan, setPlan] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMarketPlan()
+      .then((response) => {
+        if (!cancelled) setPlan(response);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!plan) return null;
+
+  return (
+    <Card title="Plan / Kullanım" className="span-12">
+      <div className="settings-form">
+        <p>
+          Mevcut plan: <strong>{plan.name}</strong>
+        </p>
+        <ul>
+          <li>
+            Aylık kampanya: {plan.monthly_campaigns_used} / {formatLimit(plan.monthly_campaigns_limit)}
+          </li>
+          <li>Aylık dışa aktarım limiti: {formatLimit(plan.monthly_exports_limit)}</li>
+          <li>Özel ürün limiti: {formatLimit(plan.private_products_limit)}</li>
+          <li>Özel şablon limiti: {formatLimit(plan.private_templates_limit)}</li>
+          <li>Çıktı formatları: {(plan.export_formats || []).join(", ").toUpperCase()}</li>
+        </ul>
+      </div>
+    </Card>
+  );
+}
 
 export function Settings() {
   const [settings, setSettings] = useState(marketSettings);
@@ -63,6 +105,7 @@ export function Settings() {
             ))}
           </div>
         </Card>
+        <PlanUsageCard />
         <ApiStatus />
       </section>
     </>

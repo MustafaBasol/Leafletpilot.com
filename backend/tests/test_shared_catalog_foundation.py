@@ -75,9 +75,11 @@ def test_plan_capacity_supports_limited_and_unlimited_plans() -> None:
     assert has_capacity(10000, None)
 
 
-def test_growth_market_can_create_private_templates_but_unassigned_cannot() -> None:
-    assert resolve_capabilities(Market(subscription_plan="growth")).custom_template is True
-    assert resolve_capabilities(Market(subscription_plan=None)).custom_template is False
+def test_growth_market_can_clone_templates_but_unassigned_cannot() -> None:
+    # Phase 29A: "custom_template" is now Pro-exclusive per the commercial
+    # contract; growth/standard retain "clone_global_template" instead.
+    assert resolve_capabilities(Market(subscription_plan="growth")).clone_global_template is True
+    assert resolve_capabilities(Market(subscription_plan=None)).clone_global_template is False
 
 
 @pytest.mark.asyncio

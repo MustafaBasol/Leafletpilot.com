@@ -42,7 +42,8 @@ from app.services.campaign_intelligence import CampaignIntelligenceEngine
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.campaign_rendering import campaign_render_load_options
 from app.services.catalog import list_my_market_products, resolved_market_product
-from app.services.entitlements import has_capacity, resolve_capabilities, resolve_plan_code
+from app.services.entitlements import has_capacity, require_export_format, resolve_capabilities, resolve_plan_code
+from app.services.plans import plan_rank
 from app.services.preview_renderer import (
     DEFAULT_TEMPLATE_NAME,
     DEFAULT_TEMPLATE_SLUG,
@@ -71,6 +72,31 @@ def require_market_id(market_id: UUID | None) -> UUID:
             detail="X-Market-Id is required for campaign routes.",
         )
     return market_id
+
+
+async def _enforce_monthly_campaign_quota(session: AsyncSession, market: Market | None, market_id: UUID) -> None:
+    """Reject campaign creation once the plan's monthly campaign quota is used up.
+
+    Every created campaign counts toward the quota except cancelled ones,
+    since campaign creation itself is the billable event; a calendar month
+    (not a rolling 30 days) keeps this a simple, billing-cycle-free check.
+    """
+    capabilities = resolve_capabilities(market)
+    if capabilities.monthly_campaigns_limit is None:
+        return
+    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    campaigns_this_month = await session.scalar(
+        select(func.count(Campaign.id)).where(
+            Campaign.market_id == market_id,
+            Campaign.created_at >= month_start,
+            Campaign.status != "cancelled",
+        )
+    )
+    if not has_capacity(campaigns_this_month or 0, capabilities.monthly_campaigns_limit):
+        raise HTTPException(
+            status_code=403,
+            detail=f"The {resolve_plan_code(market)} plan has reached its monthly campaign limit.",
+        )
 
 
 def recalculate_campaign_counts(campaign: Campaign) -> Campaign:
@@ -137,6 +163,8 @@ async def create_campaign(
     commit: bool = True,
 ) -> Campaign:
     scoped_market_id = require_market_id(market_id)
+    market = await session.get(Market, scoped_market_id)
+    await _enforce_monthly_campaign_quota(session, market, scoped_market_id)
     data = payload.model_dump(exclude={"items", "builder_config"})
     data["builder_config_json"] = payload.builder_config or {}
     if data.get("template_id") is not None:
@@ -610,6 +638,8 @@ async def create_export_job(
         await session.refresh(existing)
         return existing
     market = campaign.market or await session.get(Market, campaign.market_id)
+    for requested_format in formats:
+        require_export_format(market, requested_format)
     capabilities = resolve_capabilities(market)
     if capabilities.monthly_exports_limit is not None:
         month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -751,10 +781,8 @@ async def get_builder_options(session: AsyncSession, market_id: UUID) -> Campaig
     products = await list_my_market_products(session, market_id)
     market = await session.get(Market, market_id)
     capabilities = resolve_capabilities(market) if market else None
-    market_plan = (market.subscription_plan if market else "starter")
-    ranks = {"starter": 0, "growth": 1, "pro": 2}
-    rank = ranks.get(market_plan, 0)
-    eligible_templates = [template for template in templates if template.status not in {"draft", "archived"} and ranks.get(template.minimum_plan, 0) <= rank]
+    rank = plan_rank(market.subscription_plan if market else None)
+    eligible_templates = [template for template in templates if template.status not in {"draft", "archived"} and plan_rank(template.minimum_plan) <= rank]
     return CampaignBuilderOptions(
         templates=[{
             "id": template.id, "name": template.name, "slug": template.slug,
@@ -765,7 +793,10 @@ async def get_builder_options(session: AsyncSession, market_id: UUID) -> Campaig
             "thumbnail_key": template.thumbnail_key,
         } for template in eligible_templates],
         products=[resolved_market_product(row) for row in products if row.is_active],
-        limits={"max_products": getattr(capabilities, "max_products_per_campaign", None) if capabilities else None, "export_formats": ["pdf", "png"]},
+        limits={
+            "max_products": getattr(capabilities, "max_products_per_campaign", None) if capabilities else None,
+            "export_formats": list(capabilities.export_formats) if capabilities else ["pdf", "png"],
+        },
     )
 
 

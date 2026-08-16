@@ -113,7 +113,7 @@ class TemplateBase(BaseModel):
     is_active: bool = True
     config_json: TemplateConfig | None = None
     category: str | None = Field(default=None, max_length=120)
-    minimum_plan: str = Field(default="starter", pattern="^(starter|growth|pro)$")
+    minimum_plan: str = Field(default="starter", pattern="^(starter|standard|growth|pro)$")
 
 
 class TemplateCreate(TemplateBase):
@@ -129,7 +129,7 @@ class TemplateUpdate(BaseModel):
     is_active: bool | None = None
     config_json: TemplateConfig | None = None
     category: str | None = Field(default=None, max_length=120)
-    minimum_plan: str | None = Field(default=None, pattern="^(starter|growth|pro)$")
+    minimum_plan: str | None = Field(default=None, pattern="^(starter|standard|growth|pro)$")
 
 
 class TemplateRead(BaseModel):

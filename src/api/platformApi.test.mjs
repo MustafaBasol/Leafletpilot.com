@@ -30,6 +30,26 @@ test("image requests use the shared expired-session recovery", async () => {
   }
 });
 
+test("updateMarketPlan PATCHes the market plan endpoint with the selected plan code", async () => {
+  const values = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return { ok: true, text: async () => JSON.stringify({ subscription_plan: "standard" }) };
+  };
+  try {
+    const result = await platformApi.updateMarketPlan("market-1", { subscription_plan: "standard", reason: "Upsell" });
+    assert.match(captured.url, /\/platform\/markets\/market-1\/plan$/);
+    assert.equal(captured.options.method, "PATCH");
+    assert.deepEqual(JSON.parse(captured.options.body), { subscription_plan: "standard", reason: "Upsell" });
+    assert.equal(result.subscription_plan, "standard");
+  } finally {
+    globalThis.fetch = originalFetch;
+    values.clear();
+  }
+});
+
 test("manual image upload sends a browser File as raw PNG bytes with primary=true", async () => {
   const values = installBrowserGlobals();
   const originalFetch = globalThis.fetch;

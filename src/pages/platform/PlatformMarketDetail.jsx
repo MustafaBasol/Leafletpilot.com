@@ -14,6 +14,8 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleString("tr-TR") : "-";
 }
 
+const PLAN_CODES = ["starter", "standard", "pro"];
+
 export function PlatformMarketDetail({ id }) {
   const [market, setMarket] = useState(null);
   const [error, setError] = useState("");
@@ -21,6 +23,8 @@ export function PlatformMarketDetail({ id }) {
   const [ownerEmail, setOwnerEmail] = useState("");
   const [manualLinkMessage, setManualLinkMessage] = useState("");
   const [manualLinkCopied, setManualLinkCopied] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState("starter");
+  const [planMessage, setPlanMessage] = useState("");
 
   async function load() {
     setError("");
@@ -28,6 +32,7 @@ export function PlatformMarketDetail({ id }) {
       const response = await platformApi.getMarket(id);
       setMarket(response);
       setOwnerEmail(response.owner_invitation?.email || response.contact_email || "");
+      setSelectedPlan(response.subscription_plan || "starter");
     } catch (err) {
       setError(normalizeApiError(err));
     }
@@ -48,6 +53,23 @@ export function PlatformMarketDetail({ id }) {
     setError("");
     try {
       await platformApi.updateMarketLifecycle(id, { lifecycle_status, reason, confirm_archive: lifecycle_status === "archived" });
+      await load();
+    } catch (err) {
+      setError(normalizeApiError(err));
+    } finally {
+      setAction("");
+    }
+  }
+
+  async function changePlan() {
+    if (!market || selectedPlan === market.subscription_plan) return;
+    setAction("plan");
+    setError("");
+    setPlanMessage("");
+    try {
+      const reason = window.prompt(t("reasonPrompt")) || undefined;
+      await platformApi.updateMarketPlan(id, { subscription_plan: selectedPlan, reason });
+      setPlanMessage(t("planChanged"));
       await load();
     } catch (err) {
       setError(normalizeApiError(err));
@@ -156,6 +178,28 @@ export function PlatformMarketDetail({ id }) {
               <Button variant="danger" disabled={Boolean(action) || market.lifecycle_status === "suspended"} onClick={() => setLifecycle("suspended")}>{t("suspend")}</Button>
               <Button variant="danger" disabled={Boolean(action) || market.lifecycle_status === "archived"} onClick={() => setLifecycle("archived")}>{t("archive")}</Button>
             </div>
+          </Card>
+          <Card title={t("plan")} className="span-6">
+            <dl className="detail-list">
+              <div><dt>{t("currentPlan")}</dt><dd>{market.subscription_plan_display || market.subscription_plan}</dd></div>
+              <div><dt>{t("monthlyCampaignQuota")}</dt><dd>{market.plan_quota ? `${market.plan_quota.monthly_campaigns_used} / ${market.plan_quota.monthly_campaigns_limit ?? t("unlimited")}` : "-"}</dd></div>
+              <div><dt>{t("monthlyExportQuota")}</dt><dd>{market.plan_quota?.monthly_exports_limit ?? t("unlimited")}</dd></div>
+              <div><dt>{t("privateProductLimit")}</dt><dd>{market.plan_quota?.private_products_limit ?? t("unlimited")}</dd></div>
+              <div><dt>{t("privateTemplateLimit")}</dt><dd>{market.plan_quota?.private_templates_limit ?? t("unlimited")}</dd></div>
+              <div><dt>{t("brandingAssetLimit")}</dt><dd>{market.plan_quota?.branding_assets_limit ?? t("unlimited")}</dd></div>
+            </dl>
+            <label className="settings-form">
+              {t("changePlan")}
+              <select value={selectedPlan} onChange={(event) => setSelectedPlan(event.target.value)}>
+                {PLAN_CODES.map((code) => (
+                  <option key={code} value={code}>{code}</option>
+                ))}
+              </select>
+            </label>
+            <div className="page-actions">
+              <Button disabled={Boolean(action) || selectedPlan === market.subscription_plan} onClick={changePlan}>{t("savePlan")}</Button>
+            </div>
+            {planMessage ? <p className="inline-result">{planMessage}</p> : null}
           </Card>
           <Card title={t("ownerInvitation")} className="span-6">
             <dl className="detail-list">

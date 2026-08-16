@@ -93,6 +93,7 @@ export const platformApi = {
   listMarkets: (params) => request("/platform/markets", { params }),
   getMarket: (id) => request(`/platform/markets/${id}`),
   updateMarketLifecycle: (id, body) => request(`/platform/markets/${id}/lifecycle`, { method: "PATCH", body }),
+  updateMarketPlan: (id, body) => request(`/platform/markets/${id}/plan`, { method: "PATCH", body }),
   createOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation`, { method: "POST", body }),
   rotateOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation/rotate`, { method: "POST", body }),
   revokeOwnerInvitation: (id) => request(`/platform/markets/${id}/owner-invitation/revoke`, { method: "POST" }),
