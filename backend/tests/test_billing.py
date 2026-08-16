@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+import stripe
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -130,6 +131,21 @@ def _subscription(
 
 def _event(event_id: str, event_type: str, obj: dict, *, created_ts: int, livemode: bool = False) -> dict:
     return {"id": event_id, "type": event_type, "livemode": livemode, "created": created_ts, "data": {"object": obj}}
+
+
+def _stub_subscription_retrieve(monkeypatch, resolver) -> None:
+    """Stubs the authoritative pre-apply Stripe fetch that ``webhook._dispatch``
+    now performs for subscription-state events (see
+    ``SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH``). ``resolver`` is either a
+    dict returned for any subscription id, or a callable
+    ``(subscription_id) -> dict``. Call again before a later ``process_event``
+    in the same test to change what the "current" Stripe state is.
+    """
+
+    async def fake_retrieve(subscription_id):
+        return resolver(subscription_id) if callable(resolver) else resolver
+
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", fake_retrieve)
 
 
 # ---------------------------------------------------------------------------
@@ -276,15 +292,22 @@ async def test_checkout_allowed_when_market_has_no_local_subscription_when_test_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["canceled", "unpaid", "incomplete_expired"])
-async def test_checkout_allowed_after_terminal_subscription_when_test_database_url_is_configured(
+async def test_checkout_allowed_after_terminal_subscription_confirmed_terminal_on_stripe_when_test_database_url_is_configured(
     terminal_status, monkeypatch
 ) -> None:
+    # Local terminal status + a Stripe subscription id still on record: the
+    # authoritative Stripe lookup must confirm the subscription is actually
+    # terminal there too before allowing resubscribe.
     engine, session_factory = await _setup_engine()
     monkeypatch.setattr(settings, "stripe_enabled", True)
     monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
     monkeypatch.setattr(
         "stripe.checkout.Session.create_async",
         lambda **kwargs: _fake_checkout_session("cs_resubscribe"),
+    )
+    monkeypatch.setattr(
+        "stripe.Subscription.retrieve_async",
+        lambda subscription_id: _fake_stripe_subscription(terminal_status),
     )
     try:
         async with session_factory() as session:
@@ -306,12 +329,129 @@ async def test_checkout_allowed_after_terminal_subscription_when_test_database_u
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_checkout_allowed_after_terminal_subscription_without_stripe_subscription_id_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # No Stripe subscription id on the terminal local row — nothing to
+    # authoritatively verify against, so resubscribe proceeds without a
+    # Stripe lookup at all.
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    monkeypatch.setattr(
+        "stripe.checkout.Session.create_async",
+        lambda **kwargs: _fake_checkout_session("cs_resubscribe_no_sub_id"),
+    )
+
+    async def _unexpected_retrieve(subscription_id):
+        raise AssertionError("Stripe lookup must not happen when there is no stripe_subscription_id")
+
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _unexpected_retrieve)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="unassigned",
+                    status="canceled",
+                    stripe_customer_id=None,
+                    stripe_subscription_id=None,
+                )
+            )
+            await session.commit()
+
+            result = await billing_service.create_checkout_session(session, market, "starter")
+            assert result["checkout_url"].endswith("cs_resubscribe_no_sub_id")
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local_status", ["canceled", "unpaid"])
+@pytest.mark.parametrize("stripe_status", ["active", "past_due"])
+async def test_checkout_rejected_when_stripe_shows_subscription_still_in_progress_when_test_database_url_is_configured(
+    local_status, stripe_status, monkeypatch
+) -> None:
+    # Local mirror is stale — it thinks the subscription is terminal, but
+    # Stripe says the prior subscription is still active/in-progress. Must
+    # reject rather than create a second, overlapping subscription.
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    sub_id = f"sub_stale_{local_status}_{stripe_status}"
+    monkeypatch.setattr(
+        "stripe.Subscription.retrieve_async",
+        lambda subscription_id: _fake_stripe_subscription(stripe_status, sub_id=sub_id),
+    )
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="unassigned",
+                    status=local_status,
+                    stripe_customer_id="cus_stale",
+                    stripe_subscription_id=sub_id,
+                )
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.create_checkout_session(session, market, "starter")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_not_created_when_authoritative_stripe_lookup_fails_transiently_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def _flaky_retrieve(subscription_id):
+        raise stripe.error.APIConnectionError("simulated network blip")
+
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _flaky_retrieve)
+
+    async def _unexpected_checkout_create(**kwargs):
+        raise AssertionError("Checkout Session must not be created when the Stripe lookup fails")
+
+    monkeypatch.setattr("stripe.checkout.Session.create_async", _unexpected_checkout_create)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="unassigned",
+                    status="canceled",
+                    stripe_customer_id="cus_flaky",
+                    stripe_subscription_id="sub_flaky",
+                )
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.create_checkout_session(session, market, "starter")
+            assert exc_info.value.status_code == 503
+    finally:
+        await engine.dispose()
+
+
 async def _resolved_price(plan_code: str) -> _FakePrice:
     return _FakePrice(f"price_{plan_code}")
 
 
 async def _fake_checkout_session(checkout_id: str) -> _FakeCheckoutSession:
     return _FakeCheckoutSession(f"https://stripe.test/checkout/{checkout_id}", checkout_id)
+
+
+async def _fake_stripe_subscription(status: str, *, sub_id: str = "sub_stale") -> dict:
+    return {"id": sub_id, "status": status}
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +715,9 @@ async def test_invoice_payment_action_required_leaves_current_entitlement_when_t
 
 
 @pytest.mark.asyncio
-async def test_pending_update_applied_activates_entitlement_exactly_once_when_test_database_url_is_configured() -> None:
+async def test_pending_update_applied_activates_entitlement_exactly_once_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
     engine, session_factory = await _setup_engine()
     try:
         async with session_factory() as session:
@@ -584,12 +726,14 @@ async def test_pending_update_applied_activates_entitlement_exactly_once_when_te
 
             active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_applied")
             starter_event = _event("evt_created", "customer.subscription.created", active_sub, created_ts=1_700_000_100)
+            _stub_subscription_retrieve(monkeypatch, active_sub)
             await process_event(session, starter_event)
 
             applied_sub = _subscription(market_id=market.id, plan_code="pro", status="active", sub_id="sub_applied")
             applied_event = _event(
                 "evt_pending_applied", "customer.subscription.pending_update_applied", applied_sub, created_ts=1_700_000_200
             )
+            _stub_subscription_retrieve(monkeypatch, applied_sub)
             await process_event(session, applied_event)
 
             row = await session.scalar(select(MarketSubscription).where(MarketSubscription.market_id == market.id))
@@ -612,7 +756,9 @@ async def test_pending_update_applied_activates_entitlement_exactly_once_when_te
 
 
 @pytest.mark.asyncio
-async def test_pending_update_expired_clears_pending_without_changing_plan_when_test_database_url_is_configured() -> None:
+async def test_pending_update_expired_clears_pending_without_changing_plan_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
     engine, session_factory = await _setup_engine()
     try:
         async with session_factory() as session:
@@ -620,6 +766,7 @@ async def test_pending_update_expired_clears_pending_without_changing_plan_when_
             await session.commit()
 
             active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_expire")
+            _stub_subscription_retrieve(monkeypatch, active_sub)
             await process_event(
                 session, _event("evt_created2", "customer.subscription.created", active_sub, created_ts=1_700_000_100)
             )
@@ -631,6 +778,7 @@ async def test_pending_update_expired_clears_pending_without_changing_plan_when_
                 sub_id="sub_expire",
                 pending_update={"expires_at": 1_700_100_000, "subscription_items": [{"price": _price("pro")}]},
             )
+            _stub_subscription_retrieve(monkeypatch, pending_sub)
             await process_event(
                 session, _event("evt_updated", "customer.subscription.updated", pending_sub, created_ts=1_700_000_200)
             )
@@ -638,6 +786,7 @@ async def test_pending_update_expired_clears_pending_without_changing_plan_when_
             assert row.pending_plan_code == "pro"
 
             expired_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_expire")
+            _stub_subscription_retrieve(monkeypatch, expired_sub)
             await process_event(
                 session,
                 _event("evt_expired", "customer.subscription.pending_update_expired", expired_sub, created_ts=1_700_000_300),
@@ -656,7 +805,9 @@ async def test_pending_update_expired_clears_pending_without_changing_plan_when_
 
 
 @pytest.mark.asyncio
-async def test_duplicate_webhook_delivery_applies_state_exactly_once_when_test_database_url_is_configured() -> None:
+async def test_duplicate_webhook_delivery_applies_state_exactly_once_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
     engine, session_factory = await _setup_engine()
     try:
         async with session_factory() as session:
@@ -666,6 +817,7 @@ async def test_duplicate_webhook_delivery_applies_state_exactly_once_when_test_d
 
             sub = _subscription(market_id=market_id, plan_code="standard", status="active", sub_id="sub_dup")
             event = _event("evt_dup", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            _stub_subscription_retrieve(monkeypatch, sub)
 
             await process_event(session, event)
             # The second delivery hits the DB unique constraint and rolls back —
@@ -702,6 +854,7 @@ async def test_transient_dispatch_failure_is_retryable_by_a_later_delivery_when_
 
             sub = _subscription(market_id=market_id, plan_code="starter", status="active", sub_id="sub_transient")
             event = _event("evt_transient", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            _stub_subscription_retrieve(monkeypatch, sub)
 
             original_sync = billing_service.sync_subscription_from_stripe_object
             call_count = {"n": 0}
@@ -764,6 +917,7 @@ async def test_concurrent_duplicate_deliveries_apply_business_transition_exactly
 
         sub = _subscription(market_id=market_id, plan_code="pro", status="active", sub_id="sub_concurrent")
         event = _event("evt_concurrent", "customer.subscription.created", sub, created_ts=1_700_000_100)
+        _stub_subscription_retrieve(monkeypatch, sub)
 
         original_sync = billing_service.sync_subscription_from_stripe_object
         call_count = {"n": 0}
@@ -808,6 +962,79 @@ async def test_concurrent_duplicate_deliveries_apply_business_transition_exactly
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_transient_rollback_does_not_overwrite_concurrently_committed_terminal_state_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # 1. delivery A claims the event
+    # 2. delivery B waits for the same event (blocked on the row lock)
+    # 3. A fails transiently and rolls back, releasing the lock
+    # 4. B acquires the claim and processes successfully -> terminal "processed"
+    # 5. A must not overwrite B's terminal state back to "received"
+    # 6. final event status is terminal and the business transition applied exactly once
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as setup_session:
+            market = await _create_market(setup_session)
+            await setup_session.commit()
+            market_id = market.id
+
+        sub = _subscription(market_id=market_id, plan_code="pro", status="active", sub_id="sub_race")
+        event = _event("evt_race", "customer.subscription.created", sub, created_ts=1_700_000_100)
+        _stub_subscription_retrieve(monkeypatch, sub)
+
+        original_sync = billing_service.sync_subscription_from_stripe_object
+        call_count = {"n": 0}
+        b_may_start = asyncio.Event()
+
+        async def racy_sync(session, stripe_subscription, *, event_created_at, market_id_hint=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # Delivery A: signal B to start racing for the row lock,
+                # then keep holding the lock a while longer before failing
+                # transiently, so B is queued on the lock well before A's
+                # rollback releases it.
+                b_may_start.set()
+                await asyncio.sleep(0.3)
+                raise RuntimeError("simulated transient Stripe/network error")
+            return await original_sync(
+                session, stripe_subscription, event_created_at=event_created_at, market_id_hint=market_id_hint
+            )
+
+        monkeypatch.setattr("app.services.billing.webhook.sync_subscription_from_stripe_object", racy_sync)
+
+        async def deliver_a():
+            async with session_factory() as session:
+                with pytest.raises(RuntimeError):
+                    await process_event(session, event)
+
+        async def deliver_b():
+            await b_may_start.wait()
+            async with session_factory() as session:
+                await process_event(session, event)
+
+        await asyncio.gather(deliver_a(), deliver_b())
+
+        async with session_factory() as session:
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_race")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+
+            subscription_row = await session.scalar(
+                select(MarketSubscription).where(MarketSubscription.market_id == market_id)
+            )
+            assert subscription_row.plan_code == "pro"
+            assert subscription_row.status == "active"
+
+        assert call_count["n"] == 2
+    finally:
+        await engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Webhook ordering hardening — separate cursors per event kind, strict '<'.
 # ---------------------------------------------------------------------------
@@ -838,6 +1065,46 @@ async def test_distinct_events_with_identical_created_timestamp_both_apply_when_
 
             assert applied_after is True
             assert row_after.plan_code == "standard"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_same_second_subscription_events_in_reverse_order_converge_to_authoritative_stripe_state_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # Two distinct subscription-state events share a `created` second
+    # (Stripe timestamps are second-granularity) and are delivered in the
+    # reverse of their semantic order (updated before created). Both events'
+    # embedded payloads are stale ("standard"); the authoritative Stripe
+    # fetch webhook._dispatch now performs before applying state must make
+    # the final result match Stripe's actual current state ("pro")
+    # regardless of which event arrived last.
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            current_sub = _subscription(market_id=market.id, plan_code="pro", status="active", sub_id="sub_reverse")
+
+            def fake_retrieve(subscription_id):
+                assert subscription_id == "sub_reverse"
+                return current_sub
+
+            _stub_subscription_retrieve(monkeypatch, fake_retrieve)
+
+            stale_payload = _subscription(market_id=market.id, plan_code="standard", status="active", sub_id="sub_reverse")
+            updated_event = _event("evt_rev_updated", "customer.subscription.updated", stale_payload, created_ts=9_000)
+            created_event = _event("evt_rev_created", "customer.subscription.created", stale_payload, created_ts=9_000)
+
+            await process_event(session, updated_event)
+            await process_event(session, created_event)
+
+            row = await session.scalar(select(MarketSubscription).where(MarketSubscription.market_id == market.id))
+            assert row.plan_code == "pro"
+            await session.refresh(market)
+            assert market.subscription_plan == "pro"
     finally:
         await engine.dispose()
 
@@ -911,7 +1178,9 @@ async def test_subscription_event_does_not_suppress_later_invoice_event_when_tes
 
 
 @pytest.mark.asyncio
-async def test_unmappable_webhook_event_marks_event_failed_and_subscription_sync_error_when_test_database_url_is_configured() -> None:
+async def test_unmappable_webhook_event_marks_event_failed_and_subscription_sync_error_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
     engine, session_factory = await _setup_engine()
     try:
         async with session_factory() as session:
@@ -928,6 +1197,7 @@ async def test_unmappable_webhook_event_marks_event_failed_and_subscription_sync
                 "recurring": {"interval": "month"},
             }
             event = _event("evt_bad", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            _stub_subscription_retrieve(monkeypatch, sub)
             # This path triggers a PermanentSyncError -> internal rollback, which
             # expires every object in the session; use market_id, not market.id.
             await process_event(session, event)

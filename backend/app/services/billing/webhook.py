@@ -23,6 +23,17 @@ SUBSCRIPTION_EVENT_TYPES = {
     "customer.subscription.pending_update_applied",
     "customer.subscription.pending_update_expired",
 }
+
+# Stripe does not guarantee webhook delivery order, and `event.created` is
+# only second-granularity — two distinct subscription-state events can
+# legitimately share a timestamp. For every type below except the terminal
+# deletion event, fetch the subscription fresh from Stripe rather than
+# trusting the event's embedded snapshot, so a delayed same-second event can
+# never regress state merely by applying a stale payload because it happened
+# to arrive last. `customer.subscription.deleted` carries its own
+# authoritative terminal payload and is used as-is.
+SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH = SUBSCRIPTION_EVENT_TYPES - {"customer.subscription.deleted"}
+
 INVOICE_EVENT_KINDS = {
     "invoice.paid": "paid",
     "invoice.payment_failed": "payment_failed",
@@ -130,17 +141,41 @@ async def process_event(session: AsyncSession, event: "stripe.Event") -> None:
         await session.commit()
     except Exception as exc:
         # Transient failure (Stripe API hiccup, DB blip, ...) — not a
-        # permanent mapping problem. Reset to "received" (rather than a
-        # terminal status) so a later Stripe retry of the same event id can
-        # reclaim and reprocess it instead of hitting the terminal-duplicate
-        # no-op path. Re-raise so the route surfaces a failure response and
-        # Stripe actually schedules that retry.
+        # permanent mapping problem. The row was already committed as
+        # "received" before dispatch started, so rolling back naturally
+        # restores that retryable state without us writing it again — IF
+        # nobody else has processed it since. A concurrent duplicate
+        # delivery may acquire the row lock the instant this rollback
+        # releases it, process the event successfully, and commit a
+        # terminal status before we get here. So: re-acquire the row with
+        # `SELECT ... FOR UPDATE` and only record the error if it's still
+        # non-terminal; if another worker already moved it to a terminal
+        # status, leave that alone entirely. Re-raise so the route surfaces
+        # a failure response and Stripe actually schedules a retry.
         await session.rollback()
-        webhook_row = await session.get(StripeWebhookEvent, webhook_row_id)
-        webhook_row.status = "received"
-        webhook_row.error = f"{type(exc).__name__}: {exc}"[:1000]
+        error_text = f"{type(exc).__name__}: {exc}"[:1000]
+        webhook_row = await session.scalar(
+            select(StripeWebhookEvent).where(StripeWebhookEvent.id == webhook_row_id).with_for_update()
+        )
+        if webhook_row.status not in TERMINAL_WEBHOOK_STATUSES:
+            webhook_row.error = error_text
         await session.commit()
         raise
+
+
+async def _fetch_authoritative_subscription(stripe_object: dict) -> dict:
+    """Re-fetches the subscription fresh from Stripe rather than trusting the
+    webhook event's embedded snapshot (see ``SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH``).
+    Falls back to the event's own payload if the subscription is no longer
+    retrievable (e.g. it was deleted between event dispatch and this fetch).
+    """
+    subscription_id = stripe_object.get("id")
+    if not subscription_id:
+        return stripe_object
+    try:
+        return await stripe.Subscription.retrieve_async(subscription_id)
+    except stripe.error.InvalidRequestError:
+        return stripe_object
 
 
 async def _dispatch(session: AsyncSession, event: "stripe.Event", *, event_created_at: datetime):
@@ -148,6 +183,8 @@ async def _dispatch(session: AsyncSession, event: "stripe.Event", *, event_creat
     stripe_object = event["data"]["object"]
 
     if event_type in SUBSCRIPTION_EVENT_TYPES:
+        if event_type in SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH:
+            stripe_object = await _fetch_authoritative_subscription(stripe_object)
         return await sync_subscription_from_stripe_object(session, stripe_object, event_created_at=event_created_at)
     if event_type == "checkout.session.completed":
         return await apply_checkout_completed(session, stripe_object, event_created_at=event_created_at)

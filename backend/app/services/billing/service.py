@@ -113,6 +113,32 @@ async def _require_subscription_row(session: AsyncSession, market_id: UUID) -> M
 # ---------------------------------------------------------------------------
 
 
+async def _local_terminal_status_still_blocks_checkout(existing: MarketSubscription) -> bool:
+    """The local mirror can lag Stripe's authoritative state (a missed/late
+    webhook), so a local *terminal* status (canceled/unpaid/incomplete_expired)
+    with a Stripe subscription id still on record is not, by itself, proof
+    the market is free to resubscribe — Stripe's own state must be checked.
+    Returns True if a new Checkout Session must be rejected.
+    """
+    try:
+        stripe_subscription = await stripe.Subscription.retrieve_async(existing.stripe_subscription_id)
+    except stripe.error.InvalidRequestError as exc:
+        if exc.http_status == 404 or getattr(exc, "code", None) == "resource_missing":
+            # The Stripe subscription genuinely no longer exists — nothing to
+            # conflict with, resubscribe is safe.
+            return False
+        raise BillingError(
+            "Abonelik durumu Stripe üzerinden doğrulanamadı. Lütfen tekrar deneyin.", status_code=503
+        ) from exc
+    except stripe.error.StripeError as exc:
+        # Transient Stripe failure (network, rate limit, ...) — fail closed
+        # rather than risk creating an overlapping subscription.
+        raise BillingError(
+            "Abonelik durumu Stripe üzerinden doğrulanamadı. Lütfen tekrar deneyin.", status_code=503
+        ) from exc
+    return stripe_subscription.get("status") in CHECKOUT_BLOCKING_STATUSES
+
+
 async def create_checkout_session(session: AsyncSession, market: Market, plan_code: str) -> dict:
     _require_enabled()
     if not is_sellable_plan_code(plan_code):
@@ -126,12 +152,24 @@ async def create_checkout_session(session: AsyncSession, market: Market, plan_co
     # already-committed local state, not anything the request itself claims.
     # Checked before any Stripe call, so a rejected request never reaches
     # the Stripe API at all.
-    if existing is not None and existing.status in CHECKOUT_BLOCKING_STATUSES:
-        raise BillingError(
-            "Bu market için zaten devam eden bir abonelik var. Plan değiştirmek için mevcut abonelik "
-            "yönetimini (plan değiştir/iptal et) kullanın.",
-            status_code=409,
-        )
+    if existing is not None:
+        if existing.status in CHECKOUT_BLOCKING_STATUSES:
+            raise BillingError(
+                "Bu market için zaten devam eden bir abonelik var. Plan değiştirmek için mevcut abonelik "
+                "yönetimini (plan değiştir/iptal et) kullanın.",
+                status_code=409,
+            )
+        # Local terminal status: the local mirror may simply be stale, so a
+        # subscription id still on record is checked against Stripe directly
+        # before allowing a fresh Checkout Session. This never writes local
+        # subscription state — only webhook/resync do that (core rule above).
+        if existing.status in DOWNGRADE_TO_UNASSIGNED_STATUSES and existing.stripe_subscription_id:
+            if await _local_terminal_status_still_blocks_checkout(existing):
+                raise BillingError(
+                    "Bu market için zaten devam eden bir abonelik var. Plan değiştirmek için mevcut abonelik "
+                    "yönetimini (plan değiştir/iptal et) kullanın.",
+                    status_code=409,
+                )
 
     price = await _resolve_price(plan_code)
     checkout_kwargs: dict = {
