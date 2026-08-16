@@ -158,6 +158,25 @@ class PlatformAuditLogRead(BaseModel):
     metadata_: dict | None = Field(default=None, serialization_alias="metadata")
 
 
+class PlatformBillingSummary(BaseModel):
+    plan_code: str
+    pending_plan_code: str | None = None
+    pending_change_at: datetime | None = None
+    pending_change_reason: str | None = None
+    status: str | None = None
+    billing_sync_status: str
+    sync_error: str | None = None
+    last_synced_at: datetime | None = None
+    cancel_at_period_end: bool = False
+    canceled_at: datetime | None = None
+    current_period_end: datetime | None = None
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    stripe_price_id: str | None = None
+    unit_amount: int | None = None
+    currency: str | None = None
+
+
 class PlatformMarketListItem(BaseModel):
     id: UUID
     name: str
@@ -172,6 +191,7 @@ class PlatformMarketListItem(BaseModel):
     owner_invitation: PlatformInvitationSummary | None = None
     subscription_plan: str
     subscription_plan_display: str
+    billing: PlatformBillingSummary
     created_at: datetime
 
 

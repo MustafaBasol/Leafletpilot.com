@@ -4,6 +4,7 @@ import { getSelectedMarketId } from "../api/authSession.js";
 import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
 import * as planApi from "../api/planApi.js";
+import * as billingApi from "../api/billingApi.js";
 import { getPublicPlans as fetchPublicPlans } from "../api/publicApi.js";
 import {
   activities,
@@ -653,6 +654,48 @@ export async function getMarketPlan() {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
   return planApi.getMyMarketPlan(marketId);
+}
+
+export async function getBillingSubscription() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.getSubscription(marketId);
+}
+
+export async function listBillingInvoices(params) {
+  if (!isRealApiEnabled) return { items: [], has_more: false };
+  const marketId = requireSelectedMarketId();
+  return billingApi.listInvoices(params, marketId);
+}
+
+export async function startBillingCheckout(planCode) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.startCheckout(planCode, marketId);
+}
+
+export async function openBillingPortal() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.openPortal(marketId);
+}
+
+export async function changeBillingPlan(planCode) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.changePlan(planCode, marketId);
+}
+
+export async function cancelBillingSubscription() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.cancelSubscription(marketId);
+}
+
+export async function resumeBillingSubscription() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.resumeSubscription(marketId);
 }
 
 export const dataSourceInfo = {

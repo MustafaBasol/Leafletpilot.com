@@ -64,6 +64,10 @@ export function canManageTemplates() {
   return getSelectedMarketRole() === "market_admin";
 }
 
+export function canManageBilling() {
+  return getSelectedMarketRole() === "market_admin";
+}
+
 export function saveAuthSession({ access_token: accessToken, user, markets }) {
   if (accessToken) localStorage.setItem(TOKEN_KEY, accessToken);
   if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));

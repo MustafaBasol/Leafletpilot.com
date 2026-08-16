@@ -15,7 +15,23 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleString("tr-TR") : "-";
 }
 
+function formatMoney(unitAmount, currency) {
+  if (unitAmount === null || unitAmount === undefined) return "-";
+  return `${(unitAmount / 100).toFixed(2)} ${currency || ""}`.trim();
+}
+
 const PLAN_CODES = ["starter", "standard", "pro"];
+
+const BILLING_SYNC_LABELS = {
+  ok: "Sağlıklı",
+  error: "Hata",
+  no_subscription: "Abonelik yok",
+};
+
+const PENDING_REASON_LABELS = {
+  downgrade: "Planlanan düşürme",
+  upgrade_pending_payment: "Yükseltme ödemesi bekleniyor",
+};
 
 export function PlatformMarketDetail({ id }) {
   const [market, setMarket] = useState(null);
@@ -104,6 +120,19 @@ export function PlatformMarketDetail({ id }) {
     setError("");
     try {
       await platformApi.revokeOwnerInvitation(id);
+      await load();
+    } catch (err) {
+      setError(normalizeApiError(err));
+    } finally {
+      setAction("");
+    }
+  }
+
+  async function resyncBilling() {
+    setAction("billing-resync");
+    setError("");
+    try {
+      await platformApi.resyncMarketBilling(id);
       await load();
     } catch (err) {
       setError(normalizeApiError(err));
@@ -202,6 +231,33 @@ export function PlatformMarketDetail({ id }) {
               <Button disabled={Boolean(action) || selectedPlan === market.subscription_plan} onClick={changePlan}>{t("savePlan")}</Button>
             </div>
             {planMessage ? <p className="inline-result">{planMessage}</p> : null}
+          </Card>
+          <Card title="Faturalandırma (Stripe)" className="span-6">
+            <dl className="detail-list">
+              <div><dt>Senkronizasyon durumu</dt><dd>{BILLING_SYNC_LABELS[market.billing?.billing_sync_status] || market.billing?.billing_sync_status || "-"}</dd></div>
+              <div><dt>Abonelik durumu</dt><dd>{market.billing?.status || "-"}</dd></div>
+              <div><dt>Aylık ücret</dt><dd>{formatMoney(market.billing?.unit_amount, market.billing?.currency)}</dd></div>
+              <div><dt>Sonraki yenileme</dt><dd>{formatDate(market.billing?.current_period_end)}</dd></div>
+              <div><dt>İptal bekliyor mu</dt><dd>{market.billing?.cancel_at_period_end ? "Evet" : "Hayır"}</dd></div>
+              {market.billing?.pending_plan_code ? (
+                <div>
+                  <dt>{PENDING_REASON_LABELS[market.billing.pending_change_reason] || "Bekleyen değişiklik"}</dt>
+                  <dd>{market.billing.pending_plan_code} · {formatDate(market.billing.pending_change_at)}</dd>
+                </div>
+              ) : null}
+              <div><dt>Son senkronizasyon</dt><dd>{formatDate(market.billing?.last_synced_at)}</dd></div>
+              <div><dt>Stripe Customer</dt><dd>{market.billing?.stripe_customer_id || "-"}</dd></div>
+              <div><dt>Stripe Subscription</dt><dd>{market.billing?.stripe_subscription_id || "-"}</dd></div>
+              <div><dt>Stripe Price</dt><dd>{market.billing?.stripe_price_id || "-"}</dd></div>
+            </dl>
+            {market.billing?.sync_error ? (
+              <p className="inline-result inline-result-warning">Senkronizasyon hatası: {market.billing.sync_error}</p>
+            ) : null}
+            <div className="page-actions">
+              <Button disabled={Boolean(action) || !market.billing?.stripe_subscription_id} onClick={resyncBilling}>
+                {action === "billing-resync" ? "Senkronize ediliyor..." : "Stripe'tan yeniden senkronize et"}
+              </Button>
+            </div>
           </Card>
           <Card title="Katalog İçe Aktarma" className="span-6">
             <p className="inline-result">Bu marketin ürün kataloğunu Excel dosyasından önizleme onaylı olarak içe aktarın.</p>

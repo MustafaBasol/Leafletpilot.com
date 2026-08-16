@@ -14,6 +14,7 @@ import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { MarketCatalog } from "./pages/MarketCatalog.jsx";
 import { Settings } from "./pages/Settings.jsx";
+import { Billing } from "./pages/Billing.jsx";
 import { Start } from "./pages/Start.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
 import { Templates } from "./pages/Templates.jsx";
@@ -27,6 +28,7 @@ import { SignupRequestDetail } from "./pages/platform/SignupRequestDetail.jsx";
 import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
 import { PlatformCatalog } from "./pages/platform/PlatformCatalog.jsx";
 import { PlatformTemplates } from "./pages/platform/PlatformTemplates.jsx";
+import { PlatformBilling } from "./pages/platform/PlatformBilling.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { canAccessPilotPath } from "./routes/capabilities.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
@@ -73,6 +75,7 @@ function Page({ path, sessionVersion }) {
   if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
   if (path === "/bot-connections") return <BotConnections />;
   if (path === "/settings") return <Settings />;
+  if (path === "/settings/billing") return <Billing />;
   if (path === "/team") return <Team />;
   if (path === "/onboarding") return <Onboarding />;
   if (pageMeta[pathname]) return <PlaceholderPage path={pathname} />;
@@ -199,6 +202,7 @@ export function App() {
     else if (path === "/platform/markets") platformPage = <PlatformMarketList />;
     else if (path === "/platform/catalog") platformPage = <PlatformCatalog />;
     else if (path === "/platform/templates") platformPage = <PlatformTemplates />;
+    else if (path === "/platform/billing") platformPage = <PlatformBilling />;
     else if (path.startsWith("/platform/markets/")) platformPage = <PlatformMarketDetail id={path.replace("/platform/markets/", "")} />;
     return <PlatformAdminLayout onLogout={platformLogout}>{platformPage}</PlatformAdminLayout>;
   }

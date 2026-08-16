@@ -132,8 +132,8 @@ async def test_list_platform_markets_uses_database_page_and_preserves_total() ->
     class Result:
         def all(self):
             return [
-                (page_markets[0], None, 3, 1, 2, 4),
-                (page_markets[1], None, 1, 1, 0, 0),
+                (page_markets[0], None, None, 3, 1, 2, 4),
+                (page_markets[1], None, None, 1, 1, 0, 0),
             ]
 
     class Session:

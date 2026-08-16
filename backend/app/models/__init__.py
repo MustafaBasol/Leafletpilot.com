@@ -1,4 +1,5 @@
 from app.models.activity import ActivityLog
+from app.models.billing import MarketSubscription, StripeWebhookEvent
 from app.models.campaign import Campaign, CampaignItem, MatchingSuggestion
 from app.models.catalog import (
     Brand,
@@ -38,6 +39,7 @@ __all__ = [
     "MarketCatalogImport",
     "MarketProduct",
     "MarketInvitation",
+    "MarketSubscription",
     "MarketUser",
     "MatchingSuggestion",
     "PlatformAdmin",
@@ -48,6 +50,7 @@ __all__ = [
     "SIGNUP_REQUEST_STATUSES",
     "SignupRequest",
     "SignupThrottle",
+    "StripeWebhookEvent",
     "Template",
     "TelegramAccount",
     "TelegramConversationState",

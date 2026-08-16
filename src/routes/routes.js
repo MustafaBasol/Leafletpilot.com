@@ -30,6 +30,7 @@ export const navGroups = [
       { label: "Bot Bağlantıları", path: "/bot-connections", icon: "bot" },
       { label: "Raporlar", path: "/reports", icon: "chart" },
       { label: "Ayarlar", path: "/settings", icon: "settings" },
+      { label: "Faturalandırma", path: "/settings/billing", icon: "settings" },
     ],
   },
 ];
@@ -110,6 +111,10 @@ export const pageMeta = {
     description: "Market, dil, para birimi ve çıktı tercihleri.",
     action: "Kaydet",
     actionHref: "#/settings",
+  },
+  "/settings/billing": {
+    title: "Faturalandırma",
+    description: "Abonelik planı, ödeme durumu ve fatura geçmişi.",
   },
 };
 
