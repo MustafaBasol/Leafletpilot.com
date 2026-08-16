@@ -122,3 +122,18 @@ class PlatformImageIdsPayload(BaseModel):
 class PlatformBulkImageResolution(BaseModel):
     row_index: int
     product_id: UUID
+
+
+class PlatformCatalogQualityIgnore(BaseModel):
+    product_a_id: UUID
+    product_b_id: UUID
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class PlatformCatalogMergePreview(BaseModel):
+    source_product_id: UUID
+    target_product_id: UUID
+
+
+class PlatformCatalogMerge(PlatformCatalogMergePreview):
+    confirm_barcode_mismatch: bool = False

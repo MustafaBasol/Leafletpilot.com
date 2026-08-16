@@ -34,6 +34,7 @@ from app.schemas.platform_catalog import (
     PlatformProductUpdate,
 )
 from app.services.catalog import normalize_alias, reconcile_aliases, slugify
+from app.services.catalog_quality import ensure_global_product_collision_free
 from app.services.global_catalog_bulk_images import (
     BulkImportError,
     extract_zip,
@@ -287,8 +288,18 @@ async def list_products(search: str | None = None, barcode: str | None = None, b
 async def create_product(payload: PlatformProductCreate, _: PlatformAdmin = admin, session: AsyncSession = Depends(get_catalog_session)):
     await _global_reference(session, Brand, payload.brand_id, "brand")
     await _global_reference(session, Category, payload.category_id, "category")
-    if payload.barcode and await session.scalar(select(Product).where(Product.is_global.is_(True), Product.barcode == payload.barcode)): raise _conflict("A global product with this barcode already exists.")
-    if any(_canonical_identity(product.name, product.package_size) == _canonical_identity(payload.name, payload.package_size) for product in (await session.scalars(select(Product).where(Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
+    await ensure_global_product_collision_free(
+        session,
+        name=payload.name,
+        barcode=payload.barcode,
+        brand_id=payload.brand_id,
+        package_size=payload.package_size,
+        package_type=payload.package_type,
+        package_amount=payload.package_amount,
+        package_unit=payload.package_unit,
+        package_type_canonical=payload.package_type_canonical,
+        aliases=payload.aliases,
+    )
     data = normalized_package_values(payload.model_dump(exclude={"aliases"})); row = Product(**data, is_global=True, market_id=None)
     row.aliases = _product_aliases(payload.aliases)
     session.add(row); await session.commit()
@@ -307,8 +318,19 @@ async def update_product(product_id: UUID, payload: PlatformProductUpdate, _: Pl
     await _global_reference(
         session, Category, data.get("category_id", row.category_id), "category"
     )
-    if "barcode" in data and data["barcode"] and await session.scalar(select(Product).where(Product.id != product_id, Product.is_global.is_(True), Product.barcode == data["barcode"])): raise _conflict("A global product with this barcode already exists.")
-    if "name" in data and data["name"] and any(_canonical_identity(product.name, product.package_size) == _canonical_identity(data["name"], data.get("package_size", row.package_size)) for product in (await session.scalars(select(Product).where(Product.id != product_id, Product.is_global.is_(True)))).all()): raise _conflict("A global product with this canonical identity already exists.")
+    await ensure_global_product_collision_free(
+        session,
+        name=data.get("name", row.name),
+        barcode=data.get("barcode", row.barcode),
+        brand_id=data.get("brand_id", row.brand_id),
+        package_size=data.get("package_size", row.package_size),
+        package_type=data.get("package_type", row.package_type),
+        package_amount=data.get("package_amount", row.package_amount),
+        package_unit=data.get("package_unit", row.package_unit),
+        package_type_canonical=data.get("package_type_canonical", row.package_type_canonical),
+        aliases=payload.aliases if payload.aliases is not None else row.aliases,
+        exclude_product_id=product_id,
+    )
     for key, value in data.items(): setattr(row, key, value)
     if payload.aliases is not None:
         row.aliases = _product_aliases(payload.aliases)
@@ -559,12 +581,15 @@ def _image_preview(rows: list[dict], images: dict[str, bytes]) -> None:
 
 async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str, bytes] | None = None) -> list[dict]:
     rows = parse_workbook(content)
-    products = list((await session.scalars(select(Product).options(selectinload(Product.aliases)).where(Product.is_global.is_(True)))).all())
+    products = list((await session.scalars(select(Product).options(selectinload(Product.aliases)).where(Product.is_global.is_(True), Product.merged_into_product_id.is_(None)))).all())
     by_barcode: dict[str, list[Product]] = {}
     by_identity: dict[str, list[Product]] = {}
+    alias_index: dict[str, Product] = {}
     for product in products:
         if product.barcode: by_barcode.setdefault(product.barcode.strip(), []).append(product)
         by_identity.setdefault(_canonical_identity(product.name, product.package_size), []).append(product)
+        for alias in product.aliases:
+            if alias.normalized_alias: alias_index.setdefault(alias.normalized_alias, product)
     brands = {brand.name.casefold(): brand for brand in (await session.scalars(select(Brand).where(Brand.is_global.is_(True)))).all()}
     categories = {category.name.casefold(): category for category in (await session.scalars(select(Category).where(Category.is_global.is_(True)))).all()}
     seen_barcodes: set[str] = set(); seen_identities: set[str] = set()
@@ -586,6 +611,15 @@ async def _excel_preview(content: bytes, session: AsyncSession, images: dict[str
         reconciled_aliases = reconcile_aliases(row["aliases"])
         row["aliases"] = [alias.alias for alias in reconciled_aliases]
         desired_aliases = {alias.normalized_alias for alias in reconciled_aliases}
+        if match is None:
+            # A row that would otherwise be created as a brand-new global product
+            # must not silently collide with another product's alias identity;
+            # surface it as a conflict instead (same status vocabulary as above).
+            requested_alias_keys = {normalize_alias(row["canonical_name"])} | desired_aliases
+            colliding = next((alias_index[key] for key in requested_alias_keys if key in alias_index), None)
+            if colliding is not None:
+                row.update(status="conflict", error="Ürün adı veya alternatif ad başka bir global ürünle eşleşiyor.")
+                continue
         current_aliases = {alias.normalized_alias for alias in match.aliases} if match else set()
         unchanged = match and (match.name == row["canonical_name"] and (match.barcode or "") == barcode and (match.package_size or "") == row["package_size"] and (match.package_type or "") == row["package_type"] and match.is_active == row["active"] and current_aliases == desired_aliases)
         row["status"] = "new" if not match else ("unchanged" if unchanged else "update")
