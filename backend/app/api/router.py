@@ -8,6 +8,7 @@ from app.api.routes.onboarding import router as onboarding_router
 from app.api.routes.platform import router as platform_router
 from app.api.routes.platform_catalog import router as platform_catalog_router
 from app.api.routes.platform_catalog_quality import router as platform_catalog_quality_router
+from app.api.routes.platform_market_import import router as platform_market_import_router
 from app.api.routes.platform_templates import router as platform_templates_router
 from app.api.routes.plans import router as plans_router
 from app.api.routes.public import router as public_router
@@ -28,6 +29,7 @@ api_router.include_router(platform_router)
 # Quality routes are registered before generic catalog product-id routes.
 api_router.include_router(platform_catalog_quality_router)
 api_router.include_router(platform_catalog_router)
+api_router.include_router(platform_market_import_router)
 api_router.include_router(platform_templates_router)
 api_router.include_router(telegram_router)
 api_router.include_router(health_router, tags=["health"])
