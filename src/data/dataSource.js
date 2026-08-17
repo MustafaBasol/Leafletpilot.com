@@ -134,6 +134,7 @@ function mapCampaign(campaign) {
     market: "Demo Market",
     marketId: campaign.market_id,
     status: statusLabels[campaign.status] || campaign.status,
+    rawStatus: campaign.status,
     productCount: campaign.product_count ?? 0,
     missingCount: campaign.missing_count ?? 0,
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
@@ -285,11 +286,24 @@ export function getDashboardData() {
   };
 }
 
-export async function getCampaigns() {
+export async function getCampaigns(filters = {}) {
   if (!isRealApiEnabled) return campaigns;
   const marketId = requireSelectedMarketId();
 
-  const response = await campaignApi.listCampaigns({ limit: 50, offset: 0 }, marketId);
+  const { search, status, channel, dateFrom, dateTo, hasMissingProducts, limit = 50, offset = 0 } = filters;
+  const response = await campaignApi.listCampaigns(
+    {
+      search: search || undefined,
+      status: status || undefined,
+      channel: channel || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      has_missing_products: hasMissingProducts === undefined ? undefined : hasMissingProducts,
+      limit,
+      offset,
+    },
+    marketId,
+  );
   return unwrapList(response).map(mapCampaign);
 }
 
@@ -505,6 +519,20 @@ export async function createCampaignExportJob(campaignId, requestedFormats = ["p
   );
   if (job?.status === "failed") {
     throw new Error(job.error_message || "Çıktı üretilemedi. Lütfen tekrar deneyin.");
+  }
+  return job;
+}
+
+export async function regenerateCampaignPreview(campaignId) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  const job = await campaignApi.createExportJob(
+    campaignId,
+    { job_type: "regenerate_preview", status: "queued" },
+    marketId,
+  );
+  if (job?.status === "failed") {
+    throw new Error(job.error_message || "Önizleme yeniden oluşturulamadı. Lütfen tekrar deneyin.");
   }
   return job;
 }

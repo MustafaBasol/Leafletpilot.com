@@ -58,6 +58,7 @@ async def list_campaigns(
     source_type: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    has_missing_products: bool | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     market_id: UUID = Depends(get_required_market_id),
@@ -72,6 +73,7 @@ async def list_campaigns(
         source_type=source_type,
         date_from=date_from,
         date_to=date_to,
+        has_missing_products=has_missing_products,
         limit=limit,
         offset=offset,
     )

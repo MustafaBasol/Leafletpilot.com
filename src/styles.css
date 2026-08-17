@@ -1301,6 +1301,31 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.filter-reset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--neutral-500);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filter-reset:hover {
+  color: var(--neutral-700);
+  border-color: var(--neutral-200);
+}
+
+.filter-reset .icon {
+  width: 14px;
+  height: 14px;
+}
+
 .card-summary {
   color: var(--neutral-500);
   font-size: 13px;
