@@ -246,11 +246,29 @@ export function Billing({ checkoutStatus = "" }) {
 
       if (result?.status === "scheduled") {
         // Downgrades never take effect immediately (see change_plan) — the
-        // plan stays as-is until the scheduled phase transition, so there is
-        // nothing local to wait on here.
+        // plan stays as-is until the scheduled phase transition. The mutation
+        // response already carries the correct schedule, but the local
+        // MarketSubscription mirror is written by the same request handler
+        // and a read immediately after write can still race the commit
+        // becoming visible. Bounded re-fetch here instead of trusting a
+        // single unchecked load() (see the "applied" branch below).
+        setPlanChange((current) => (current ? { ...current, isSyncing: true } : current));
+        let downgradeSynced = false;
+        for (let attempt = 0; attempt < PLAN_SYNC_MAX_ATTEMPTS && !downgradeSynced; attempt++) {
+          if (attempt > 0) await wait(PLAN_SYNC_RETRY_DELAY_MS);
+          const subscriptionResult = await load();
+          downgradeSynced =
+            subscriptionResult?.plan_code === currentPlanCode &&
+            subscriptionResult?.pending_plan_code === targetPlanCode &&
+            Boolean(subscriptionResult?.pending_change_at);
+        }
         setPlanChange(null);
-        setMessage(`Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`);
-        await load();
+        setPendingSync(!downgradeSynced);
+        setMessage(
+          downgradeSynced
+            ? `Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`
+            : "Plan değişikliğiniz alındı. Bilgileriniz birkaç saniye içinde güncellenecek.",
+        );
         return;
       }
 

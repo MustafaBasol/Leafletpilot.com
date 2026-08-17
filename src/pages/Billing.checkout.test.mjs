@@ -142,15 +142,77 @@ test("bounded refetch stops after PLAN_SYNC_MAX_ATTEMPTS attempts and never bloc
   assert.match(source, /for \(let attempt = 0; attempt < PLAN_SYNC_MAX_ATTEMPTS && !synced; attempt\+\+\)/);
 });
 
-test("pending_payment and scheduled (downgrade) results close the modal immediately without entering the sync loop", () => {
+test("pending_payment closes the modal immediately without entering a sync loop", () => {
   const body = confirmPlanChangeBody();
   const pendingPaymentBranch = body.slice(body.indexOf('"pending_payment"'), body.indexOf('"scheduled"'));
   assert.match(pendingPaymentBranch, /setPlanChange\(null\)/);
   assert.doesNotMatch(pendingPaymentBranch, /isSyncing/, "pending payment must not show the upgrade-processing sync state");
+});
 
-  const scheduledBranch = body.slice(body.indexOf('"scheduled"'), body.indexOf('// status === "applied"'));
-  assert.match(scheduledBranch, /setPlanChange\(null\)/);
-  assert.doesNotMatch(scheduledBranch, /isSyncing/, "a scheduled downgrade must not be treated as an immediate state change");
+// ---------------------------------------------------------------------------
+// Post-downgrade sync (PR #69 hotfix): a "scheduled" plan change must not
+// trust a single unchecked load() — the local mirror write can race the
+// read, exactly like the upgrade webhook race, so it needs the same bounded
+// re-fetch. The success condition is different from upgrade though: the
+// *current* plan must stay unchanged and only pending_plan_code/pending_
+// change_at should reflect the downgrade — never an optimistic entitlement
+// flip to the target plan.
+// ---------------------------------------------------------------------------
+
+function scheduledBranchBody() {
+  const body = confirmPlanChangeBody();
+  const start = body.indexOf('"scheduled"');
+  const end = body.indexOf('// status === "applied"');
+  assert.ok(start !== -1 && end !== -1, "scheduled branch boundary must exist");
+  return body.slice(start, end);
+}
+
+test("a scheduled downgrade enters a bounded sync loop instead of trusting the mutation response", () => {
+  const branch = scheduledBranchBody();
+  assert.match(branch, /isSyncing: true/, "modal must switch to the processing state during downgrade sync too");
+  assert.match(branch, /PLAN_SYNC_MAX_ATTEMPTS/, "downgrade retry loop must reuse the same bounded attempt count as upgrade");
+  assert.match(branch, /PLAN_SYNC_RETRY_DELAY_MS/, "downgrade retry loop must reuse the same timing as upgrade");
+  assert.doesNotMatch(source, /setInterval/, "must not introduce continuous polling");
+  assert.doesNotMatch(branch, /while\s*\(\s*true\s*\)/, "must not introduce unbounded polling");
+});
+
+test("downgrade sync success requires authoritative pending state, not plan_code === targetPlan", () => {
+  const branch = scheduledBranchBody();
+  assert.doesNotMatch(
+    branch,
+    /downgradeSynced\s*=\s*subscriptionResult\?\.plan_code === targetPlanCode/,
+    "downgrade must not reuse the upgrade success condition — the current plan never becomes the target",
+  );
+  assert.match(
+    branch,
+    /subscriptionResult\?\.plan_code === currentPlanCode/,
+    "downgrade success must confirm the current plan stayed put (no optimistic entitlement change)",
+  );
+  assert.match(
+    branch,
+    /subscriptionResult\?\.pending_plan_code === targetPlanCode/,
+    "downgrade success must confirm the authoritative pending_plan_code matches the requested downgrade target",
+  );
+  assert.match(
+    branch,
+    /Boolean\(subscriptionResult\?\.pending_change_at\)/,
+    "downgrade success must confirm pending_change_at was populated by the backend",
+  );
+});
+
+test("downgrade sync never fabricates an immediate plan change and offers manual refresh when it doesn't converge", () => {
+  const branch = scheduledBranchBody();
+  assert.match(branch, /setPendingSync\(!downgradeSynced\)/);
+  assert.match(
+    branch,
+    /Plan değişikliğiniz alındı\. Bilgileriniz birkaç saniye içinde güncellenecek\./,
+    "an unconverged downgrade must show a safe processing message, never assume success",
+  );
+  assert.match(
+    branch,
+    /Plan değişikliği \$\{formatDate\(result\.effective_at\)\} tarihinde geçerli olacak\./,
+    "a converged downgrade must show the scheduled-effective-date message",
+  );
 });
 
 test("a failed change-plan request never closes the modal or shows a false success message", () => {
