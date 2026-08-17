@@ -70,14 +70,16 @@ function Page({ path, sessionVersion }) {
   }
   if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
   if (pathname === "/products") return <MarketCatalog action={action} />;
-  if (path === "/categories") return <Categories />;
-  if (path === "/templates") return <Templates />;
-  if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
-  if (path === "/bot-connections") return <BotConnections />;
-  if (path === "/settings") return <Settings />;
-  if (path === "/settings/billing") return <Billing />;
-  if (path === "/team") return <Team />;
-  if (path === "/onboarding") return <Onboarding />;
+  if (pathname === "/categories") return <Categories />;
+  if (pathname === "/templates") return <Templates />;
+  if (pathname.startsWith("/templates/")) return <TemplateDetail templateId={pathname.replace("/templates/", "")} />;
+  if (pathname === "/bot-connections") return <BotConnections />;
+  if (pathname === "/settings") return <Settings />;
+  if (pathname === "/settings/billing") {
+    return <Billing checkoutStatus={new URLSearchParams(search).get("checkout") || ""} />;
+  }
+  if (pathname === "/team") return <Team />;
+  if (pathname === "/onboarding") return <Onboarding />;
   if (pageMeta[pathname]) return <PlaceholderPage path={pathname} />;
   return <PlaceholderPage path="/campaigns" />;
 }

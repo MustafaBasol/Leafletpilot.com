@@ -443,7 +443,10 @@ async def _sync_pending_state(row: MarketSubscription, stripe_subscription) -> N
                 target_plan_code = await _plan_code_for_price_id(_as_id(_field(last_phase_items[0], "price")))
         row.pending_plan_code = target_plan_code
         row.pending_change_reason = "downgrade"
-        row.pending_change_at = _to_datetime(_field(stripe_subscription, "current_period_end"))
+        # `row.current_period_end` is already set (see sync_subscription_from_stripe_object,
+        # which populates it — item-level, falling back to the top-level field —
+        # before calling this function).
+        row.pending_change_at = row.current_period_end
         return
 
     row.pending_plan_code = None
@@ -512,8 +515,19 @@ async def sync_subscription_from_stripe_object(
     row.currency = _field(price, "currency")
     row.unit_amount = _field(price, "unit_amount")
     row.interval = _field(_field(price, "recurring"), "interval")
-    row.current_period_start = _to_datetime(_field(stripe_subscription, "current_period_start"))
-    row.current_period_end = _to_datetime(_field(stripe_subscription, "current_period_end"))
+    # Stripe moved the billing-cycle boundary fields off the Subscription
+    # object and onto each SubscriptionItem (a subscription can now hold
+    # items with independent billing cycles) — the installed SDK's
+    # Subscription type no longer even declares current_period_start/end.
+    # Read the item first and fall back to the top-level field so this still
+    # works against older/pinned Stripe API versions and existing fixtures.
+    subscription_item = items[0]
+    row.current_period_start = _to_datetime(
+        _field(subscription_item, "current_period_start") or _field(stripe_subscription, "current_period_start")
+    )
+    row.current_period_end = _to_datetime(
+        _field(subscription_item, "current_period_end") or _field(stripe_subscription, "current_period_end")
+    )
     if row.subscription_started_at is None:
         row.subscription_started_at = _to_datetime(_field(stripe_subscription, "start_date")) or utc_now()
     row.cancel_at_period_end = bool(_field(stripe_subscription, "cancel_at_period_end"))

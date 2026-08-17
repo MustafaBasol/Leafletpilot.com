@@ -46,7 +46,7 @@ function invoiceStatusLabel(invoice) {
   return map[invoice.status] || invoice.status || "-";
 }
 
-export function Billing() {
+export function Billing({ checkoutStatus = "" }) {
   const canManage = canManageBilling();
   const [subscription, setSubscription] = useState(null);
   const [plan, setPlan] = useState(null);
@@ -56,6 +56,7 @@ export function Billing() {
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [showCheckoutSuccess] = useState(checkoutStatus === "success");
 
   async function load() {
     setLoading(true);
@@ -78,6 +79,18 @@ export function Billing() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    if (checkoutStatus !== "success") return;
+    // Strip the query param from the address bar via replaceState (not
+    // location.hash=) so we don't trigger a hashchange re-route while the
+    // success banner is showing. The webhook that activates the
+    // subscription can land a moment after the checkout redirect, so
+    // schedule a single re-fetch rather than trusting the first load().
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/settings/billing`);
+    const timeoutId = window.setTimeout(load, 2000);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   async function runAction(actionKey, fn, successMessage) {
@@ -135,6 +148,9 @@ export function Billing() {
   return (
     <>
       <PageHeader title="Faturalandırma" description="Abonelik planı, ödeme durumu ve fatura geçmişi." />
+      {showCheckoutSuccess ? (
+        <p className="inline-result" role="status">Ödeme başarıyla tamamlandı. Aboneliğiniz etkinleştirildi.</p>
+      ) : null}
       {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}
       {message ? <p className="inline-result" role="status">{message}</p> : null}
       {loading ? <p className="inline-result">Yükleniyor...</p> : null}

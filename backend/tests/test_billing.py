@@ -114,10 +114,20 @@ def _subscription(
         "status": status,
         "customer": customer_id,
         "schedule": schedule,
-        "items": {"data": [{"id": "si_1", "price": _price(plan_code)}]},
+        # Mirrors the real (current API version) Stripe Subscription shape:
+        # current_period_start/end live on the subscription item, not on the
+        # subscription object itself — see test_sync_reads_current_period_from_subscription_item.
+        "items": {
+            "data": [
+                {
+                    "id": "si_1",
+                    "price": _price(plan_code),
+                    "current_period_start": created_ts,
+                    "current_period_end": period_end_ts,
+                }
+            ]
+        },
         "metadata": {"market_id": str(market_id)},
-        "current_period_start": created_ts,
-        "current_period_end": period_end_ts,
         "start_date": created_ts,
         "cancel_at_period_end": cancel_at_period_end,
         "canceled_at": None,
@@ -771,6 +781,67 @@ async def test_sync_cancellation_keeps_entitlement_through_paid_period_when_test
             assert row.cancel_at_period_end is True
             await session.refresh(market)
             assert market.subscription_plan == "starter"
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# current_period_start/end: read from the subscription item (current Stripe
+# API shape), falling back to the legacy top-level subscription fields.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_reads_current_period_from_subscription_item_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            sub = _subscription(
+                market_id=market.id,
+                plan_code="starter",
+                status="active",
+                created_ts=1_700_000_000,
+                period_end_ts=1_702_592_000,
+            )
+            row, applied = await sync_subscription_from_stripe_object(session, sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            assert applied is True
+            assert row.current_period_start == _dt(1_700_000_000)
+            assert row.current_period_end == _dt(1_702_592_000)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_falls_back_to_top_level_current_period_for_legacy_payloads_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            sub = _subscription(
+                market_id=market.id,
+                plan_code="starter",
+                status="active",
+                created_ts=1_700_000_000,
+                period_end_ts=1_702_592_000,
+            )
+            del sub["items"]["data"][0]["current_period_start"]
+            del sub["items"]["data"][0]["current_period_end"]
+            sub["current_period_start"] = 1_700_000_000
+            sub["current_period_end"] = 1_702_592_000
+
+            row, applied = await sync_subscription_from_stripe_object(session, sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            assert applied is True
+            assert row.current_period_start == _dt(1_700_000_000)
+            assert row.current_period_end == _dt(1_702_592_000)
     finally:
         await engine.dispose()
 
