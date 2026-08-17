@@ -31,6 +31,7 @@ import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
 import { PlatformCatalog } from "./pages/platform/PlatformCatalog.jsx";
 import { PlatformTemplates } from "./pages/platform/PlatformTemplates.jsx";
 import { PlatformBilling } from "./pages/platform/PlatformBilling.jsx";
+import { PlatformWhatsApp } from "./pages/platform/PlatformWhatsApp.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { canAccessPilotPath } from "./routes/capabilities.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
@@ -214,6 +215,7 @@ export function App() {
     else if (path === "/platform/catalog") platformPage = <PlatformCatalog />;
     else if (path === "/platform/templates") platformPage = <PlatformTemplates />;
     else if (path === "/platform/billing") platformPage = <PlatformBilling />;
+    else if (path === "/platform/whatsapp") platformPage = <PlatformWhatsApp />;
     else if (path.startsWith("/platform/markets/")) platformPage = <PlatformMarketDetail id={path.replace("/platform/markets/", "")} />;
     return <PlatformAdminLayout onLogout={platformLogout}>{platformPage}</PlatformAdminLayout>;
   }

@@ -20,6 +20,7 @@ export function PlatformAdminLayout({ children, onLogout }) {
           <a href="#/platform/catalog">Global catalog</a>
           <a href="#/platform/templates">Templates</a>
           <a href="#/platform/billing">Faturalandırma</a>
+          <a href="#/platform/whatsapp">WhatsApp</a>
         </nav>
         <button className="sidebar-logout" onClick={onLogout}>{t("logout")}</button>
       </aside>
