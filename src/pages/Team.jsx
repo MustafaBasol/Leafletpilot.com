@@ -44,10 +44,10 @@ const MANUAL_SHARE_STATUSES = new Set(["manual_delivery_required", "failed"]);
 const ACTIVE_INVITATION_STATUSES = new Set(["pending", "sent", "manual_delivery_required", "failed"]);
 
 const memberColumns = [
-  { label: "Kullanıcı" },
-  { label: "Rol", width: "16%" },
-  { label: "Durum", width: "12%" },
-  { label: "Aksiyonlar", width: "30%" },
+  { label: "Kullanıcı", minWidth: "180px" },
+  { label: "Rol", width: "16%", minWidth: "140px" },
+  { label: "Durum", width: "12%", minWidth: "90px" },
+  { label: "Aksiyonlar", width: "30%", minWidth: "260px" },
 ];
 
 export function Team() {
