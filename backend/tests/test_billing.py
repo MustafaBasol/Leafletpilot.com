@@ -2496,6 +2496,176 @@ async def test_change_plan_upgrade_still_applies_via_subscription_modify_when_te
 
 
 # ---------------------------------------------------------------------------
+# PR #69 hotfix — terminal subscription lifecycle. A canceled/unpaid/
+# incomplete_expired local row (or no row at all) must be rejected by
+# change-plan-preview and change-plan with a controlled BillingError BEFORE
+# any Stripe call, never reaching SubscriptionSchedule.create or
+# Invoice.create_preview_async. Reproduces the exact production incident: a
+# canceled row that still carries a stale stripe_subscription_id previously
+# reached SubscriptionSchedule.create, which Stripe rejects for a canceled
+# subscription ("You cannot migrate a subscription that is currently in the
+# `canceled` status.") and which surfaced to the client as an opaque 502.
+# ---------------------------------------------------------------------------
+
+
+async def _add_terminal_subscription_row(session, market, *, status: str, sub_id: str | None) -> MarketSubscription:
+    """Mirrors production: plan_code has already been downgraded to
+    "unassigned" by the terminal webhook, but the row keeps its stale
+    price/period fields from the last active period (sync only overwrites
+    what the terminal event actually reports), and stripe_subscription_id may
+    still point at the old, now-canceled Stripe subscription.
+    """
+    row = MarketSubscription(
+        market_id=market.id,
+        plan_code="unassigned",
+        status=status,
+        stripe_customer_id="cus_terminal",
+        stripe_subscription_id=sub_id,
+        currency="eur",
+        unit_amount=19900,
+        current_period_start=_dt(1_700_000_000),
+        current_period_end=_dt(1_702_592_000),
+        cancel_at_period_end=False,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+def _unexpected_stripe_call(name: str):
+    async def _raise(*args, **kwargs):
+        raise AssertionError(f"{name} must not be called for a terminal subscription")
+
+    return _raise
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["canceled", "unpaid", "incomplete_expired"])
+async def test_change_plan_preview_rejects_terminal_subscription_before_any_stripe_call_when_test_database_url_is_configured(
+    terminal_status, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _unexpected_stripe_call("stripe.Subscription.retrieve_async"))
+    monkeypatch.setattr("stripe.Invoice.create_preview_async", _unexpected_stripe_call("stripe.Invoice.create_preview_async"))
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await _add_terminal_subscription_row(
+                session, market, status=terminal_status, sub_id=f"sub_terminal_preview_{terminal_status}"
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.preview_change_plan(session, market, "starter")
+            assert exc_info.value.status_code == 409
+            assert "artık aktif değil" in str(exc_info.value)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["canceled", "unpaid", "incomplete_expired"])
+async def test_change_plan_rejects_terminal_subscription_before_any_stripe_call_when_test_database_url_is_configured(
+    terminal_status, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _unexpected_stripe_call("stripe.Subscription.retrieve_async"))
+    monkeypatch.setattr("stripe.SubscriptionSchedule.create_async", _unexpected_stripe_call("stripe.SubscriptionSchedule.create_async"))
+    monkeypatch.setattr("stripe.SubscriptionSchedule.release_async", _unexpected_stripe_call("stripe.SubscriptionSchedule.release_async"))
+    monkeypatch.setattr("stripe.Subscription.modify_async", _unexpected_stripe_call("stripe.Subscription.modify_async"))
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await _add_terminal_subscription_row(
+                session, market, status=terminal_status, sub_id=f"sub_terminal_change_{terminal_status}"
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.change_plan(session, market, "starter")
+            assert exc_info.value.status_code == 409
+            assert "artık aktif değil" in str(exc_info.value)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_rejects_when_no_subscription_row_at_all_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _unexpected_stripe_call("stripe.Subscription.retrieve_async"))
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.preview_change_plan(session, market, "starter")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_rejects_when_no_subscription_row_at_all_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", _unexpected_stripe_call("stripe.Subscription.retrieve_async"))
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.change_plan(session, market, "starter")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_route_rejects_canceled_subscription_with_409_not_502_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # HTTP-level reproduction of the production symptom: previously this
+    # request reached Stripe and came back as an opaque 502; it must now be
+    # rejected locally with a controlled, actionable Turkish error.
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id, subscription_plan="unassigned")
+            session.add(admin_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            await _add_terminal_subscription_row(session, market, status="canceled", sub_id="sub_terminal_route_change_plan")
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/billing/change-plan",
+                json={"plan_code": "starter"},
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+            )
+            assert response.status_code == 409
+            assert "artık aktif değil" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
 # Payment method portal: success path + safe app-level error on a
 # restricted-key permission failure (the observed production 502).
 # ---------------------------------------------------------------------------

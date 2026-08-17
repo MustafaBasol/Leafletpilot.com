@@ -29,12 +29,12 @@ test("Billing plan selection highlights the current plan and routes upgrade/down
   assert.match(source, /planıyla başla/);
   assert.match(
     source,
-    /onClick=\{\(\) => \(hasSubscription \? openPlanChangeModal\(planCode\) : handleCheckout\(planCode\)\)\}/,
-    "an existing subscriber's plan click must open the confirmation modal, not change the plan directly",
+    /onClick=\{\(\) => \(isActiveSubscription \? openPlanChangeModal\(planCode\) : handleCheckout\(planCode\)\)\}/,
+    "an active subscriber's plan click must open the confirmation modal, not change the plan directly",
   );
   assert.doesNotMatch(
     source,
-    /onClick=\{\(\) => \(hasSubscription \? handleChangePlan/,
+    /onClick=\{\(\) => \(isActiveSubscription \? handleChangePlan/,
     "the old instant-change handler must not be wired to the plan buttons anymore",
   );
 });
@@ -77,7 +77,7 @@ test("PlanChangeModal is wired with the preview state and confirm/cancel handler
 });
 
 test("Payment method portal button shows a loading label while redirecting and disables against double-submit", () => {
-  assert.match(source, /disabled=\{!hasSubscription \|\| Boolean\(busyAction\)\}/);
+  assert.match(source, /disabled=\{!hasSubscriptionRow \|\| Boolean\(busyAction\)\}/);
   assert.match(source, /busyAction === "portal" \? "Yönlendiriliyor\.\.\." : "Ödeme yöntemini yönet"/);
 });
 
@@ -175,4 +175,100 @@ test("a confirmed sync shows the target plan's own success wording, not a generi
 
 test("PlanChangeModal is wired with the isSyncing processing state", () => {
   assert.match(source, /isSyncing=\{Boolean\(planChange\?\.isSyncing\)\}/);
+});
+
+// ---------------------------------------------------------------------------
+// Terminal subscription lifecycle (PR #69 hotfix): canceled/incomplete_expired/
+// unassigned must start a fresh Checkout, never reach change-plan/preview, and
+// must never render stale active-plan data as if it were current.
+// ---------------------------------------------------------------------------
+
+test("CHANGEABLE_SUBSCRIPTION_STATUSES matches backend CHECKOUT_BLOCKING_STATUSES exactly, and excludes every terminal status", () => {
+  const match = source.match(/const CHANGEABLE_SUBSCRIPTION_STATUSES = new Set\(\[([^\]]*)\]\);/);
+  assert.ok(match, "CHANGEABLE_SUBSCRIPTION_STATUSES constant must exist");
+  const statuses = match[1].split(",").map((entry) => entry.trim().replace(/"/g, ""));
+  assert.deepEqual(statuses, ["active", "trialing", "past_due", "incomplete", "paused"]);
+  for (const terminal of ["canceled", "unpaid", "incomplete_expired"]) {
+    assert.ok(!statuses.includes(terminal), `${terminal} must never be treated as changeable`);
+  }
+});
+
+test("isActiveSubscription requires both a subscription row and a changeable status — not a generic truthy check", () => {
+  assert.match(
+    source,
+    /const isActiveSubscription = hasSubscriptionRow && CHANGEABLE_SUBSCRIPTION_STATUSES\.has\(subscription\.status\);/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const hasSubscription = Boolean\(subscription\?\.status\);/,
+    "the old generic-truthy hasSubscription flag must be gone, not just aliased",
+  );
+});
+
+test("terminal/no-subscription state renders a clean 'no active subscription' state, not stale active-plan data", () => {
+  assert.match(source, /Aktif abonelik yok\. Devam etmek için aşağıdan bir plan seçin\./);
+  const cardStart = source.indexOf('title="Mevcut Abonelik"');
+  const cardEnd = source.indexOf('</Card>', cardStart);
+  const card = source.slice(cardStart, cardEnd);
+  const terminalBranchStart = card.indexOf("Aktif abonelik yok");
+  assert.ok(terminalBranchStart !== -1, "terminal branch must live inside the Mevcut Abonelik card");
+  const activeBranch = card.slice(0, terminalBranchStart);
+  const terminalBranch = card.slice(terminalBranchStart);
+  // The stale-data fields (price, dates, cancel-at-period-end/past_due alerts)
+  // must only appear in the active branch, never repeated in the terminal one.
+  assert.match(activeBranch, /Aylık ücret: <strong>\{formatMoney\(subscription\.unit_amount, subscription\.currency\)\}/);
+  assert.match(activeBranch, /Yenilenme tarihi/);
+  assert.doesNotMatch(terminalBranch, /formatMoney\(subscription\.unit_amount/);
+  assert.doesNotMatch(terminalBranch, /Yenilenme tarihi/);
+});
+
+test("terminal state may show the cancellation date only as clearly historical, separate from current-entitlement fields", () => {
+  assert.match(
+    source,
+    /Son aboneliğiniz <strong>\{formatDate\(subscription\.canceled_at\)\}<\/strong> tarihinde iptal edildi\./,
+  );
+});
+
+test("canceled/unassigned hides the cancel-subscription action and the resume action (no terminal-subscription actions offered)", () => {
+  assert.match(source, /\{isActiveSubscription \? \(\s*<div className="page-actions billing-cancel-row">/);
+  assert.doesNotMatch(
+    source,
+    /\{hasSubscriptionRow \? \(\s*<div className="page-actions billing-cancel-row">/,
+    "the cancel/resume row must gate on active-subscription lifecycle, not merely row existence",
+  );
+});
+
+test("resume stays reachable for an active subscription with cancel_at_period_end=true (only the terminal-canceled case loses it)", () => {
+  const rowStart = source.indexOf('className="page-actions billing-cancel-row"');
+  const rowEnd = source.indexOf("</div>", source.indexOf("</div>", rowStart) + 1);
+  const row = source.slice(rowStart, rowEnd);
+  assert.match(row, /subscription\?\.cancel_at_period_end \? \(/);
+  assert.match(row, /handleResume/);
+});
+
+test("usage section does not render a 0-limit progress bar for an unassigned/terminal plan", () => {
+  assert.match(source, /plan\.code === "unassigned"/);
+  assert.match(source, /Aktif plan yok\. Plan seçtiğinizde kullanım limitleri burada görüntülenecek\./);
+  const cardStart = source.indexOf('title="Plan / Kullanım"');
+  const cardEnd = source.indexOf("</Card>", cardStart);
+  const card = source.slice(cardStart, cardEnd);
+  const unassignedBranchEnd = card.indexOf("<div className=\"metric-grid\"");
+  const unassignedBranch = card.slice(0, unassignedBranchEnd);
+  assert.doesNotMatch(unassignedBranch, /UsageCard/, "no usage bars must render before the metric-grid branch");
+});
+
+test("plan-picker CTA and click routing depend on isActiveSubscription, not row existence, for every terminal status", () => {
+  assert.match(
+    source,
+    /const isCurrent = isActiveSubscription && currentPlanCode === planCode;/,
+  );
+  assert.match(
+    source,
+    /\(isActiveSubscription \? `\$\{PLAN_LABELS\[planCode\]\} planına geç` : `\$\{PLAN_LABELS\[planCode\]\} planıyla başla`\)|isActiveSubscription \? `\$\{PLAN_LABELS\[planCode\]\} planına geç`/,
+  );
+  assert.match(
+    source,
+    /\(isActiveSubscription && hasPendingUpgrade\)/,
+    "pending-upgrade disable must not fire for a terminal subscription that has no such concept",
+  );
 });

@@ -144,6 +144,30 @@ async def _require_subscription_row(session: AsyncSession, market_id: UUID) -> M
     return row
 
 
+# A status here means the local row still mirrors an active/in-progress
+# Stripe subscription — identical to CHECKOUT_BLOCKING_STATUSES by definition
+# (both describe "this market already has an active or in-progress Stripe
+# subscription", just from opposite ends: checkout blocks on it, change-plan
+# requires it). Anything else — a terminal status in
+# DOWNGRADE_TO_UNASSIGNED_STATUSES (canceled/unpaid/incomplete_expired) or no
+# row at all — has nothing left to preview/mutate; the caller must go through
+# create_checkout_session instead. See PR #69: a canceled local row that
+# still carries a stale stripe_subscription_id previously reached
+# SubscriptionSchedule.create, which Stripe rejects for a canceled
+# subscription and which surfaced to the client as an opaque 502.
+CHANGEABLE_SUBSCRIPTION_STATUSES = CHECKOUT_BLOCKING_STATUSES
+
+
+async def _require_changeable_subscription_row(session: AsyncSession, market_id: UUID) -> MarketSubscription:
+    row = await _get_subscription_row(session, market_id)
+    if row is None or row.status not in CHANGEABLE_SUBSCRIPTION_STATUSES or not row.stripe_subscription_id:
+        raise BillingError(
+            "Bu abonelik artık aktif değil. Yeni bir plan başlatmak için ödeme adımını kullanın.",
+            status_code=409,
+        )
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Mutation endpoints — Stripe calls only, no local writes (core rule).
 # ---------------------------------------------------------------------------
@@ -308,7 +332,7 @@ async def change_plan(session: AsyncSession, market: Market, plan_code: str) -> 
     _require_enabled()
     if not is_sellable_plan_code(plan_code):
         raise BillingError("Geçersiz plan. Yalnızca starter, standard veya pro seçilebilir.")
-    row = await _require_subscription_row(session, market.id)
+    row = await _require_changeable_subscription_row(session, market.id)
     if plan_code == row.plan_code:
         raise BillingError("Market zaten bu planda.", status_code=409)
     if row.cancel_at_period_end:
@@ -454,7 +478,7 @@ async def preview_change_plan(session: AsyncSession, market: Market, plan_code: 
     _require_enabled()
     if not is_sellable_plan_code(plan_code):
         raise BillingError("Geçersiz plan. Yalnızca starter, standard veya pro seçilebilir.")
-    row = await _require_subscription_row(session, market.id)
+    row = await _require_changeable_subscription_row(session, market.id)
     if plan_code == row.plan_code:
         raise BillingError("Market zaten bu planda.", status_code=409)
     if row.cancel_at_period_end:

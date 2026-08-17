@@ -17,6 +17,15 @@ import { Button, Card, ConfirmDialog, Icon, PageHeader, PlanChangeModal, StatusB
 const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro", unassigned: "Atanmamış" };
 const PLAN_ORDER = ["starter", "standard", "pro"];
 
+// Mirrors backend CHECKOUT_BLOCKING_STATUSES (backend/app/services/billing/service.py)
+// exactly: a subscription in one of these statuses is active or in-progress
+// on Stripe, so a plan click may change it directly. Any other status —
+// canceled/unpaid/incomplete_expired (backend DOWNGRADE_TO_UNASSIGNED_STATUSES)
+// — or no subscription row at all is a terminal/absent lifecycle: a plan
+// click must start a fresh Checkout instead (see PART B/H in
+// docs/backend/09_STRIPE_BILLING_SANDBOX.md).
+const CHANGEABLE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due", "incomplete", "paused"]);
+
 // An "applied" plan change only means Stripe accepted the mutation — the
 // local MarketSubscription mirror is written exclusively by webhook
 // processing (see docs/backend/09_STRIPE_BILLING_SANDBOX.md), which can lag
@@ -290,7 +299,12 @@ export function Billing({ checkoutStatus = "" }) {
     await runAction("resume", () => resumeBillingSubscription(), "Abonelik yenilemesi yeniden etkinleştirildi.");
   }
 
-  const hasSubscription = Boolean(subscription?.status);
+  // A subscription row existing at all (any status, including terminal ones
+  // like "canceled") is enough to justify Customer Portal access for invoice
+  // history/payment method management — see PART F. It is NOT enough to
+  // justify plan-change routing; that requires `isActiveSubscription` below.
+  const hasSubscriptionRow = Boolean(subscription?.status);
+  const isActiveSubscription = hasSubscriptionRow && CHANGEABLE_SUBSCRIPTION_STATUSES.has(subscription.status);
   const currentPlanCode = subscription?.plan_code || "unassigned";
   const publicPlanByCode = Object.fromEntries(publicPlans.map((item) => [item.code, item]));
 
@@ -326,48 +340,65 @@ export function Billing({ checkoutStatus = "" }) {
               <strong>{PLAN_LABELS[currentPlanCode] || currentPlanCode}</strong>
               <StatusBadge status={statusLabel(subscription?.status)} />
             </div>
-            {subscription?.unit_amount ? (
-              <p className="billing-plan-price">
-                Aylık ücret: <strong>{formatMoney(subscription.unit_amount, subscription.currency)}</strong>
-              </p>
-            ) : null}
+            {isActiveSubscription ? (
+              <>
+                {subscription?.unit_amount ? (
+                  <p className="billing-plan-price">
+                    Aylık ücret: <strong>{formatMoney(subscription.unit_amount, subscription.currency)}</strong>
+                  </p>
+                ) : null}
 
-            <ul className="billing-fact-list">
-              {subscription?.subscription_started_at ? (
-                <li>
-                  <Icon name="calendar" /> Başlangıç: <strong>{formatDate(subscription.subscription_started_at)}</strong>
-                </li>
-              ) : null}
-              {subscription?.current_period_end ? (
-                <li>
-                  <Icon name="calendar" /> {subscription.cancel_at_period_end ? "Erişim sona eriyor" : "Yenilenme tarihi"}: <strong>{formatDate(subscription.current_period_end)}</strong>
-                </li>
-              ) : null}
-            </ul>
+                <ul className="billing-fact-list">
+                  {subscription?.subscription_started_at ? (
+                    <li>
+                      <Icon name="calendar" /> Başlangıç: <strong>{formatDate(subscription.subscription_started_at)}</strong>
+                    </li>
+                  ) : null}
+                  {subscription?.current_period_end ? (
+                    <li>
+                      <Icon name="calendar" /> {subscription.cancel_at_period_end ? "Erişim sona eriyor" : "Yenilenme tarihi"}: <strong>{formatDate(subscription.current_period_end)}</strong>
+                    </li>
+                  ) : null}
+                </ul>
 
-            {subscription?.pending_plan_code && subscription?.pending_change_reason === "downgrade" ? (
-              <p className="inline-result billing-alert">
-                <Icon name="refresh" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
-                geçiş {formatDate(subscription.pending_change_at)} tarihinde gerçekleşecek.
-              </p>
-            ) : null}
-            {subscription?.pending_change_reason === "upgrade_pending_payment" ? (
-              <p className="inline-result inline-result-warning billing-alert">
-                <Icon name="alert" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
-                yükseltme ödeme onayı bekliyor (son tarih {formatDate(subscription.pending_change_at)}).
-              </p>
-            ) : null}
-            {subscription?.cancel_at_period_end ? (
-              <p className="inline-result inline-result-warning billing-alert">
-                <Icon name="alert" /> İptal talep edildi; erişiminiz {formatDate(subscription.current_period_end)} tarihine
-                kadar devam edecek, yenileme yapılmayacak.
-              </p>
-            ) : null}
-            {subscription?.status === "past_due" ? (
-              <p className="inline-result inline-result-warning billing-alert">
-                <Icon name="alert" /> Son ödeme başarısız oldu. Lütfen ödeme yönteminizi güncelleyin.
-              </p>
-            ) : null}
+                {subscription?.pending_plan_code && subscription?.pending_change_reason === "downgrade" ? (
+                  <p className="inline-result billing-alert">
+                    <Icon name="refresh" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
+                    geçiş {formatDate(subscription.pending_change_at)} tarihinde gerçekleşecek.
+                  </p>
+                ) : null}
+                {subscription?.pending_change_reason === "upgrade_pending_payment" ? (
+                  <p className="inline-result inline-result-warning billing-alert">
+                    <Icon name="alert" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
+                    yükseltme ödeme onayı bekliyor (son tarih {formatDate(subscription.pending_change_at)}).
+                  </p>
+                ) : null}
+                {subscription?.cancel_at_period_end ? (
+                  <p className="inline-result inline-result-warning billing-alert">
+                    <Icon name="alert" /> İptal talep edildi; erişiminiz {formatDate(subscription.current_period_end)} tarihine
+                    kadar devam edecek, yenileme yapılmayacak.
+                  </p>
+                ) : null}
+                {subscription?.status === "past_due" ? (
+                  <p className="inline-result inline-result-warning billing-alert">
+                    <Icon name="alert" /> Son ödeme başarısız oldu. Lütfen ödeme yönteminizi güncelleyin.
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p className="inline-result billing-alert" role="status">
+                  <Icon name="refresh" /> Aktif abonelik yok. Devam etmek için aşağıdan bir plan seçin.
+                </p>
+                {subscription?.canceled_at ? (
+                  <ul className="billing-fact-list">
+                    <li>
+                      <Icon name="calendar" /> Son aboneliğiniz <strong>{formatDate(subscription.canceled_at)}</strong> tarihinde iptal edildi.
+                    </li>
+                  </ul>
+                ) : null}
+              </>
+            )}
             {subscription?.sync_error ? (
               <p className="inline-result inline-result-warning billing-alert">
                 <Icon name="alert" /> Faturalandırma senkronizasyon hatası: {subscription.sync_error}
@@ -380,31 +411,35 @@ export function Billing({ checkoutStatus = "" }) {
           <p className="billing-payment-copy">
             <Icon name="creditCard" /> Kart bilgileri ve fatura adresi Stripe üzerinden güvenle yönetilir.
           </p>
-          <Button onClick={handlePortal} disabled={!hasSubscription || Boolean(busyAction)}>
+          <Button onClick={handlePortal} disabled={!hasSubscriptionRow || Boolean(busyAction)}>
             {busyAction === "portal" ? "Yönlendiriliyor..." : "Ödeme yöntemini yönet"}
           </Button>
         </Card>
 
         {plan ? (
           <Card title="Plan / Kullanım" className="span-12">
-            <div className="metric-grid">
-              <UsageCard
-                label="Aylık kampanya"
-                icon="megaphone"
-                used={plan.monthly_campaigns_used}
-                limit={plan.monthly_campaigns_limit}
-              />
-              <UsageCard label="Özel ürün limiti" icon="box" limit={plan.private_products_limit} />
-              <UsageCard label="Özel şablon limiti" icon="layoutTemplate" limit={plan.private_templates_limit} />
-              <UsageCard label="Çıktı formatları" icon="file" formats={plan.export_formats || []} />
-            </div>
+            {plan.code === "unassigned" ? (
+              <p className="catalog-empty">Aktif plan yok. Plan seçtiğinizde kullanım limitleri burada görüntülenecek.</p>
+            ) : (
+              <div className="metric-grid">
+                <UsageCard
+                  label="Aylık kampanya"
+                  icon="megaphone"
+                  used={plan.monthly_campaigns_used}
+                  limit={plan.monthly_campaigns_limit}
+                />
+                <UsageCard label="Özel ürün limiti" icon="box" limit={plan.private_products_limit} />
+                <UsageCard label="Özel şablon limiti" icon="layoutTemplate" limit={plan.private_templates_limit} />
+                <UsageCard label="Çıktı formatları" icon="file" formats={plan.export_formats || []} />
+              </div>
+            )}
           </Card>
         ) : null}
 
         <Card title="Plan Seçimi" className="span-12">
           <div className="plan-picker-grid">
             {PLAN_ORDER.map((planCode) => {
-              const isCurrent = hasSubscription && currentPlanCode === planCode;
+              const isCurrent = isActiveSubscription && currentPlanCode === planCode;
               const hasPendingUpgrade = subscription?.pending_change_reason === "upgrade_pending_payment";
               const publicPlan = publicPlanByCode[planCode];
               const priceLabel = formatPublicPlanPrice(publicPlan);
@@ -418,16 +453,16 @@ export function Billing({ checkoutStatus = "" }) {
                   {publicPlan?.tagline ? <p className="plan-option-price">{publicPlan.tagline}</p> : null}
                   <Button
                     variant={isCurrent ? "secondary" : "primary"}
-                    disabled={!canManage || isCurrent || Boolean(busyAction) || Boolean(planChange) || (hasSubscription && hasPendingUpgrade)}
-                    onClick={() => (hasSubscription ? openPlanChangeModal(planCode) : handleCheckout(planCode))}
+                    disabled={!canManage || isCurrent || Boolean(busyAction) || Boolean(planChange) || (isActiveSubscription && hasPendingUpgrade)}
+                    onClick={() => (isActiveSubscription ? openPlanChangeModal(planCode) : handleCheckout(planCode))}
                   >
-                    {isCurrent ? "Mevcut planınız" : hasSubscription ? `${PLAN_LABELS[planCode]} planına geç` : `${PLAN_LABELS[planCode]} planıyla başla`}
+                    {isCurrent ? "Mevcut planınız" : isActiveSubscription ? `${PLAN_LABELS[planCode]} planına geç` : `${PLAN_LABELS[planCode]} planıyla başla`}
                   </Button>
                 </div>
               );
             })}
           </div>
-          {hasSubscription ? (
+          {isActiveSubscription ? (
             <div className="page-actions billing-cancel-row">
               {subscription?.cancel_at_period_end ? (
                 <Button onClick={handleResume} disabled={!canManage || Boolean(busyAction)}>
