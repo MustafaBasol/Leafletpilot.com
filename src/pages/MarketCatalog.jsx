@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as catalogApi from "../api/catalogApi.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { getSelectedMarketId } from "../api/authSession.js";
-import { Button, Card, ConfirmDialog, FilterBar, Icon, Modal, PageHeader, ProductThumbnail, StatusBadge, Table } from "../components/ui/index.js";
+import { Button, Card, ConfirmDialog, FilterBar, Modal, PageHeader, ProductThumbnail, StatusBadge, Table } from "../components/ui/index.js";
 
 const emptyForm = {
   private_name: "", private_brand_text: "", private_barcode: "", regular_price: "", promo_price: "", currency: "EUR",
@@ -20,6 +20,17 @@ const editableProductFields = [
 ];
 const identityFields = new Set(["private_name", "private_brand_text", "private_barcode", "private_package_size", "private_package_type", "package_amount", "package_unit", "package_type_canonical"]);
 const adoptableMatchTypes = new Set(["exact", "strong"]);
+const SEARCH_DEBOUNCE_MS = 350;
+const productTableColumns = [
+  { label: "Görsel", width: "9%", minWidth: "72px" },
+  { label: "Ürün", width: "26%", minWidth: "160px" },
+  { label: "Kaynak", width: "12%", minWidth: "110px" },
+  { label: "Fiyat", width: "10%", minWidth: "80px" },
+  { label: "Eski fiyat", width: "10%", minWidth: "80px" },
+  { label: "Paket", width: "12%", minWidth: "100px" },
+  { label: "Durum", width: "9%", minWidth: "80px" },
+  { label: "Aksiyonlar", width: "12%", minWidth: "140px" },
+];
 
 function sourceState(item) {
   if (["global", "local", "global_override"].includes(item.source_state)) return item.source_state;
@@ -30,7 +41,7 @@ function sourceState(item) {
 }
 function sourceLabel(item) {
   const state = sourceState(item);
-  if (state === "global_override") return "Global + Market Düzenlemesi";
+  if (state === "global_override") return "Market Tarafından Düzenlenmiş";
   if (state === "global") return "Global Ürün";
   return "Yerel Ürün";
 }
@@ -196,7 +207,11 @@ export function MarketCatalog({ action = "" }) {
   async function loadShared() { if (!isRealApiEnabled) return; const requestedMarketId = marketId; setBusy(true); try { const response = await catalogApi.listSharedCatalog({ search: query || undefined, limit: 100 }, requestedMarketId); if (marketScope.current === requestedMarketId) { setShared(response.items || []); setError(""); } } catch (e) { if (marketScope.current === requestedMarketId) setError(readableError(e)); } finally { if (marketScope.current === requestedMarketId) setBusy(false); } }
   useEffect(() => { loadMine(); }, [marketId]);
   useEffect(() => { resetCreateForm(); setMine([]); setShared([]); setConfirm(null); setError(""); setMessage(""); setBusyId(""); }, [marketId]);
-  useEffect(() => { if (tab === "shared") loadShared(); }, [tab, marketId]);
+  useEffect(() => {
+    if (tab !== "shared") return undefined;
+    const handle = window.setTimeout(() => { loadShared(); }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [tab, marketId, query]);
   useEffect(() => {
     const activate = () => { resetCreateForm(); setTab("private"); window.setTimeout(() => { nameInput.current?.focus(); nameInput.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 0); };
     if (action === "create-private") activate();
@@ -298,9 +313,9 @@ export function MarketCatalog({ action = "" }) {
     <PageHeader title="Mağaza ürün kataloğu" description="Global ürünleri mağazanıza ekleyin, mağazanıza özel fiyat ve görselleri yönetin." actions={<><Button variant={tab === "mine" ? "primary" : "secondary"} onClick={() => setTab("mine")}>Kataloğum</Button><Button variant={tab === "shared" ? "primary" : "secondary"} onClick={() => setTab("shared")}>Globalden ürün ekle</Button><Button variant="primary" onClick={() => { resetCreateForm(); setTab("private"); window.setTimeout(() => nameInput.current?.focus(), 0); }}>Ürün ekle</Button></>} />
     {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}{message ? <p className="inline-result" role="status">{message}</p> : null}
     {tab === "private" ? <Card title="Ürün ekle"><ProductForm value={form} onChange={update} onSubmit={savePrivate} onCancel={() => setTab("mine")} busy={busy || Boolean(busyId)} title="Ürünü oluştur" nameInput={nameInput} showImagePicker matchResult={matchResult} matching={matching} onMatch={findMatches} onAdopt={adoptMatched} marketId={marketId} busyId={busyId} allowLocalContinue={!adoptedCandidateMatch} /></Card> : <Card title={tab === "mine" ? "Kataloğum" : "Global katalog"} action={<span className="card-summary">{tab === "mine" ? visibleMine.length : shared.length} ürün</span>}>
-      <FilterBar searchPlaceholder="Ürün, marka, kategori veya paket ara" searchValue={query} onSearchChange={(e) => setQuery(e.target.value)}><label className="filter-select"><span>Kaynak</span><select aria-label="Kaynak filtresi" value={source} onChange={(e) => setSource(e.target.value)}><option value="all">Tüm kaynaklar</option><option value="global">Global Ürün</option><option value="local">Yerel Ürün</option><option value="global_override">Global + Market Düzenlemesi</option></select></label><label className="filter-select"><span>Durum</span><select aria-label="Durum filtresi" value={active} onChange={(e) => setActive(e.target.value)}><option value="all">Tüm durumlar</option><option value="true">Aktif</option><option value="false">Pasif</option></select></label><Button onClick={tab === "shared" ? loadShared : loadMine}><Icon name="search" />Ara</Button></FilterBar>
+      <FilterBar searchPlaceholder="Ürün, marka, kategori veya paket ara" searchValue={query} onSearchChange={(e) => setQuery(e.target.value)}><label className="filter-select"><span>Kaynak</span><select aria-label="Kaynak filtresi" value={source} onChange={(e) => setSource(e.target.value)}><option value="all">Tüm kaynaklar</option><option value="global">Global Ürün</option><option value="local">Yerel Ürün</option><option value="global_override">Market Tarafından Düzenlenmiş</option></select></label><label className="filter-select"><span>Durum</span><select aria-label="Durum filtresi" value={active} onChange={(e) => setActive(e.target.value)}><option value="all">Tüm durumlar</option><option value="true">Aktif</option><option value="false">Pasif</option></select></label></FilterBar>
       {busy ? <p className="inline-result">Ürünler yükleniyor...</p> : null}
-      <Table columns={["Görsel", "Ürün", "Kaynak", "Fiyat", "Eski fiyat", "Paket", "Durum", "Aksiyonlar"]}>{(tab === "mine" ? visibleMine : shared).map((item) => <tr key={item.id}><td><ProductThumbnail label={item.name} hasImage={Boolean(item.image_url)} imageUrl={item.image_url} marketId={marketId} refreshKey={`${item.id}:${imageRevision}`} size="sm" /><small>{imageLabel(item)}</small></td><td><strong>{item.name}</strong><small>{item.brand || "Marka belirtilmedi"}{item.category ? ` · ${item.category}` : ""}</small></td>{tab === "mine" ? <><td>{sourceLabel(item)}</td><td>{item.promo_price ?? item.regular_price ?? "-"} {item.currency}</td><td>{item.regular_price ?? "-"}</td><td>{packageLabel(item)}</td><td><StatusBadge status={item.is_active ? "Aktif" : "Pasif"} /></td><td><div className="table-actions"><Button onClick={() => openEdit(item)}>Düzenle</Button><Button disabled={busyId === item.id} onClick={() => setConfirm(item)}>{item.is_active ? "Pasifleştir" : "Aktifleştir"}</Button></div></td></> : <><td>Global Ürün</td><td>-</td><td>-</td><td>{packageLabel(item)}</td><td><StatusBadge status={item.is_active ? "Aktif" : "Pasif"} /></td><td><Button variant="primary" disabled={!item.is_active || item.already_added || busyId === item.id} onClick={() => adopt(item)}>{item.already_added ? "Zaten eklendi" : busyId === item.id ? "Ekleniyor..." : "Kataloğa ekle"}</Button></td></>}</tr>)}</Table>{!busy && !(tab === "mine" ? visibleMine : shared).length ? <p className="catalog-empty">Bu filtrelerle eşleşen ürün bulunamadı.</p> : null}
+      <Table columns={productTableColumns}>{(tab === "mine" ? visibleMine : shared).map((item) => <tr key={item.id}><td><ProductThumbnail label={item.name} hasImage={Boolean(item.image_url)} imageUrl={item.image_url} marketId={marketId} refreshKey={`${item.id}:${imageRevision}`} size="sm" /><small>{imageLabel(item)}</small></td><td><strong>{item.name}</strong><small>{item.brand || "Marka belirtilmedi"}{item.category ? ` · ${item.category}` : ""}</small></td>{tab === "mine" ? <><td>{sourceLabel(item)}</td><td>{item.promo_price ?? item.regular_price ?? "-"} {item.currency}</td><td>{item.regular_price ?? "-"}</td><td>{packageLabel(item)}</td><td><StatusBadge status={item.is_active ? "Aktif" : "Pasif"} /></td><td><div className="table-actions"><Button onClick={() => openEdit(item)}>Düzenle</Button><Button disabled={busyId === item.id} onClick={() => setConfirm(item)}>{item.is_active ? "Pasifleştir" : "Aktifleştir"}</Button></div></td></> : <><td>Global Ürün</td><td>-</td><td>-</td><td>{packageLabel(item)}</td><td><StatusBadge status={item.is_active ? "Aktif" : "Pasif"} /></td><td><Button variant="primary" disabled={!item.is_active || item.already_added || busyId === item.id} onClick={() => adopt(item)}>{item.already_added ? "Zaten eklendi" : busyId === item.id ? "Ekleniyor..." : "Kataloğa ekle"}</Button></td></>}</tr>)}</Table>{!busy && !(tab === "mine" ? visibleMine : shared).length ? <p className="catalog-empty">Bu filtrelerle eşleşen ürün bulunamadı.</p> : null}
     </Card>}
     {editing ? <Modal title={`${editing.name} ürününü düzenle`} description={sourceState(editing) === "local" ? "Yerel ürün bilgilerini ve market değerlerini düzenleyin." : "Global ürün değişmez; boş market alanları güncel global değerleri kullanır."} onClose={() => setEditing(null)} footer={<><Button onClick={() => setEditing(null)}>İptal</Button><Button variant="primary" onClick={saveEdit} disabled={busyId === editing.id}>{busyId === editing.id ? "Kaydediliyor..." : "Kaydet"}</Button></>}><ProductThumbnail label={editing.name} hasImage={Boolean(editing.image_url)} imageUrl={editing.image_url} marketId={marketId} refreshKey={`${editing.id}:${imageRevision}`} size="lg" /><InheritedSummary item={editing} /><ProductForm value={editing} onChange={updateEditing} onSubmit={saveEdit} onCancel={() => setEditing(null)} busy={busyId === editing.id} title="Kaydet" isGlobalEdit={sourceState(editing) !== "local"} /><div className="page-actions edit-image-actions"><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={upload} /><Button onClick={() => fileInput.current?.click()} disabled={busyId === editing.id}>{editing.image_override_active ? "Görseli değiştir" : "Market görseli yükle"}</Button>{editing.image_override_active ? <Button variant="danger" onClick={() => setConfirm({ ...editing, removeImage: true })}>Market görselini kaldır</Button> : null}</div></Modal> : null}
     <ConfirmDialog isOpen={Boolean(confirm)} title={confirm?.removeImage ? "Market görselini kaldır" : "Ürün durumunu değiştir"} description={confirm?.removeImage ? "Global görsel varsa kullanılacak; yoksa yer tutucu gösterilecek." : confirm ? `${confirm.name} ürünü ${confirm.is_active ? "pasifleştirilecek" : "aktifleştirilecek"}.` : ""} confirmLabel={confirm?.removeImage ? "Görseli kaldır" : confirm?.is_active ? "Pasifleştir" : "Aktifleştir"} onCancel={() => setConfirm(null)} onConfirm={async () => { const item = confirm; setConfirm(null); if (item.removeImage) await removeImage(item); else await toggle(item); }} isLoading={Boolean(confirm && busyId === confirm.id)} />

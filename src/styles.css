@@ -858,6 +858,15 @@ table {
   border-collapse: collapse;
 }
 
+table.table-fixed {
+  table-layout: fixed;
+  min-width: 820px;
+}
+
+table.table-fixed td {
+  overflow-wrap: break-word;
+}
+
 th {
   background: var(--neutral-50);
   color: var(--neutral-500);
