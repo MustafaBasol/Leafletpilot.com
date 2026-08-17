@@ -32,6 +32,14 @@ test("other single-segment routes also key off the query-stripped pathname (regr
   }
 });
 
+test("campaign detail route threads the ?view query param through so Önizleme can request preview mode explicitly", () => {
+  const body = pageBody();
+  assert.match(
+    body,
+    /if \(pathname\.startsWith\("\/campaigns\/"\)\) \{\s*return \(\s*<CampaignDetail\s*campaignId=\{pathname\.replace\("\/campaigns\/", ""\)\}\s*view=\{new URLSearchParams\(search\)\.get\("view"\) \|\| ""\}\s*\/>\s*\);\s*\}/,
+  );
+});
+
 test("PlaceholderPage fallback is only reached after every real route (including billing) has been matched", () => {
   const body = pageBody();
   const billingIndex = body.indexOf('pathname === "/settings/billing"');

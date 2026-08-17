@@ -153,6 +153,134 @@ async def test_market_brand_api_crud_and_global_mutation_guard_run_when_test_dat
 
 
 @pytest.mark.asyncio
+async def test_market_can_edit_own_brand_but_not_global_brand_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed catalog edit tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    user_id = uuid4()
+
+    async def override_user():
+        return User(id=user_id, email=f"catalog-edit-{user_id}@example.com", is_active=True)
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = override_user
+    try:
+        local_slug = f"local-brand-{uuid4()}"
+        global_slug = f"global-brand-{uuid4()}"
+        async with session_factory() as session:
+            market = Market(id=market_id, name=f"Catalog Edit Market {market_id}", slug=f"ce-{market_id}")
+            user = User(id=user_id, email=f"catalog-edit-{user_id}@example.com", is_active=True)
+            membership = MarketUser(market_id=market_id, user_id=user_id, role="market_admin", is_active=True)
+            local_brand = Brand(name="Yerel Marka", slug=local_slug, is_global=False, market_id=market_id)
+            global_brand = Brand(name="Global Marka", slug=global_slug, is_global=True, market_id=None)
+            session.add_all([market, user, membership, local_brand, global_brand])
+            await session.commit()
+            local_brand_id = local_brand.id
+            global_brand_id = global_brand.id
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            headers = {"X-Market-Id": str(market_id)}
+
+            edit_own = await async_client.patch(
+                f"/api/catalog/brands/{local_brand_id}",
+                headers=headers,
+                json={"name": "Yerel Marka Güncellendi"},
+            )
+            assert edit_own.status_code == 200
+            assert edit_own.json()["name"] == "Yerel Marka Güncellendi"
+
+            edit_global = await async_client.patch(
+                f"/api/catalog/brands/{global_brand_id}",
+                headers=headers,
+                json={"name": "Forbidden Rename"},
+            )
+            assert edit_global.status_code == 403
+
+            unaffected_global = await async_client.get(f"/api/catalog/brands/{global_brand_id}", headers=headers)
+            assert unaffected_global.status_code == 200
+            assert unaffected_global.json()["name"] == "Global Marka"
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_creating_duplicate_normalized_brand_reuses_existing_record_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed catalog duplicate tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    user_id = uuid4()
+
+    async def override_user():
+        return User(id=user_id, email=f"catalog-dup-{user_id}@example.com", is_active=True)
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = override_user
+    try:
+        async with session_factory() as session:
+            market = Market(id=market_id, name=f"Catalog Dup Market {market_id}", slug=f"cd-{market_id}")
+            user = User(id=user_id, email=f"catalog-dup-{user_id}@example.com", is_active=True)
+            membership = MarketUser(market_id=market_id, user_id=user_id, role="market_admin", is_active=True)
+            session.add_all([market, user, membership])
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            headers = {"X-Market-Id": str(market_id)}
+
+            first = await async_client.post(
+                "/api/catalog/brands",
+                headers=headers,
+                json={"name": "Ülker", "is_global": False},
+            )
+            assert first.status_code == 201
+            first_id = first.json()["id"]
+
+            # Case/diacritic variants of the same normalized identity must reuse the
+            # existing record rather than create a second, near-duplicate brand.
+            for variant in ("ülker", "ULKER", "Ulker", "  Ülker  "):
+                duplicate = await async_client.post(
+                    "/api/catalog/brands",
+                    headers=headers,
+                    json={"name": variant, "is_global": False},
+                )
+                assert duplicate.status_code == 201, duplicate.text
+                assert duplicate.json()["id"] == first_id
+
+            listing = await async_client.get(
+                "/api/catalog/brands", headers=headers, params={"search": "lker"}
+            )
+            assert listing.status_code == 200
+            assert listing.json()["total"] == 1
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_catalog_market_specific_products_do_not_leak_between_markets() -> None:
     if not settings.test_database_url:
         pytest.skip("TEST_DATABASE_URL is not configured; DB-backed catalog tests skipped.")

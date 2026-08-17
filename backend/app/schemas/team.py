@@ -14,10 +14,15 @@ class MarketMemberRead(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+    pending_email: str | None = None
 
 
 class MarketMemberUpdate(BaseModel):
     role: str = Field(pattern=f"^({'|'.join(MARKET_USER_ROLES)})$")
+
+
+class MemberEmailChangeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class MarketInvitationCreate(BaseModel):
@@ -51,3 +56,11 @@ class AcceptInvitationRequest(BaseModel):
 
 class AcceptInvitationAuthenticatedRequest(BaseModel):
     token: str = Field(min_length=16, max_length=512)
+
+
+class PasswordResetRequestResponse(BaseModel):
+    delivery: str
+
+
+class EmailChangeRequestResponse(BaseModel):
+    delivery: str

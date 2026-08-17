@@ -75,3 +75,61 @@ async def test_when_test_database_url_is_configured_phase_e_template_and_thumbna
         assert (await client.get(f"/api/templates/{custom_id}/thumbnail", headers=pro_headers)).status_code == 404
         assert (await client.get(f"/api/templates/{global_id}/preview-html", headers=growth_headers)).status_code == 200
 
+
+@pytest.mark.asyncio
+async def test_when_test_database_url_is_configured_template_minimum_plan_is_enforced_on_adopt():
+    """Regression for the Phase 6 gap: adopt_global_template previously only checked the
+    coarse clone_global_template capability, never a template's own minimum_plan rank, so a
+    below-plan market could adopt a Pro-only template via direct API call. GET /templates/shared
+    must still list it (visible/previewable per spec), only *adoption* is blocked."""
+    if AsyncSessionLocal is None:
+        pytest.skip("TEST_DATABASE_URL is not configured.")
+    prefix = f"phase6-{uuid4().hex[:10]}"
+    async with AsyncSessionLocal() as session:
+        admin = PlatformAdmin(email=f"{prefix}-admin@example.test", full_name="Phase 6 Admin", password_hash=hash_password("phase-6-password"))
+        starter_market = Market(name=f"{prefix}-starter", slug=f"{prefix}-starter", subscription_plan="starter")
+        pro_market = Market(name=f"{prefix}-pro", slug=f"{prefix}-pro", subscription_plan="pro")
+        starter_user = User(email=f"{prefix}-starter@example.test", full_name="Starter User", password_hash=hash_password("phase-6-password"))
+        pro_user = User(email=f"{prefix}-pro@example.test", full_name="Pro User", password_hash=hash_password("phase-6-password"))
+        session.add_all([admin, starter_market, pro_market, starter_user, pro_user])
+        await session.flush()
+        session.add_all(
+            [
+                MarketUser(market_id=starter_market.id, user_id=starter_user.id, role="market_admin"),
+                MarketUser(market_id=pro_market.id, user_id=pro_user.id, role="market_admin"),
+            ]
+        )
+        await session.commit()
+        admin_token = create_platform_access_token(str(admin.id))
+        starter_headers = {"Authorization": f"Bearer {create_access_token(str(starter_user.id))}", "X-Market-Id": str(starter_market.id)}
+        pro_headers = {"Authorization": f"Bearer {create_access_token(str(pro_user.id))}", "X-Market-Id": str(pro_market.id)}
+
+    platform_headers = {"Authorization": f"Bearer {admin_token}"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        created = await client.post(
+            "/api/platform/templates",
+            headers=platform_headers,
+            json={"name": f"{prefix} Pro Only", "template_type": "flyer", "minimum_plan": "pro", "config_json": {"layout": "premium-market", "slot_count": 4}},
+        )
+        assert created.status_code == 201
+        pro_template_id = created.json()["id"]
+        assert created.json()["minimum_plan"] == "pro"
+        assert (await client.post(f"/api/platform/templates/{pro_template_id}/publish", headers=platform_headers)).status_code == 200
+
+        # Spec requirement: below-plan markets may still SEE and PREVIEW a template above
+        # their plan — GET /templates/shared must not hide it.
+        shared_for_starter = await client.get("/api/templates/shared", headers=starter_headers)
+        assert shared_for_starter.status_code == 200
+        assert any(item["id"] == pro_template_id for item in shared_for_starter.json()["items"])
+        preview = await client.get(f"/api/templates/{pro_template_id}/preview-html", headers=starter_headers)
+        assert preview.status_code == 200
+
+        # Adoption itself must be blocked server-side for the below-plan market...
+        blocked_adopt = await client.post(f"/api/templates/shared/{pro_template_id}/adopt", headers=starter_headers)
+        assert blocked_adopt.status_code == 403
+
+        # ...and allowed for a market whose plan rank meets the template's minimum_plan.
+        allowed_adopt = await client.post(f"/api/templates/shared/{pro_template_id}/adopt", headers=pro_headers)
+        assert allowed_adopt.status_code == 201
+        assert allowed_adopt.json()["source_template_id"] == pro_template_id
+

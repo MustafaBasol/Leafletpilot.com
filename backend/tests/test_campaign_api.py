@@ -490,3 +490,164 @@ async def test_campaign_preview_html_runs_when_test_database_url_is_configured()
         app.dependency_overrides.pop(get_catalog_session, None)
         app.dependency_overrides.pop(get_current_user, None)
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_campaign_list_filters_including_missing_products_combine_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed campaign filter tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    user_id = uuid4()
+    app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = _override_user(user_id)
+    try:
+        async with session_factory() as session:
+            await _create_market_user(session, market_id, user_id)
+            session.add_all(
+                [
+                    Campaign(
+                        market_id=market_id,
+                        title="Telegram draft with missing products",
+                        status="missing_products",
+                        channel="telegram",
+                        source_type="text",
+                        missing_count=3,
+                    ),
+                    Campaign(
+                        market_id=market_id,
+                        title="Telegram approved, no missing products",
+                        status="approved",
+                        channel="telegram",
+                        source_type="text",
+                        missing_count=0,
+                    ),
+                    Campaign(
+                        market_id=market_id,
+                        title="Panel draft with missing products",
+                        status="missing_products",
+                        channel="panel",
+                        source_type="manual",
+                        missing_count=1,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            headers = {"X-Market-Id": str(market_id)}
+
+            missing_only = await async_client.get(
+                "/api/campaigns", headers=headers, params={"has_missing_products": "true"}
+            )
+            assert missing_only.status_code == 200
+            missing_titles = {item["title"] for item in missing_only.json()["items"]}
+            assert missing_titles == {
+                "Telegram draft with missing products",
+                "Panel draft with missing products",
+            }
+
+            not_missing = await async_client.get(
+                "/api/campaigns", headers=headers, params={"has_missing_products": "false"}
+            )
+            assert not_missing.status_code == 200
+            assert {item["title"] for item in not_missing.json()["items"]} == {
+                "Telegram approved, no missing products",
+            }
+
+            combined = await async_client.get(
+                "/api/campaigns",
+                headers=headers,
+                params={
+                    "channel": "telegram",
+                    "status": "missing_products",
+                    "has_missing_products": "true",
+                },
+            )
+            assert combined.status_code == 200
+            combined_items = combined.json()["items"]
+            assert len(combined_items) == 1
+            assert combined_items[0]["title"] == "Telegram draft with missing products"
+
+            combined_empty = await async_client.get(
+                "/api/campaigns",
+                headers=headers,
+                params={
+                    "channel": "panel",
+                    "status": "approved",
+                    "has_missing_products": "true",
+                },
+            )
+            assert combined_empty.status_code == 200
+            assert combined_empty.json()["items"] == []
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_campaign_regenerate_preview_export_job_when_test_database_url_is_configured() -> None:
+    if not settings.test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not configured; DB-backed export job tests skipped.")
+
+    engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    user_id = uuid4()
+    app.dependency_overrides[get_catalog_session] = override_session
+    app.dependency_overrides[get_current_user] = _override_user(user_id)
+    try:
+        async with session_factory() as session:
+            await _create_market_user(session, market_id, user_id)
+            campaign = Campaign(
+                market_id=market_id,
+                title="Preview-ready campaign",
+                status="preview_ready",
+                channel="panel",
+                source_type="manual",
+            )
+            session.add(campaign)
+            await session.commit()
+            campaign_id = campaign.id
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as async_client:
+            headers = {"X-Market-Id": str(market_id)}
+            response = await async_client.post(
+                f"/api/campaigns/{campaign_id}/export-jobs",
+                headers=headers,
+                json={"job_type": "regenerate_preview"},
+            )
+            assert response.status_code == 201, response.text
+            body = response.json()
+            assert body["job_type"] == "regenerate_preview"
+            assert body["campaign_id"] == str(campaign_id)
+            # The job may run synchronously (ending "completed") or be queued for async
+            # processing, depending on the render pipeline — either is a real, non-failed job.
+            assert body["status"] in ("queued", "running", "completed")
+
+            listed = await async_client.get(f"/api/campaigns/{campaign_id}/export-jobs", headers=headers)
+            assert listed.status_code == 200
+            assert any(job["job_type"] == "regenerate_preview" for job in listed.json())
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        await engine.dispose()

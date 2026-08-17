@@ -175,7 +175,7 @@ function CampaignEditModal({ campaign, isSaving, error, onClose, onSave }) {
   );
 }
 
-export function CampaignDetail({ campaignId }) {
+export function CampaignDetail({ campaignId, view = "" }) {
   const mockCampaign = findCampaignById(campaignId);
   const [campaign, setCampaign] = useState(() => (isRealApiEnabled ? emptyCampaign(campaignId) : mockCampaign));
   const [rows, setRows] = useState(() => (isRealApiEnabled ? [] : campaignProducts));
@@ -191,6 +191,7 @@ export function CampaignDetail({ campaignId }) {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewingFileId, setPreviewingFileId] = useState(null);
   const previewViewportRef = useRef(null);
+  const previewSectionRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewMode, setPreviewMode] = useState("fit");
@@ -253,6 +254,14 @@ export function CampaignDetail({ campaignId }) {
     loadCampaign();
     loadPreview();
   }, [campaignId, selectedMarketId]);
+
+  useEffect(() => {
+    if (view !== "preview" || isLoading) return;
+    const node = previewSectionRef.current;
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+    node.focus({ preventScroll: true });
+  }, [view, isLoading]);
 
   useEffect(() => {
     const element = previewViewportRef.current;
@@ -548,7 +557,13 @@ export function CampaignDetail({ campaignId }) {
           </div>
         </Card>
 
-        <Card title="Broşür Önizleme" className="span-8">
+        <div
+          id="campaign-preview-section"
+          ref={previewSectionRef}
+          tabIndex={-1}
+          className="span-8 campaign-preview-section"
+        >
+          <Card title="Broşür Önizleme">
           {isRealApiEnabled ? (
             <div className="real-preview-panel">
               <div className="real-preview-toolbar">
@@ -584,6 +599,7 @@ export function CampaignDetail({ campaignId }) {
             <PreviewFrame title={campaign.name} status="Placeholder önizleme" />
           )}
         </Card>
+        </div>
 
         <Card title="Eksik Ürünler" className="span-4">
           <div className="stack-list">

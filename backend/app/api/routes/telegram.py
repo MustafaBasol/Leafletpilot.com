@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import hmac
 from collections.abc import AsyncGenerator
+from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_catalog_session
+from app.api.deps import get_campaign_session, get_catalog_session, get_required_market_id
 from app.core.config import settings
 from app.integrations.telegram.client import TelegramClientProtocol, build_telegram_client
 from app.integrations.telegram.schemas import TelegramUpdate
-from app.integrations.telegram.service import process_update
+from app.integrations.telegram.service import get_market_telegram_status, process_update
+from app.schemas.telegram import TelegramStatusRead
 
 router = APIRouter(prefix="/integrations/telegram", tags=["telegram"])
 
 MAX_TELEGRAM_BODY_BYTES = 64 * 1024
+
+
+@router.get("/status", response_model=TelegramStatusRead)
+async def telegram_status(
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> TelegramStatusRead:
+    return await get_market_telegram_status(session, market_id)
 
 
 async def get_telegram_client() -> AsyncGenerator[TelegramClientProtocol, None]:

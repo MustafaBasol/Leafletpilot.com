@@ -582,6 +582,11 @@ td small {
   gap: 10px;
 }
 
+.page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .edit-image-actions {
   margin-top: 20px;
   flex-wrap: wrap;
@@ -715,14 +720,20 @@ td small {
   gap: 12px;
 }
 
-.metric-top > span {
+.metric-icon {
   display: grid;
   width: 34px;
   height: 34px;
+  flex: 0 0 auto;
   place-items: center;
   border-radius: 12px;
   background: var(--primary-50);
   color: var(--primary-600);
+}
+
+.metric-top .badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .metric-card p {
@@ -751,17 +762,17 @@ td small {
   font-weight: 700;
 }
 
-.metric-success .metric-top > span {
+.metric-success .metric-icon {
   background: var(--success-50);
   color: var(--success-700);
 }
 
-.metric-warning .metric-top > span {
+.metric-warning .metric-icon {
   background: var(--warning-50);
   color: var(--warning-700);
 }
 
-.metric-danger .metric-top > span {
+.metric-danger .metric-icon {
   background: var(--danger-50);
   color: var(--danger-700);
 }
@@ -823,6 +834,28 @@ td small {
   gap: 8px 12px;
 }
 
+.table-inline-input {
+  width: 100%;
+  min-width: 140px;
+  height: 36px;
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-md);
+  background: var(--white);
+  color: var(--neutral-800);
+  outline: 0;
+  padding: 0 10px;
+}
+
+.table-inline-input:focus {
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px var(--primary-100);
+}
+
+.table-hint {
+  color: var(--neutral-500);
+  font-size: 13px;
+}
+
 .file-badges {
   display: flex;
   flex-wrap: wrap;
@@ -845,6 +878,15 @@ td small {
 table {
   width: 100%;
   border-collapse: collapse;
+}
+
+table.table-fixed {
+  table-layout: fixed;
+  min-width: 820px;
+}
+
+table.table-fixed td {
+  overflow-wrap: break-word;
 }
 
 th {
@@ -923,6 +965,14 @@ tbody tr:hover {
   border-radius: 14px;
   background: var(--primary-600);
   color: var(--white);
+}
+
+.bot-status-muted {
+  background: var(--neutral-100);
+}
+
+.bot-status-muted .bot-orb {
+  background: var(--neutral-400);
 }
 
 .bot-status h3 {
@@ -1280,6 +1330,31 @@ tbody tr:hover {
   color: var(--neutral-700);
   padding: 0 34px 0 12px;
   font-weight: 700;
+}
+
+.filter-reset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--neutral-500);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filter-reset:hover {
+  color: var(--neutral-700);
+  border-color: var(--neutral-200);
+}
+
+.filter-reset .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .card-summary {
@@ -1852,6 +1927,10 @@ tbody tr:hover {
   overflow: hidden;
 }
 
+.template-thumb-link {
+  display: block;
+}
+
 .template-thumb {
   display: grid;
   min-height: 170px;
@@ -1859,6 +1938,20 @@ tbody tr:hover {
   gap: 8px;
   color: var(--white);
   padding: 20px;
+}
+
+.template-thumb-image {
+  padding: 0;
+  overflow: hidden;
+  background: var(--neutral-100);
+}
+
+.template-thumb-image img {
+  width: 100%;
+  height: 100%;
+  min-height: 170px;
+  object-fit: cover;
+  display: block;
 }
 
 .template-thumb span {
@@ -2594,6 +2687,23 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.template-lock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--warning-50);
+}
+
+.template-lock-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--warning-700);
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
   .template-builder-layout {
     grid-template-columns: 1fr;
@@ -2661,6 +2771,26 @@ tbody tr:hover {
   grid-template-columns: 132px minmax(0, 1fr);
   gap: 18px;
   align-items: start;
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.field-stack .field {
+  width: 100%;
+}
+
+.invite-result {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-lg);
+  background: var(--neutral-50);
 }
 
 .logo-placeholder {
@@ -3097,7 +3227,7 @@ tbody tr:hover {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .app-shell {
     display: block;
   }

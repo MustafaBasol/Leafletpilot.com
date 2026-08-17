@@ -131,6 +131,7 @@ async def list_campaigns(
     date_to: datetime | None,
     limit: int,
     offset: int,
+    has_missing_products: bool | None = None,
 ) -> tuple[list[Campaign], int]:
     scoped_market_id = require_market_id(market_id)
     statement = select(Campaign).options(selectinload(Campaign.template)).where(Campaign.market_id == scoped_market_id)
@@ -151,6 +152,10 @@ async def list_campaigns(
         statement = statement.where(Campaign.created_at >= date_from)
     if date_to:
         statement = statement.where(Campaign.created_at <= date_to)
+    if has_missing_products is True:
+        statement = statement.where(Campaign.missing_count > 0)
+    elif has_missing_products is False:
+        statement = statement.where(Campaign.missing_count == 0)
 
     return await _list(session, statement.order_by(Campaign.created_at.desc()), limit, offset)
 

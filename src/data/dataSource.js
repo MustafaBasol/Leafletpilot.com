@@ -5,6 +5,7 @@ import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
 import * as planApi from "../api/planApi.js";
 import * as billingApi from "../api/billingApi.js";
+import * as telegramApi from "../api/telegramApi.js";
 import { getPublicPlans as fetchPublicPlans } from "../api/publicApi.js";
 import {
   activities,
@@ -133,6 +134,7 @@ function mapCampaign(campaign) {
     market: "Demo Market",
     marketId: campaign.market_id,
     status: statusLabels[campaign.status] || campaign.status,
+    rawStatus: campaign.status,
     productCount: campaign.product_count ?? 0,
     missingCount: campaign.missing_count ?? 0,
     channel: channelLabels[campaign.channel] || campaign.channel || "Panel",
@@ -269,6 +271,8 @@ function mapTemplate(template) {
     recommendation: template.description || "Bu şablon için açıklama henüz girilmedi.",
     bestFor: template.is_global ? "Tüm marketler" : "Bu market",
     previewTone: config.preview_tone || "classic",
+    minimumPlan: template.minimum_plan || "starter",
+    thumbnailKey: template.thumbnail_key || null,
     createdAt: formatDateTime(template.created_at),
     updatedAt: formatDateTime(template.updated_at),
     raw: template,
@@ -284,11 +288,24 @@ export function getDashboardData() {
   };
 }
 
-export async function getCampaigns() {
+export async function getCampaigns(filters = {}) {
   if (!isRealApiEnabled) return campaigns;
   const marketId = requireSelectedMarketId();
 
-  const response = await campaignApi.listCampaigns({ limit: 50, offset: 0 }, marketId);
+  const { search, status, channel, dateFrom, dateTo, hasMissingProducts, limit = 50, offset = 0 } = filters;
+  const response = await campaignApi.listCampaigns(
+    {
+      search: search || undefined,
+      status: status || undefined,
+      channel: channel || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      has_missing_products: hasMissingProducts === undefined ? undefined : hasMissingProducts,
+      limit,
+      offset,
+    },
+    marketId,
+  );
   return unwrapList(response).map(mapCampaign);
 }
 
@@ -314,6 +331,12 @@ export async function updateCampaignDetail(id, form) {
       marketId,
     ),
   );
+}
+
+export async function getTelegramStatus() {
+  if (!isRealApiEnabled) return { connected: true, username: "LeafletPilotBot", connected_member_count: 1 };
+  const marketId = requireSelectedMarketId();
+  return telegramApi.getTelegramStatus(marketId);
 }
 
 export async function getCampaignPreviewHtml(campaignId) {
@@ -399,11 +422,16 @@ export async function createCatalogBrand(form) {
     {
       name: cleanText(form.name),
       slug: cleanText(form.slug),
-      is_global: Boolean(form.isGlobal),
       is_active: true,
     },
     marketId,
   );
+}
+
+export async function updateCatalogBrand(brandId, payload) {
+  if (!isRealApiEnabled) return { id: brandId, ...payload };
+  const marketId = requireSelectedMarketId();
+  return catalogApi.updateBrand(brandId, payload, marketId);
 }
 
 export async function getCatalogCategories() {
@@ -433,6 +461,15 @@ export async function createCatalogCategory(form) {
     },
     marketId,
   );
+}
+
+export async function updateCatalogCategory(categoryId, form) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  const payload = {};
+  if (form.name !== undefined) payload.name = cleanText(form.name);
+  if (form.isActive !== undefined) payload.is_active = Boolean(form.isActive);
+  return catalogApi.updateCategory(categoryId, payload, marketId);
 }
 
 export async function parseCampaignTextPreview({ rawText, currency = "EUR", language = "tr" }) {
@@ -498,6 +535,20 @@ export async function createCampaignExportJob(campaignId, requestedFormats = ["p
   );
   if (job?.status === "failed") {
     throw new Error(job.error_message || "Çıktı üretilemedi. Lütfen tekrar deneyin.");
+  }
+  return job;
+}
+
+export async function regenerateCampaignPreview(campaignId) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  const job = await campaignApi.createExportJob(
+    campaignId,
+    { job_type: "regenerate_preview", status: "queued" },
+    marketId,
+  );
+  if (job?.status === "failed") {
+    throw new Error(job.error_message || "Önizleme yeniden oluşturulamadı. Lütfen tekrar deneyin.");
   }
   return job;
 }

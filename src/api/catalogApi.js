@@ -28,12 +28,20 @@ export function createBrand(payload, marketId) {
   return apiClient.post("/catalog/brands", payload, { marketId });
 }
 
+export function updateBrand(brandId, payload, marketId) {
+  return apiClient.patch(`/catalog/brands/${brandId}`, payload, { marketId });
+}
+
 export function listCategories(params, marketId) {
   return apiClient.get("/catalog/categories", { params, marketId });
 }
 
 export function createCategory(payload, marketId) {
   return apiClient.post("/catalog/categories", payload, { marketId });
+}
+
+export function updateCategory(categoryId, payload, marketId) {
+  return apiClient.patch(`/catalog/categories/${categoryId}`, payload, { marketId });
 }
 
 export function listSharedCatalog(params, marketId) { return apiClient.get("/catalog/shared", { params, marketId }); }

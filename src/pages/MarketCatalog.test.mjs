@@ -115,7 +115,7 @@ test("catalog source state and filters use the explicit backend source contract"
   assert.match(source, /sourceState\(item\) === source/);
   assert.match(source, /Global Ürün/);
   assert.match(source, /Yerel Ürün/);
-  assert.match(source, /Global \+ Market Düzenlemesi/);
+  assert.match(source, /Market Tarafından Düzenlenmiş/);
   assert.match(source, /aria-label="Kaynak filtresi"/);
   assert.match(source, /aria-label="Durum filtresi"/);
 });

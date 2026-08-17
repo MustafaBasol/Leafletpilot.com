@@ -63,6 +63,15 @@ test("failed export jobs surface an error instead of a success notice", () => {
   assert.match(dataSource, /if \(job\?\.status === "failed"\)/);
   assert.match(dataSource, /throw new Error\(job\.error_message \|\| "Çıktı üretilemedi/);
 });
+test("an explicit ?view=preview request scrolls to and focuses the real preview section", () => {
+  assert.match(page, /export function CampaignDetail\(\{ campaignId, view = "" \}\)/);
+  assert.match(page, /if \(view !== "preview" \|\| isLoading\) return;/);
+  assert.match(page, /previewSectionRef\.current/);
+  assert.match(page, /node\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+  assert.match(page, /node\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(page, /id="campaign-preview-section"[\s\S]*ref=\{previewSectionRef\}[\s\S]*tabIndex=\{-1\}/);
+});
+
 test("campaign intelligence is inspectable before explicit application", () => {
   assert.match(api, /intelligence\/analyze/);
   assert.match(api, /intelligence\/apply/);

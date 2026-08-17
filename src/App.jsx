@@ -4,6 +4,7 @@ import { BotConnections } from "./pages/BotConnections.jsx";
 import { AcceptInvitation } from "./pages/AcceptInvitation.jsx";
 import { CampaignDetail } from "./pages/CampaignDetail.jsx";
 import { Categories } from "./pages/Categories.jsx";
+import { ConfirmEmailChange } from "./pages/ConfirmEmailChange.jsx";
 import { Campaigns } from "./pages/Campaigns.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
 import { Landing } from "./pages/Landing.jsx";
@@ -13,6 +14,7 @@ import { Onboarding } from "./pages/Onboarding.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { MarketCatalog } from "./pages/MarketCatalog.jsx";
+import { ResetPassword } from "./pages/ResetPassword.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { Billing } from "./pages/Billing.jsx";
 import { Start } from "./pages/Start.jsx";
@@ -68,7 +70,14 @@ function Page({ path, sessionVersion }) {
   if (pathname.startsWith("/campaigns/") && pathname.endsWith("/edit")) {
     return <NewCampaign editCampaignId={pathname.slice("/campaigns/".length, -"/edit".length)} />;
   }
-  if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
+  if (pathname.startsWith("/campaigns/")) {
+    return (
+      <CampaignDetail
+        campaignId={pathname.replace("/campaigns/", "")}
+        view={new URLSearchParams(search).get("view") || ""}
+      />
+    );
+  }
   if (pathname === "/products") return <MarketCatalog action={action} />;
   if (pathname === "/categories") return <Categories />;
   if (pathname === "/templates") return <Templates />;
@@ -221,6 +230,14 @@ export function App() {
         onSessionUpdated={handleSessionUpdated}
       />
     );
+  }
+
+  if (path.startsWith("/reset-password")) {
+    return <ResetPassword />;
+  }
+
+  if (path.startsWith("/confirm-email-change")) {
+    return <ConfirmEmailChange />;
   }
 
   if (!isAuthenticated) {

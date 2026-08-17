@@ -37,7 +37,9 @@ test("market switches invalidate tenant state and reject stale catalog responses
   assert.match(pageSource, /const marketScope = useRef\(marketId\)/);
   assert.match(pageSource, /marketScope\.current === requestedMarketId/);
   assert.match(pageSource, /resetCreateForm\(\); setMine\(\[\]\); setShared\(\[\]\)/);
-  assert.match(pageSource, /if \(tab === "shared"\) loadShared\(\); \}, \[tab, marketId\]\)/);
+  assert.match(pageSource, /if \(tab !== "shared"\) return undefined;/);
+  assert.match(pageSource, /const handle = window\.setTimeout\(\(\) => \{ loadShared\(\); \}, SEARCH_DEBOUNCE_MS\)/);
+  assert.match(pageSource, /\}, \[tab, marketId, query\]\)/);
 });
 
 test("adopt action uses the selected global id and never adopts an ambiguous result", () => {
@@ -78,7 +80,7 @@ test("local continuation is deliberate and sends the authoritative override flag
 });
 
 test("source badges use the exact Turkish global local and override labels", () => {
-  assert.match(pageSource, /return "Global \+ Market Düzenlemesi"/);
+  assert.match(pageSource, /return "Market Tarafından Düzenlenmiş"/);
   assert.match(pageSource, /return "Global Ürün"/);
   assert.match(pageSource, /return "Yerel Ürün"/);
   assert.match(pageSource, /<td>\{sourceLabel\(item\)\}<\/td>/);

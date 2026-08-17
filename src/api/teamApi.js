@@ -20,6 +20,18 @@ export function revokeMarketInvitation(invitationId) {
   return apiClient.post(`/market-invitations/${invitationId}/revoke`, {});
 }
 
+export function resendMarketInvitation(invitationId) {
+  return apiClient.post(`/market-invitations/${invitationId}/resend`, {});
+}
+
+export function requestMemberPasswordReset(membershipId) {
+  return apiClient.post(`/market-members/${membershipId}/password-reset`, {});
+}
+
+export function requestMemberEmailChange(membershipId, email) {
+  return apiClient.post(`/market-members/${membershipId}/email-change`, { email });
+}
+
 export function acceptInvitation(payload) {
   return apiClient.post("/auth/accept-invitation", payload, { skipAuth: true, skipMarket: true });
 }
