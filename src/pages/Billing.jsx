@@ -17,6 +17,18 @@ import { Button, Card, ConfirmDialog, Icon, PageHeader, PlanChangeModal, StatusB
 const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro", unassigned: "Atanmamış" };
 const PLAN_ORDER = ["starter", "standard", "pro"];
 
+// An "applied" plan change only means Stripe accepted the mutation — the
+// local MarketSubscription mirror is written exclusively by webhook
+// processing (see docs/backend/09_STRIPE_BILLING_SANDBOX.md), which can lag
+// the mutation response by a second or more. Bounded re-fetch here instead
+// of requiring a manual page refresh; never becomes unbounded polling.
+const PLAN_SYNC_MAX_ATTEMPTS = 4;
+const PLAN_SYNC_RETRY_DELAY_MS = 1500;
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 const STATUS_LABELS = {
   active: "Abonelik aktif",
   trialing: "Deneme sürümü",
@@ -120,6 +132,7 @@ export function Billing({ checkoutStatus = "" }) {
   const [confirm, setConfirm] = useState(null);
   const [planChange, setPlanChange] = useState(null);
   const [showCheckoutSuccess] = useState(checkoutStatus === "success");
+  const [pendingSync, setPendingSync] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -133,8 +146,10 @@ export function Billing({ checkoutStatus = "" }) {
       setSubscription(subscriptionResult);
       setPlan(planResult);
       setInvoices(invoicesResult?.items || []);
+      return subscriptionResult;
     } catch (e) {
       setError(e?.message || "Faturalandırma bilgileri yüklenemedi.");
+      return null;
     } finally {
       setLoading(false);
     }
@@ -208,20 +223,56 @@ export function Billing({ checkoutStatus = "" }) {
   async function confirmPlanChange() {
     if (!planChange || planChange.isConfirming) return;
     const { targetPlanCode } = planChange;
-    setPlanChange({ ...planChange, isConfirming: true, error: "" });
+    setPlanChange({ ...planChange, isConfirming: true, isSyncing: false, error: "" });
+    setPendingSync(false);
     try {
       const result = await changeBillingPlan(targetPlanCode);
-      setPlanChange(null);
+
       if (result?.status === "pending_payment") {
+        setPlanChange(null);
         setMessage(`Yükseltme ödeme onayı bekliyor. Son tarih: ${formatDate(result.expires_at)}.`);
-      } else if (result?.status === "scheduled") {
-        setMessage(`Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`);
-      } else {
-        setMessage("Plan güncellendi.");
+        await load();
+        return;
       }
-      await load();
+
+      if (result?.status === "scheduled") {
+        // Downgrades never take effect immediately (see change_plan) — the
+        // plan stays as-is until the scheduled phase transition, so there is
+        // nothing local to wait on here.
+        setPlanChange(null);
+        setMessage(`Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`);
+        await load();
+        return;
+      }
+
+      // status === "applied": Stripe confirmed the upgrade, but the local
+      // mirror only updates once the resulting webhook lands. Keep the
+      // modal open with a "processing" state and poll a bounded number of
+      // times instead of requiring a manual page refresh.
+      setPlanChange((current) => (current ? { ...current, isSyncing: true } : current));
+      let synced = false;
+      for (let attempt = 0; attempt < PLAN_SYNC_MAX_ATTEMPTS && !synced; attempt++) {
+        if (attempt > 0) await wait(PLAN_SYNC_RETRY_DELAY_MS);
+        const subscriptionResult = await load();
+        synced = subscriptionResult?.plan_code === targetPlanCode;
+      }
+      setPlanChange(null);
+      setPendingSync(!synced);
+      setMessage(
+        synced
+          ? `${PLAN_LABELS[targetPlanCode] || targetPlanCode} planınız etkinleştirildi.`
+          : "Ödemeniz alındı. Plan bilgileriniz birkaç saniye içinde güncellenecek.",
+      );
     } catch (e) {
-      setPlanChange({ ...planChange, isConfirming: false, error: e?.message || "Plan değişikliği uygulanamadı." });
+      setPlanChange({ ...planChange, isConfirming: false, isSyncing: false, error: e?.message || "Plan değişikliği uygulanamadı." });
+    }
+  }
+
+  async function handleManualSync() {
+    const subscriptionResult = await load();
+    if (subscriptionResult) {
+      setPendingSync(false);
+      setMessage("Plan bilgileri güncellendi.");
     }
   }
 
@@ -259,6 +310,11 @@ export function Billing({ checkoutStatus = "" }) {
       {message ? (
         <p className="inline-result inline-result-success billing-alert" role="status">
           <Icon name="check" /> {message}
+          {pendingSync ? (
+            <Button variant="secondary" className="billing-inline-refresh" onClick={handleManualSync}>
+              Yenile
+            </Button>
+          ) : null}
         </p>
       ) : null}
       {loading ? <p className="inline-result">Yükleniyor...</p> : null}
@@ -424,6 +480,7 @@ export function Billing({ checkoutStatus = "" }) {
         isLoadingPreview={Boolean(planChange?.isLoadingPreview)}
         error={planChange?.error || ""}
         isConfirming={Boolean(planChange?.isConfirming)}
+        isSyncing={Boolean(planChange?.isSyncing)}
         onConfirm={confirmPlanChange}
         onCancel={closePlanChangeModal}
         formatMoney={formatMoney}

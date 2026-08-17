@@ -14,6 +14,7 @@ from app.api.deps import get_current_platform_admin
 from app.core.config import settings
 from app.models import PlatformAdmin
 from app.services.billing.plans import SELLABLE_PLAN_CODES, resolve_stripe_lookup_key
+from app.services.billing.service import _field
 from app.services.plans import get_plan
 
 router = APIRouter(prefix="/platform/billing", tags=["platform-billing"])
@@ -52,7 +53,7 @@ async def plan_mapping_health(_: PlatformAdmin = Depends(get_current_platform_ad
             )
             continue
 
-        active_prices = [price for price in result.data if price.get("active")]
+        active_prices = [price for price in result.data if _field(price, "active")]
         health = "ok"
         detail = None
         price = active_prices[0] if active_prices else None
@@ -65,12 +66,12 @@ async def plan_mapping_health(_: PlatformAdmin = Depends(get_current_platform_ad
         elif len(active_prices) > 1:
             health = "duplicate"
             detail = f"{len(active_prices)} active Stripe Prices share lookup key '{lookup_key}'."
-        elif price.get("currency", "").upper() != plan_definition.currency.upper():
+        elif (_field(price, "currency", "") or "").upper() != plan_definition.currency.upper():
             health = "currency_mismatch"
-            detail = f"Stripe Price currency {price.get('currency')} != {plan_definition.currency}."
-        elif plan_definition.monthly_price is not None and price.get("unit_amount") != round(plan_definition.monthly_price * 100):
+            detail = f"Stripe Price currency {_field(price, 'currency')} != {plan_definition.currency}."
+        elif plan_definition.monthly_price is not None and _field(price, "unit_amount") != round(plan_definition.monthly_price * 100):
             health = "amount_mismatch"
-            detail = f"Stripe Price amount {price.get('unit_amount')} != {round(plan_definition.monthly_price * 100)}."
+            detail = f"Stripe Price amount {_field(price, 'unit_amount')} != {round(plan_definition.monthly_price * 100)}."
 
         plans.append(
             {
@@ -78,9 +79,9 @@ async def plan_mapping_health(_: PlatformAdmin = Depends(get_current_platform_ad
                 "lookup_key": lookup_key,
                 "health": health,
                 "detail": detail,
-                "stripe_price_id": price.get("id") if price else None,
-                "unit_amount": price.get("unit_amount") if price else None,
-                "currency": price.get("currency") if price else None,
+                "stripe_price_id": _field(price, "id") if price else None,
+                "unit_amount": _field(price, "unit_amount") if price else None,
+                "currency": _field(price, "currency") if price else None,
             }
         )
     return {"stripe_enabled": True, "plans": plans}

@@ -9,6 +9,7 @@ export function PlanChangeModal({
   isLoadingPreview,
   error,
   isConfirming,
+  isSyncing = false,
   onConfirm,
   onCancel,
   formatMoney,
@@ -31,11 +32,16 @@ export function PlanChangeModal({
             Vazgeç
           </Button>
           <Button variant="primary" onClick={onConfirm} disabled={!canConfirm} autoFocus>
-            {isConfirming ? "Uygulanıyor..." : "Değişikliği onayla"}
+            {isConfirming ? (isSyncing ? "Senkronize ediliyor..." : "Uygulanıyor...") : "Değişikliği onayla"}
           </Button>
         </>
       }
     >
+      {isSyncing ? (
+        <p className="inline-result billing-alert" role="status">
+          Plan değişikliğiniz işleniyor...
+        </p>
+      ) : null}
       {isLoadingPreview ? (
         <p className="inline-result billing-alert" role="status">
           Önizleme hazırlanıyor...

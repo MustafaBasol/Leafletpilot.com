@@ -69,6 +69,16 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
 - **Düşürme**: Stripe fatura önizlemesi **hiç çağrılmaz** — `change_plan` düşürmede zaten proration uygulamıyor (bkz. üstte), bu yüzden önizlenecek bir oran hesabı yok. Yanıt tamamen deterministiktir: `immediate_amount_due=0`, `next_renewal_amount`=hedef Price'ın `unit_amount`'ı, `next_renewal_date`=mevcut `current_period_end` (schedule'ın ikinci fazının devreye gireceği tarih). `is_estimate=false`.
 - Zaten bir `SubscriptionSchedule`'ı olan abonelikler için (`had_pending_schedule=true`) açıklama metni, bu işlemin bekleyen değişikliğin yerine geçeceğini belirtir — `change_plan` da aynı şeyi yapar (schedule'ı serbest bırakıp yeni değişikliği uygular).
 
+## Yükseltme sonrası UI senkronizasyonu (frontend, `src/pages/Billing.jsx`)
+
+`POST /billing/change-plan`'ın `{"status": "applied"}` dönmesi, Stripe mutasyonunun kabul edildiği anlamına gelir — yerel `MarketSubscription` satırı **hâlâ yalnızca** ilgili webhook (`customer.subscription.updated`) işlendiğinde yazılır (bkz. dosyanın en üstündeki çekirdek kural). Webhook, mutasyon yanıtından bir-birkaç saniye sonra ulaşabildiğinden, `confirmPlanChange` mutasyon sonrası hemen `load()`'a güvenmez:
+
+- **`pending_payment`** / **`scheduled` (düşürme)**: plan zaten değişmemiştir (ödeme onayı bekliyor / dönem sonuna ertelenmiş) — modal hemen kapanır, ilgili bilgi mesajı gösterilir, tek bir `load()` yeterlidir. Düşürme hiçbir zaman anlık bir state değişikliği olarak ele alınmaz.
+- **`applied` (senkron yükseltme)**: modal "Plan değişikliğiniz işleniyor..." durumuna geçer (buton: "Senkronize ediliyor...", kapatma yine devre dışı) ve **sınırlı** bir yeniden-çekme döngüsü çalışır — `PLAN_SYNC_MAX_ATTEMPTS = 4` deneme, denemeler arası `PLAN_SYNC_RETRY_DELAY_MS = 1500` ms bekleme, her denemede `load()` çağrılıp dönen `subscription.plan_code`'un hedef plana eşit olup olmadığı kontrol edilir. Eşleşirse modal kapanır ve "`<Plan>` planınız etkinleştirildi." mesajı gösterilir. Bu döngü **kesinlikle sürekli polling'e dönüşmez** (`setInterval` yok) ve her zaman sınırlı sayıda denemeden sonra durur.
+- Sınırlı deneme tükenip hâlâ senkronize olmadıysa: "Ödemeniz alındı. Plan bilgileriniz birkaç saniye içinde güncellenecek." mesajı ve yanında manuel bir "Yenile" aksiyonu (`handleManualSync`) gösterilir — kullanıcı tam sayfa yenilemeye asla ihtiyaç duymaz.
+- Mutasyon isteği hata verirse (`catch` bloğu): modal **kapanmaz**, plan asla değişmiş gibi gösterilmez — hata modalin içinde gösterilir, kullanıcı tekrar deneyebilir veya vazgeçebilir.
+- Bu tasarım çekirdek kuralı bozmaz: hiçbir frontend kodu `subscription.plan_code`'u Stripe mutasyon yanıtından tahmin ederek set etmez; tek otoriteli kaynak her zaman `load()`'un döndürdüğü, backend'in webhook/resync ile yazdığı gerçek durumdur.
+
 ## Webhook güvenilirlik
 
 - **Idempotency**: `stripe_webhook_events.stripe_event_id` DB UNIQUE constraint; aynı event'in eşzamanlı/tekrar teslimleri güvenle no-op (`_claim_event_row`, `SELECT ... FOR UPDATE`) — tam olarak bir aktif işleyici garantisi.

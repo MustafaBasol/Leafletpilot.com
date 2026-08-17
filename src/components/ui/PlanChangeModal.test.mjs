@@ -43,3 +43,15 @@ test("PlanChangeModal disables the close affordance while a confirmation is in f
 test("PlanChangeModal surfaces preview/confirm errors as a polished inline alert", () => {
   assert.match(source, /inline-result inline-result-danger billing-alert/);
 });
+
+test("PlanChangeModal shows a distinct processing message and button label while the local plan state is syncing after a confirmed upgrade", () => {
+  assert.match(source, /isSyncing = false/, "isSyncing must default to false so existing callers are unaffected");
+  assert.match(source, /Plan değişikliğiniz işleniyor\.\.\./);
+  assert.match(source, /isConfirming \? \(isSyncing \? "Senkronize ediliyor\.\.\." : "Uygulanıyor\.\.\."\) : "Değişikliği onayla"/);
+});
+
+test("isSyncing still keeps the modal non-dismissable (isConfirming stays true throughout the sync phase)", () => {
+  // isSyncing is only ever set while isConfirming is also true (see Billing.jsx
+  // confirmPlanChange), so the existing onClose/disabled wiring already covers it.
+  assert.match(source, /onClose=\{isConfirming \? undefined : onCancel\}/);
+});
