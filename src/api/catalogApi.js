@@ -28,6 +28,10 @@ export function createBrand(payload, marketId) {
   return apiClient.post("/catalog/brands", payload, { marketId });
 }
 
+export function updateBrand(brandId, payload, marketId) {
+  return apiClient.patch(`/catalog/brands/${brandId}`, payload, { marketId });
+}
+
 export function listCategories(params, marketId) {
   return apiClient.get("/catalog/categories", { params, marketId });
 }

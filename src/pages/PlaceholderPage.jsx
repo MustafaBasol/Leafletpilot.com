@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
+import { canMutateCatalog } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { products } from "../data/mockData.js";
-import { createCatalogBrand, createCatalogCategory, getCatalogBrands, getCatalogCategories } from "../data/dataSource.js";
+import {
+  createCatalogBrand,
+  createCatalogCategory,
+  getCatalogBrands,
+  getCatalogCategories,
+  updateCatalogBrand,
+} from "../data/dataSource.js";
 import { pageMeta } from "../routes/routes.js";
 import {
   Button,
   Card,
+  Checkbox,
   EmptyState,
   FilterBar,
   Input,
@@ -18,6 +26,18 @@ function normalizeSearch(value) {
   return String(value || "")
     .toLocaleLowerCase("tr-TR")
     .trim();
+}
+
+const TURKISH_FOLD_MAP = { ç: "c", ğ: "g", ı: "i", i: "i", İ: "i", ö: "o", ş: "s", ü: "u" };
+
+// Client-side hint only — mirrors the shape of the backend's normalize_alias()
+// closely enough for UX suggestions. The backend remains the authoritative dedup source.
+function normalizeBrandNameHint(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[çğışüöİ]/g, (char) => TURKISH_FOLD_MAP[char] || char)
+    .replace(/\s+/g, " ");
 }
 
 function ProductPreviewTable() {
@@ -47,6 +67,7 @@ function ProductPreviewTable() {
 
 function CatalogAdminPage({ type }) {
   const isBrand = type === "brands";
+  const canEdit = canMutateCatalog();
   const [items, setItems] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [form, setForm] = useState({ name: "", slug: "", isGlobal: false });
@@ -54,6 +75,11 @@ function CatalogAdminPage({ type }) {
   const [isSaving, setIsSaving] = useState(false);
   const [apiError, setApiError] = useState("");
   const [notice, setNotice] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editActive, setEditActive] = useState(true);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
 
   async function loadItems() {
     try {
@@ -81,6 +107,16 @@ function CatalogAdminPage({ type }) {
     });
   }, [items, searchTerm]);
 
+  // Non-authoritative UX hint: suggest an existing brand that looks like a duplicate
+  // of what's being typed, before the user even submits. The backend's normalize_alias()
+  // check on create remains the real dedup guarantee.
+  const duplicateSuggestion = useMemo(() => {
+    if (!isBrand) return null;
+    const typed = normalizeBrandNameHint(form.name);
+    if (!typed) return null;
+    return items.find((item) => normalizeBrandNameHint(item.name) === typed) || null;
+  }, [isBrand, form.name, items]);
+
   async function saveItem(event) {
     event.preventDefault();
     if (!form.name.trim()) {
@@ -94,7 +130,7 @@ function CatalogAdminPage({ type }) {
         name: form.name.trim(),
         slug: form.slug.trim() || normalizeSearch(form.name).replace(/\s+/g, "-"),
         is_active: true,
-        is_global: form.isGlobal,
+        is_global: isBrand ? false : form.isGlobal,
         parent_id: null,
       };
       setItems((current) => [localItem, ...current]);
@@ -104,21 +140,58 @@ function CatalogAdminPage({ type }) {
       return;
     }
 
+    const existingIds = new Set(items.map((item) => item.id));
+
     try {
       setIsSaving(true);
       setApiError("");
       if (isBrand) {
-        await createCatalogBrand(form);
+        const saved = await createCatalogBrand(form);
+        setForm({ name: "", slug: "", isGlobal: false });
+        setNotice(
+          saved && existingIds.has(saved.id)
+            ? "Bu marka zaten mevcuttu, mevcut kayıt kullanıldı."
+            : "Marka kaydedildi.",
+        );
       } else {
         await createCatalogCategory(form);
+        setForm({ name: "", slug: "", isGlobal: false });
+        setNotice("Kategori kaydedildi.");
       }
-      setForm({ name: "", slug: "", isGlobal: false });
-      setNotice(`${isBrand ? "Marka" : "Kategori"} kaydedildi.`);
       await loadItems();
     } catch (error) {
       setApiError(error.message || `${isBrand ? "Marka" : "Kategori"} kaydedilemedi.`);
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditActive(item.is_active !== false);
+    setEditError("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError("");
+  }
+
+  async function saveEdit(item) {
+    const trimmed = editName.trim();
+    if (!trimmed) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const payload = { name: trimmed, is_active: editActive };
+      const updated = isRealApiEnabled ? await updateCatalogBrand(item.id, payload) : { ...item, ...payload };
+      setItems((current) => current.map((existing) => (existing.id === item.id ? { ...existing, ...updated } : existing)));
+      setEditingId(null);
+    } catch (error) {
+      setEditError(error.message || "Marka güncellenemedi.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -154,14 +227,21 @@ function CatalogAdminPage({ type }) {
               placeholder="Boş bırakılırsa backend üretir"
               onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
             />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={form.isGlobal}
-                onChange={(event) => setForm((current) => ({ ...current, isGlobal: event.target.checked }))}
-              />
-              <span>Global kayıt</span>
-            </label>
+            {!isBrand ? (
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={form.isGlobal}
+                  onChange={(event) => setForm((current) => ({ ...current, isGlobal: event.target.checked }))}
+                />
+                <span>Global kayıt</span>
+              </label>
+            ) : null}
+            {duplicateSuggestion ? (
+              <p className="inline-result inline-result-warning" role="status">
+                Bu marka zaten mevcut: <strong>{duplicateSuggestion.name}</strong>. Bunu mu demek istediniz?
+              </p>
+            ) : null}
             <Button variant="primary" type="submit" disabled={isSaving}>
               {isSaving ? "Kaydediliyor..." : "Kaydet"}
             </Button>
@@ -175,21 +255,63 @@ function CatalogAdminPage({ type }) {
         >
           {isLoading ? <p className="inline-result">Liste yükleniyor...</p> : null}
           {!isLoading && filteredItems.length === 0 ? <p className="catalog-empty">Eşleşen kayıt bulunamadı.</p> : null}
+          {editError ? <p className="inline-result inline-result-warning" role="alert">{editError}</p> : null}
           {!isLoading && filteredItems.length ? (
-            <Table columns={isBrand ? ["Ad", "Slug", "Kapsam", "Durum"] : ["Ad", "Slug", "Üst Kategori", "Kapsam", "Durum"]}>
-              {filteredItems.map((item) => (
-                <tr key={item.id || item.slug || item.name}>
-                  <td>
-                    <strong>{item.name}</strong>
-                  </td>
-                  <td>{item.slug || "-"}</td>
-                  {!isBrand ? <td>{item.parent_id || "-"}</td> : null}
-                  <td>{item.is_global ? "Global" : "Market"}</td>
-                  <td>
-                    <StatusBadge status={item.is_active === false ? "Pasif" : "Aktif"} />
-                  </td>
-                </tr>
-              ))}
+            <Table
+              columns={
+                isBrand
+                  ? canEdit
+                    ? ["Ad", "Slug", "Kapsam", "Durum", "Aksiyonlar"]
+                    : ["Ad", "Slug", "Kapsam", "Durum"]
+                  : ["Ad", "Slug", "Üst Kategori", "Kapsam", "Durum"]
+              }
+            >
+              {filteredItems.map((item) => {
+                const isEditing = isBrand && editingId === item.id;
+                return (
+                  <tr key={item.id || item.slug || item.name}>
+                    <td>
+                      {isEditing ? (
+                        <input
+                          className="table-inline-input"
+                          value={editName}
+                          onChange={(event) => setEditName(event.target.value)}
+                          aria-label="Marka adı"
+                          autoFocus
+                        />
+                      ) : (
+                        <strong>{item.name}</strong>
+                      )}
+                    </td>
+                    <td>{item.slug || "-"}</td>
+                    {!isBrand ? <td>{item.parent_id || "-"}</td> : null}
+                    <td>{item.is_global ? "Global" : "Market"}</td>
+                    <td>
+                      {isEditing ? (
+                        <Checkbox label="Aktif" checked={editActive} onChange={(event) => setEditActive(event.target.checked)} />
+                      ) : (
+                        <StatusBadge status={item.is_active === false ? "Pasif" : "Aktif"} />
+                      )}
+                    </td>
+                    {isBrand && canEdit ? (
+                      <td className="table-actions">
+                        {isEditing ? (
+                          <>
+                            <Button variant="primary" onClick={() => saveEdit(item)} disabled={editSaving || !editName.trim()}>
+                              {editSaving ? "Kaydediliyor..." : "Kaydet"}
+                            </Button>
+                            <Button onClick={cancelEdit} disabled={editSaving}>Vazgeç</Button>
+                          </>
+                        ) : item.is_global ? (
+                          <span className="table-hint">Global marka</span>
+                        ) : (
+                          <Button onClick={() => startEdit(item)}>Düzenle</Button>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
             </Table>
           ) : null}
         </Card>

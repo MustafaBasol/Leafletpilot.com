@@ -420,11 +420,16 @@ export async function createCatalogBrand(form) {
     {
       name: cleanText(form.name),
       slug: cleanText(form.slug),
-      is_global: Boolean(form.isGlobal),
       is_active: true,
     },
     marketId,
   );
+}
+
+export async function updateCatalogBrand(brandId, payload) {
+  if (!isRealApiEnabled) return { id: brandId, ...payload };
+  const marketId = requireSelectedMarketId();
+  return catalogApi.updateBrand(brandId, payload, marketId);
 }
 
 export async function getCatalogCategories() {
