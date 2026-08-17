@@ -58,6 +58,56 @@ def hash_invitation_token(token: str) -> str:
     ).hexdigest()
 
 
+# Ambiguity-free alphabet for codes a human retypes off a screen into
+# WhatsApp: no 0/O, no 1/I/L. 31**8 ~= 8.5e11 possibilities, drawn from
+# `secrets`, so a code is not guessable inside its 10-minute window even with
+# the per-user attempt limit removed.
+WHATSAPP_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+WHATSAPP_CODE_PREFIX = "LP"
+WHATSAPP_CODE_BODY_LENGTH = 8
+
+
+def generate_whatsapp_verification_code() -> str:
+    """Returns a cryptographically random code shaped `LP-X7K4-M92Q`."""
+    body = "".join(secrets.choice(WHATSAPP_CODE_ALPHABET) for _ in range(WHATSAPP_CODE_BODY_LENGTH))
+    return f"{WHATSAPP_CODE_PREFIX}-{body[:4]}-{body[4:]}"
+
+
+def normalize_whatsapp_verification_code(raw: str | None) -> str | None:
+    """Canonicalises a user-typed code, or returns None if it is not one.
+
+    WhatsApp clients lowercase, autocorrect and re-space pasted text, so the
+    comparison key is "letters and digits only, uppercased" rather than the
+    display form.
+    """
+    if not raw:
+        return None
+    compact = "".join(character for character in raw.upper() if character.isalnum())
+    if not compact.startswith(WHATSAPP_CODE_PREFIX):
+        return None
+    body = compact[len(WHATSAPP_CODE_PREFIX) :]
+    if len(body) != WHATSAPP_CODE_BODY_LENGTH:
+        return None
+    if any(character not in WHATSAPP_CODE_ALPHABET for character in body):
+        return None
+    return f"{WHATSAPP_CODE_PREFIX}-{body[:4]}-{body[4:]}"
+
+
+def hash_whatsapp_verification_code(code: str) -> str:
+    """Codes are only ever persisted as this digest.
+
+    Same keyed-HMAC construction as `hash_invitation_token`: a database dump
+    alone does not yield usable codes, and lookup stays a single indexed
+    equality test.
+    """
+    normalized = normalize_whatsapp_verification_code(code) or code.strip().upper()
+    return hmac.new(
+        settings.jwt_secret_key.encode("utf-8"),
+        f"whatsapp-verification:{normalized}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def hash_signup_throttle_key(value: str) -> str:
     secret = settings.public_signup_throttle_secret or settings.jwt_secret_key
     return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()

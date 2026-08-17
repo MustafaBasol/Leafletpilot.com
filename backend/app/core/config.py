@@ -36,6 +36,14 @@ EXAMPLE_STRIPE_SECRETS = {
     "stripe-webhook-secret",
     "example-secret",
 }
+EXAMPLE_EVOLUTION_SECRETS = {
+    "secret",
+    "changeme",
+    "change-me",
+    "evolution-webhook-secret",
+    "example-secret",
+    "change-this-evolution-webhook-secret-at-least-32-chars",
+}
 
 
 class Settings(BaseSettings):
@@ -99,6 +107,28 @@ class Settings(BaseSettings):
     telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
     telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
     telegram_http_max_attempts: int = Field(default=1, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
+    # --- Central LeafletPilot WhatsApp channel (Evolution API) -------------
+    # ONE platform-owned WhatsApp number, ONE Evolution instance, MANY markets.
+    # Credentials are runtime environment configuration only: they are never
+    # persisted, never returned by an API, and never reach the browser bundle.
+    # Platform Admin sees derived health/status (see /platform/integrations/whatsapp).
+    evolution_whatsapp_enabled: bool = Field(default=False, alias="EVOLUTION_WHATSAPP_ENABLED")
+    evolution_api_base_url: str = Field(default="", alias="EVOLUTION_API_BASE_URL")
+    evolution_api_key: str = Field(default="", alias="EVOLUTION_API_KEY")
+    evolution_instance_name: str = Field(default="", alias="EVOLUTION_INSTANCE_NAME")
+    evolution_webhook_secret: str = Field(default="", alias="EVOLUTION_WEBHOOK_SECRET")
+    leafletpilot_whatsapp_number: str = Field(default="", alias="LEAFLETPILOT_WHATSAPP_NUMBER")
+    evolution_http_timeout_seconds: int = Field(default=20, alias="EVOLUTION_HTTP_TIMEOUT_SECONDS")
+    whatsapp_verification_expire_minutes: int = Field(default=10, alias="WHATSAPP_VERIFICATION_EXPIRE_MINUTES")
+    whatsapp_verification_resend_cooldown_seconds: int = Field(
+        default=60, alias="WHATSAPP_VERIFICATION_RESEND_COOLDOWN_SECONDS"
+    )
+    whatsapp_verification_max_attempts: int = Field(default=5, alias="WHATSAPP_VERIFICATION_MAX_ATTEMPTS")
+    whatsapp_rate_limit_window_minutes: int = Field(default=10, alias="WHATSAPP_RATE_LIMIT_WINDOW_MINUTES")
+    whatsapp_verification_request_limit: int = Field(default=5, alias="WHATSAPP_VERIFICATION_REQUEST_LIMIT")
+    whatsapp_inbound_message_limit: int = Field(default=60, alias="WHATSAPP_INBOUND_MESSAGE_LIMIT")
+    whatsapp_webhook_ip_limit: int = Field(default=600, alias="WHATSAPP_WEBHOOK_IP_LIMIT")
+
     stripe_enabled: bool = Field(default=False, alias="STRIPE_ENABLED")
     stripe_secret_key: str = Field(default="", alias="STRIPE_SECRET_KEY")
     stripe_webhook_secret: str = Field(default="", alias="STRIPE_WEBHOOK_SECRET")
@@ -200,6 +230,25 @@ class Settings(BaseSettings):
             raise ValueError("INVITATION_SMTP_TIMEOUT_SECONDS must be between 1 and 60.")
         if self.invitation_email_delivery == "fake" and self.environment.lower() not in {"development", "test", "testing"}:
             raise ValueError("INVITATION_EMAIL_DELIVERY=fake is only allowed in development or test environments.")
+        if self.evolution_http_timeout_seconds < 1 or self.evolution_http_timeout_seconds > 60:
+            raise ValueError("EVOLUTION_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
+        if self.whatsapp_verification_expire_minutes < 1 or self.whatsapp_verification_expire_minutes > 60:
+            raise ValueError("WHATSAPP_VERIFICATION_EXPIRE_MINUTES must be between 1 and 60.")
+        if self.whatsapp_verification_resend_cooldown_seconds < 0:
+            raise ValueError("WHATSAPP_VERIFICATION_RESEND_COOLDOWN_SECONDS must not be negative.")
+        if self.whatsapp_verification_max_attempts < 1:
+            raise ValueError("WHATSAPP_VERIFICATION_MAX_ATTEMPTS must be at least 1.")
+        if self.whatsapp_rate_limit_window_minutes < 1:
+            raise ValueError("WHATSAPP_RATE_LIMIT_WINDOW_MINUTES must be at least 1.")
+        for limit_name, limit_value in (
+            ("WHATSAPP_VERIFICATION_REQUEST_LIMIT", self.whatsapp_verification_request_limit),
+            ("WHATSAPP_INBOUND_MESSAGE_LIMIT", self.whatsapp_inbound_message_limit),
+            ("WHATSAPP_WEBHOOK_IP_LIMIT", self.whatsapp_webhook_ip_limit),
+        ):
+            if limit_value < 1:
+                raise ValueError(f"{limit_name} must be at least 1.")
+        if self.evolution_whatsapp_enabled:
+            self._validate_enabled_evolution_settings()
         if self.telegram_bot_enabled:
             self._validate_enabled_telegram_settings()
         if self.platform_admin_enabled:
@@ -271,6 +320,34 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_BOT_ENABLED=true.")
         if self.is_production and urlparse(self.telegram_webhook_base_url).scheme != "https":
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
+
+    def _validate_enabled_evolution_settings(self) -> None:
+        if not self.evolution_api_base_url.strip():
+            raise ValueError("EVOLUTION_API_BASE_URL is required when EVOLUTION_WHATSAPP_ENABLED=true.")
+        parsed_base_url = urlparse(self.evolution_api_base_url.strip())
+        if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
+            raise ValueError("EVOLUTION_API_BASE_URL must be an absolute http(s) URL.")
+        if self.is_production and parsed_base_url.scheme != "https" and parsed_base_url.hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "evolution-api",
+            "evolution",
+        }:
+            raise ValueError(
+                "EVOLUTION_API_BASE_URL must use HTTPS in production unless it is a private container hostname."
+            )
+        if not self.evolution_api_key.strip():
+            raise ValueError("EVOLUTION_API_KEY is required when EVOLUTION_WHATSAPP_ENABLED=true.")
+        if not self.evolution_instance_name.strip():
+            raise ValueError("EVOLUTION_INSTANCE_NAME is required when EVOLUTION_WHATSAPP_ENABLED=true.")
+        webhook_secret = self.evolution_webhook_secret.strip()
+        if len(webhook_secret) < 32 or webhook_secret.lower() in EXAMPLE_EVOLUTION_SECRETS:
+            raise ValueError("EVOLUTION_WEBHOOK_SECRET must be a strong non-placeholder value of at least 32 characters.")
+        number = self.leafletpilot_whatsapp_number.strip()
+        if not number:
+            raise ValueError("LEAFLETPILOT_WHATSAPP_NUMBER is required when EVOLUTION_WHATSAPP_ENABLED=true.")
+        if not number.startswith("+") or not number[1:].isdigit() or not 8 <= len(number[1:]) <= 15:
+            raise ValueError("LEAFLETPILOT_WHATSAPP_NUMBER must be in E.164 form, e.g. +33612345678.")
 
     def _validate_enabled_stripe_settings(self) -> None:
         secret_key = self.stripe_secret_key.strip()

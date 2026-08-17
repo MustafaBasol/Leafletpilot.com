@@ -13,6 +13,11 @@ dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
     "openpyxl>=3.1.5",
+    # libphonenumber port. The central WhatsApp channel must canonicalise both
+    # UI-entered and Evolution-reported numbers to E.164 before comparing them;
+    # prefix/string surgery gets national prefixes and variable country-code
+    # lengths wrong, and a wrong answer there is an identity-matching bug.
+    "phonenumbers>=8.13",
     "Pillow>=11.1.0,<12",
     "pydantic-settings>=2.7.0",
     "playwright>=1.49.1",
