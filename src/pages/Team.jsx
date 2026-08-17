@@ -3,6 +3,7 @@ import {
   createMarketInvitation,
   listMarketInvitations,
   listMarketMembers,
+  requestMemberPasswordReset,
   resendMarketInvitation,
   revokeMarketInvitation,
   updateMarketMember,
@@ -63,6 +64,7 @@ export function Team() {
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [isRevoking, setRevoking] = useState(false);
   const [resendingId, setResendingId] = useState(null);
+  const [resettingId, setResettingId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -179,10 +181,23 @@ export function Team() {
     }
   }
 
-  // TODO(Phase 7c): wire to the admin-triggered password-reset endpoint once implemented.
-  function handlePasswordReset(member) {
+  async function handlePasswordReset(member) {
+    if (resettingId) return;
     setError("");
-    setNotice(`${member.email} için şifre sıfırlama bağlantısı gönderme özelliği yakında eklenecek.`);
+    setNotice("");
+    setResettingId(member.membership_id);
+    try {
+      const result = await requestMemberPasswordReset(member.membership_id);
+      setNotice(
+        MANUAL_SHARE_STATUSES.has(result.delivery)
+          ? `${member.email} için şifre sıfırlama bağlantısı gönderilemedi. Lütfen daha sonra tekrar deneyin.`
+          : `${member.email} adresine şifre sıfırlama bağlantısı gönderildi.`,
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResettingId(null);
+    }
   }
 
   return (
@@ -214,7 +229,9 @@ export function Team() {
                       <option value="viewer">Görüntüleyici</option>
                     </select>
                   </label>
-                  <Button onClick={() => handlePasswordReset(member)}>Şifre Sıfırlama Bağlantısı Gönder</Button>
+                  <Button onClick={() => handlePasswordReset(member)} disabled={resettingId === member.membership_id}>
+                    {resettingId === member.membership_id ? "Gönderiliyor..." : "Şifre Sıfırlama Bağlantısı Gönder"}
+                  </Button>
                 </td>
               </tr>
             ))}

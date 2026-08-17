@@ -7,3 +7,7 @@ export function login(email, password) {
 export function getMe() {
   return apiClient.get("/auth/me", { skipMarket: true });
 }
+
+export function confirmPasswordReset(payload) {
+  return apiClient.post("/auth/password-reset/confirm", payload, { skipAuth: true, skipMarket: true });
+}

@@ -10,7 +10,7 @@ from app.api.deps import get_catalog_session, get_current_market_membership, req
 from app.core.config import settings
 from app.core.roles import MarketRole
 from app.core.security import generate_invitation_token, hash_invitation_token
-from app.models import Market, MarketInvitation, MarketUser, User
+from app.models import Market, MarketInvitation, MarketUser, PasswordResetToken, User
 from app.models.base import utc_now
 from app.schemas.team import (
     MarketInvitationCreate,
@@ -18,12 +18,15 @@ from app.schemas.team import (
     MarketInvitationRead,
     MarketMemberRead,
     MarketMemberUpdate,
+    PasswordResetRequestResponse,
 )
 from app.services.invitation_email import (
     InvitationDeliveryDisabled,
     InvitationEmailError,
     OwnerInvitationEmail,
+    PasswordResetEmail,
     send_owner_invitation_email,
+    send_password_reset_email,
 )
 
 router = APIRouter(tags=["team"])
@@ -69,6 +72,39 @@ async def update_market_member(
     await session.commit()
     await session.refresh(target)
     return _member_read(target)
+
+
+@router.post("/market-members/{membership_id}/password-reset", response_model=PasswordResetRequestResponse)
+async def request_member_password_reset(
+    membership_id: UUID,
+    membership: MarketUser = Depends(require_market_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> PasswordResetRequestResponse:
+    """Admin-triggered password reset. Only ever sends a link — never displays, stores
+    retrievably, or returns the member's existing password."""
+    target = await session.scalar(
+        select(MarketUser)
+        .options(selectinload(MarketUser.user))
+        .where(MarketUser.id == membership_id, MarketUser.market_id == membership.market_id)
+    )
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Üyelik bulunamadı.")
+    market = await session.get(Market, membership.market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market bulunamadı.")
+
+    token = generate_invitation_token()
+    reset_token = PasswordResetToken(
+        user_id=target.user_id,
+        token_hash=hash_invitation_token(token),
+        expires_at=datetime.now(UTC) + timedelta(minutes=settings.password_reset_expire_minutes),
+        created_by_user_id=membership.user_id,
+    )
+    session.add(reset_token)
+    await session.flush()
+    delivery = await _send_password_reset_email(target.user.email, market.language, reset_token.expires_at, token)
+    await session.commit()
+    return PasswordResetRequestResponse(delivery=delivery)
 
 
 @router.post(
@@ -199,6 +235,31 @@ async def revoke_market_invitation(
 
 def _accept_url(token: str) -> str:
     return f"{settings.frontend_base_url.rstrip('/')}/#/accept-invitation?token={token}"
+
+
+def _reset_password_url(token: str) -> str:
+    return f"{settings.frontend_base_url.rstrip('/')}/#/reset-password?token={token}"
+
+
+async def _send_password_reset_email(to_email: str, language: str, expires_at: datetime, token: str) -> str:
+    """Attempt delivery and return the outcome as a string ('sent'/'manual_delivery_required'/
+    'failed') — mirrors _send_market_invitation's status semantics. The reset token row is
+    already flushed regardless of outcome, so a delivery failure never loses it; the admin
+    can just trigger the action again to mint (and try sending) a fresh token."""
+    try:
+        delivery_result = await send_password_reset_email(
+            PasswordResetEmail(
+                to_email=to_email,
+                reset_url=_reset_password_url(token),
+                expires_at=expires_at,
+                language=language,
+            )
+        )
+    except InvitationEmailError:
+        return "failed"
+    if isinstance(delivery_result, InvitationDeliveryDisabled):
+        return "manual_delivery_required"
+    return "sent"
 
 
 async def _send_market_invitation(

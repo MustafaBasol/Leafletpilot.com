@@ -9,9 +9,19 @@ from app.api.deps import get_catalog_session, get_current_user
 from app.api.routes.public import _is_throttled
 from app.core.config import settings
 from app.core.security import create_access_token, hash_invitation_token, hash_password, verify_password
-from app.models import ActivityLog, Market, MarketInvitation, MarketUser, PlatformAuditLog, User
+from app.models import ActivityLog, Market, MarketInvitation, MarketUser, PasswordResetToken, PlatformAuditLog, User
 from app.models.base import utc_now
-from app.schemas.auth import AuthMarketRead, AuthSessionRead, AuthUserRead, InvitationPreviewRequest, InvitationPreviewResponse, LoginRequest, LoginResponse
+from app.schemas.auth import (
+    AuthMarketRead,
+    AuthSessionRead,
+    AuthUserRead,
+    InvitationPreviewRequest,
+    InvitationPreviewResponse,
+    LoginRequest,
+    LoginResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetConfirmResponse,
+)
 from app.schemas.team import AcceptInvitationAuthenticatedRequest, AcceptInvitationRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -131,6 +141,56 @@ async def accept_invitation_authenticated(
     await _accept_invitation_for_user(session, invitation, current_user)
     await session.commit()
     return await _reload_login_response(session, current_user.id)
+
+
+@router.post("/password-reset/confirm", response_model=PasswordResetConfirmResponse)
+async def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_catalog_session),
+) -> PasswordResetConfirmResponse:
+    """Public, token-based. Never touches the old password's value — only ever
+    overwrites it after validating a fresh, unused, unexpired token."""
+    if await _is_throttled(session, request, payload.token[-16:], purpose="password_reset_confirm"):
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many password reset attempts.")
+
+    reset_token = await session.scalar(
+        select(PasswordResetToken)
+        .where(PasswordResetToken.token_hash == hash_invitation_token(payload.token))
+        .with_for_update()
+    )
+    if reset_token is None:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Geçersiz sıfırlama bağlantısı.")
+    if reset_token.used_at is not None:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu bağlantı daha önce kullanılmış.")
+    if reset_token.expires_at <= datetime.now(UTC):
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Bu bağlantının süresi dolmuş.")
+
+    user = await session.get(User, reset_token.user_id)
+    if user is None or not user.is_active:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı.")
+
+    now = datetime.now(UTC)
+    user.password_hash = hash_password(payload.password)
+    reset_token.used_at = now
+    # Invalidate any other still-outstanding reset tokens for this user so a stale,
+    # previously shared link can't be replayed after the password has already changed.
+    other_tokens = await session.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.id != reset_token.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+    )
+    for token_row in other_tokens:
+        token_row.used_at = now
+    await session.commit()
+    return PasswordResetConfirmResponse(status="ok")
 
 
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:

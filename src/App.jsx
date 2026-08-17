@@ -13,6 +13,7 @@ import { Onboarding } from "./pages/Onboarding.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { MarketCatalog } from "./pages/MarketCatalog.jsx";
+import { ResetPassword } from "./pages/ResetPassword.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { Billing } from "./pages/Billing.jsx";
 import { Start } from "./pages/Start.jsx";
@@ -221,6 +222,10 @@ export function App() {
         onSessionUpdated={handleSessionUpdated}
       />
     );
+  }
+
+  if (path.startsWith("/reset-password")) {
+    return <ResetPassword />;
   }
 
   if (!isAuthenticated) {

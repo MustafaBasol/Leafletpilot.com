@@ -52,3 +52,12 @@ class AuthSessionRead(BaseModel):
 class LoginResponse(AuthSessionRead):
     access_token: str
     token_type: str = "bearer"
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+    password: str = Field(min_length=8, max_length=256)
+
+
+class PasswordResetConfirmResponse(BaseModel):
+    status: str = "ok"

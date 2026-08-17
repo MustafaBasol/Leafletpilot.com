@@ -24,6 +24,10 @@ export function resendMarketInvitation(invitationId) {
   return apiClient.post(`/market-invitations/${invitationId}/resend`, {});
 }
 
+export function requestMemberPasswordReset(membershipId) {
+  return apiClient.post(`/market-members/${membershipId}/password-reset`, {});
+}
+
 export function acceptInvitation(payload) {
   return apiClient.post("/auth/accept-invitation", payload, { skipAuth: true, skipMarket: true });
 }
