@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
     invitation_expire_days: int = Field(default=7, alias="INVITATION_EXPIRE_DAYS")
     password_reset_expire_minutes: int = Field(default=60, alias="PASSWORD_RESET_EXPIRE_MINUTES")
+    email_change_expire_minutes: int = Field(default=60, alias="EMAIL_CHANGE_EXPIRE_MINUTES")
     invitation_email_delivery: str = Field(default="disabled", alias="INVITATION_EMAIL_DELIVERY")
     invitation_smtp_host: str = Field(default="", alias="INVITATION_SMTP_HOST")
     invitation_smtp_port: int = Field(default=587, alias="INVITATION_SMTP_PORT")

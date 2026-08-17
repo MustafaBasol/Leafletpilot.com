@@ -3,6 +3,7 @@ import {
   createMarketInvitation,
   listMarketInvitations,
   listMarketMembers,
+  requestMemberEmailChange,
   requestMemberPasswordReset,
   resendMarketInvitation,
   revokeMarketInvitation,
@@ -65,6 +66,9 @@ export function Team() {
   const [isRevoking, setRevoking] = useState(false);
   const [resendingId, setResendingId] = useState(null);
   const [resettingId, setResettingId] = useState(null);
+  const [emailEditId, setEmailEditId] = useState(null);
+  const [emailEditValue, setEmailEditValue] = useState("");
+  const [emailChangingId, setEmailChangingId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -200,6 +204,41 @@ export function Team() {
     }
   }
 
+  function startEmailEdit(member) {
+    setError("");
+    setNotice("");
+    setEmailEditId(member.membership_id);
+    setEmailEditValue("");
+  }
+
+  function cancelEmailEdit() {
+    setEmailEditId(null);
+    setEmailEditValue("");
+  }
+
+  async function handleEmailChange(member) {
+    if (emailChangingId) return;
+    if (!emailEditValue.trim()) return;
+    setError("");
+    setNotice("");
+    setEmailChangingId(member.membership_id);
+    try {
+      const result = await requestMemberEmailChange(member.membership_id, emailEditValue.trim());
+      setNotice(
+        MANUAL_SHARE_STATUSES.has(result.delivery)
+          ? `${emailEditValue.trim()} adresine doğrulama bağlantısı gönderilemedi. Lütfen daha sonra tekrar deneyin.`
+          : `${emailEditValue.trim()} adresine doğrulama bağlantısı gönderildi. E-posta yalnızca bağlantı tıklanınca değişir.`,
+      );
+      setEmailEditId(null);
+      setEmailEditValue("");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setEmailChangingId(null);
+    }
+  }
+
   return (
     <>
       <PageHeader title="Ekip" description="Market üyelerini ve manuel paylaşılacak davet bağlantılarını yönetin." />
@@ -217,6 +256,9 @@ export function Team() {
                 <td>
                   <strong>{member.full_name || member.email}</strong>
                   <small>{member.email}</small>
+                  {member.pending_email ? (
+                    <small className="table-hint">Bekleyen e-posta: {member.pending_email} — doğrulama bekleniyor</small>
+                  ) : null}
                 </td>
                 <td><Badge>{roleLabels[member.role] || member.role}</Badge></td>
                 <td>{member.is_active ? "Aktif" : "Pasif"}</td>
@@ -232,6 +274,28 @@ export function Team() {
                   <Button onClick={() => handlePasswordReset(member)} disabled={resettingId === member.membership_id}>
                     {resettingId === member.membership_id ? "Gönderiliyor..." : "Şifre Sıfırlama Bağlantısı Gönder"}
                   </Button>
+                  {emailEditId === member.membership_id ? (
+                    <div className="field-stack">
+                      <Input
+                        label="Yeni e-posta"
+                        type="email"
+                        value={emailEditValue}
+                        onChange={(event) => setEmailEditValue(event.target.value)}
+                      />
+                      <div className="table-actions">
+                        <Button
+                          variant="primary"
+                          onClick={() => handleEmailChange(member)}
+                          disabled={emailChangingId === member.membership_id || !emailEditValue.trim()}
+                        >
+                          {emailChangingId === member.membership_id ? "Gönderiliyor..." : "Doğrulama Bağlantısı Gönder"}
+                        </Button>
+                        <Button onClick={cancelEmailEdit} disabled={emailChangingId === member.membership_id}>Vazgeç</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button onClick={() => startEmailEdit(member)}>E-posta Değiştir</Button>
+                  )}
                 </td>
               </tr>
             ))}

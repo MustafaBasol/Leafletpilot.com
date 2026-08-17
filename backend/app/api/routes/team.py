@@ -10,21 +10,25 @@ from app.api.deps import get_catalog_session, get_current_market_membership, req
 from app.core.config import settings
 from app.core.roles import MarketRole
 from app.core.security import generate_invitation_token, hash_invitation_token
-from app.models import Market, MarketInvitation, MarketUser, PasswordResetToken, User
+from app.models import EmailChangeToken, Market, MarketInvitation, MarketUser, PasswordResetToken, User
 from app.models.base import utc_now
 from app.schemas.team import (
+    EmailChangeRequestResponse,
     MarketInvitationCreate,
     MarketInvitationCreateResponse,
     MarketInvitationRead,
     MarketMemberRead,
     MarketMemberUpdate,
+    MemberEmailChangeRequest,
     PasswordResetRequestResponse,
 )
 from app.services.invitation_email import (
+    EmailChangeEmail,
     InvitationDeliveryDisabled,
     InvitationEmailError,
     OwnerInvitationEmail,
     PasswordResetEmail,
+    send_email_change_email,
     send_owner_invitation_email,
     send_password_reset_email,
 )
@@ -49,7 +53,9 @@ async def list_market_members(
         .join(User)
         .order_by(User.email)
     )
-    return [_member_read(item) for item in result.unique().all()]
+    memberships = result.unique().all()
+    pending_by_user = await _pending_email_changes(session, [item.user_id for item in memberships])
+    return [_member_read(item, pending_by_user.get(item.user_id)) for item in memberships]
 
 
 @router.patch("/market-members/{membership_id}", response_model=MarketMemberRead)
@@ -105,6 +111,63 @@ async def request_member_password_reset(
     delivery = await _send_password_reset_email(target.user.email, market.language, reset_token.expires_at, token)
     await session.commit()
     return PasswordResetRequestResponse(delivery=delivery)
+
+
+@router.post("/market-members/{membership_id}/email-change", response_model=EmailChangeRequestResponse)
+async def request_member_email_change(
+    membership_id: UUID,
+    payload: MemberEmailChangeRequest,
+    membership: MarketUser = Depends(require_market_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> EmailChangeRequestResponse:
+    """Verify-first email change. The member's User.email is NEVER touched here — only a
+    verification link is sent to the NEW address; the old email stays the active login
+    identity until the member (or whoever opens the link) confirms it via
+    /auth/email-change/confirm. Uniqueness is re-checked again at confirm time, since
+    another account could claim the address in the meantime."""
+    target = await session.scalar(
+        select(MarketUser)
+        .options(selectinload(MarketUser.user))
+        .where(MarketUser.id == membership_id, MarketUser.market_id == membership.market_id)
+    )
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Üyelik bulunamadı.")
+    market = await session.get(Market, membership.market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market bulunamadı.")
+
+    new_email = payload.email.strip().lower()
+    if new_email == target.user.email.lower():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu zaten mevcut e-posta adresi.")
+    already_taken = await session.scalar(select(User).where(User.email == new_email))
+    if already_taken is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu e-posta adresi zaten kullanılıyor.")
+
+    # Only one pending change should be active per user — invalidate any earlier
+    # still-outstanding tokens so an old link can't later overwrite this newer request.
+    stale_tokens = await session.scalars(
+        select(EmailChangeToken).where(
+            EmailChangeToken.user_id == target.user_id,
+            EmailChangeToken.used_at.is_(None),
+        )
+    )
+    now = datetime.now(UTC)
+    for stale in stale_tokens:
+        stale.used_at = now
+
+    token = generate_invitation_token()
+    change_token = EmailChangeToken(
+        user_id=target.user_id,
+        new_email=new_email,
+        token_hash=hash_invitation_token(token),
+        expires_at=now + timedelta(minutes=settings.email_change_expire_minutes),
+        created_by_user_id=membership.user_id,
+    )
+    session.add(change_token)
+    await session.flush()
+    delivery = await _send_email_change_email(new_email, market.language, change_token.expires_at, token)
+    await session.commit()
+    return EmailChangeRequestResponse(delivery=delivery)
 
 
 @router.post(
@@ -241,6 +304,10 @@ def _reset_password_url(token: str) -> str:
     return f"{settings.frontend_base_url.rstrip('/')}/#/reset-password?token={token}"
 
 
+def _confirm_email_change_url(token: str) -> str:
+    return f"{settings.frontend_base_url.rstrip('/')}/#/confirm-email-change?token={token}"
+
+
 async def _send_password_reset_email(to_email: str, language: str, expires_at: datetime, token: str) -> str:
     """Attempt delivery and return the outcome as a string ('sent'/'manual_delivery_required'/
     'failed') — mirrors _send_market_invitation's status semantics. The reset token row is
@@ -251,6 +318,26 @@ async def _send_password_reset_email(to_email: str, language: str, expires_at: d
             PasswordResetEmail(
                 to_email=to_email,
                 reset_url=_reset_password_url(token),
+                expires_at=expires_at,
+                language=language,
+            )
+        )
+    except InvitationEmailError:
+        return "failed"
+    if isinstance(delivery_result, InvitationDeliveryDisabled):
+        return "manual_delivery_required"
+    return "sent"
+
+
+async def _send_email_change_email(to_email: str, language: str, expires_at: datetime, token: str) -> str:
+    """Same outcome semantics as _send_password_reset_email. The token row is already
+    flushed regardless of delivery outcome, so a send failure never loses the pending
+    change — the admin can just trigger the action again."""
+    try:
+        delivery_result = await send_email_change_email(
+            EmailChangeEmail(
+                to_email=to_email,
+                verify_url=_confirm_email_change_url(token),
                 expires_at=expires_at,
                 language=language,
             )
@@ -333,7 +420,26 @@ async def _expire_pending_invitations(session: AsyncSession, market_id: UUID) ->
         await session.commit()
 
 
-def _member_read(membership: MarketUser) -> MarketMemberRead:
+async def _pending_email_changes(session: AsyncSession, user_ids: list[UUID]) -> dict[UUID, str]:
+    if not user_ids:
+        return {}
+    result = await session.scalars(
+        select(EmailChangeToken)
+        .where(
+            EmailChangeToken.user_id.in_(user_ids),
+            EmailChangeToken.used_at.is_(None),
+            EmailChangeToken.expires_at > datetime.now(UTC),
+        )
+        .order_by(EmailChangeToken.created_at.desc())
+    )
+    pending: dict[UUID, str] = {}
+    for token_row in result:
+        # Newest-first ordering — first hit per user_id is the most recent pending change.
+        pending.setdefault(token_row.user_id, token_row.new_email)
+    return pending
+
+
+def _member_read(membership: MarketUser, pending_email: str | None = None) -> MarketMemberRead:
     return MarketMemberRead(
         membership_id=membership.id,
         user_id=membership.user_id,
@@ -342,4 +448,5 @@ def _member_read(membership: MarketUser) -> MarketMemberRead:
         role=membership.role,
         is_active=membership.is_active,
         created_at=membership.created_at,
+        pending_email=pending_email,
     )

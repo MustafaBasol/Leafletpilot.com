@@ -11,3 +11,7 @@ export function getMe() {
 export function confirmPasswordReset(payload) {
   return apiClient.post("/auth/password-reset/confirm", payload, { skipAuth: true, skipMarket: true });
 }
+
+export function confirmEmailChange(payload) {
+  return apiClient.post("/auth/email-change/confirm", payload, { skipAuth: true, skipMarket: true });
+}

@@ -61,3 +61,12 @@ class PasswordResetConfirmRequest(BaseModel):
 
 class PasswordResetConfirmResponse(BaseModel):
     status: str = "ok"
+
+
+class EmailChangeConfirmRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+class EmailChangeConfirmResponse(BaseModel):
+    status: str = "ok"
+    email: str

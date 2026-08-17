@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,12 +10,23 @@ from app.api.deps import get_catalog_session, get_current_user
 from app.api.routes.public import _is_throttled
 from app.core.config import settings
 from app.core.security import create_access_token, hash_invitation_token, hash_password, verify_password
-from app.models import ActivityLog, Market, MarketInvitation, MarketUser, PasswordResetToken, PlatformAuditLog, User
+from app.models import (
+    ActivityLog,
+    EmailChangeToken,
+    Market,
+    MarketInvitation,
+    MarketUser,
+    PasswordResetToken,
+    PlatformAuditLog,
+    User,
+)
 from app.models.base import utc_now
 from app.schemas.auth import (
     AuthMarketRead,
     AuthSessionRead,
     AuthUserRead,
+    EmailChangeConfirmRequest,
+    EmailChangeConfirmResponse,
     InvitationPreviewRequest,
     InvitationPreviewResponse,
     LoginRequest,
@@ -191,6 +203,82 @@ async def confirm_password_reset(
         token_row.used_at = now
     await session.commit()
     return PasswordResetConfirmResponse(status="ok")
+
+
+@router.post("/email-change/confirm", response_model=EmailChangeConfirmResponse)
+async def confirm_email_change(
+    payload: EmailChangeConfirmRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_catalog_session),
+) -> EmailChangeConfirmResponse:
+    """Public, token-based. The account's OLD email stays the active login identity for
+    everything until this succeeds — nothing else in the app reads a "pending" email.
+    Uniqueness is re-checked here (not just at request time), since another account could
+    have claimed the target address in the meantime; the DB's own unique constraint on
+    users.email is the final backstop against a concurrent race."""
+    if await _is_throttled(session, request, payload.token[-16:], purpose="email_change_confirm"):
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many email change attempts.")
+
+    change_token = await session.scalar(
+        select(EmailChangeToken)
+        .where(EmailChangeToken.token_hash == hash_invitation_token(payload.token))
+        .with_for_update()
+    )
+    if change_token is None:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Geçersiz doğrulama bağlantısı.")
+    if change_token.used_at is not None:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu bağlantı daha önce kullanılmış.")
+    if change_token.expires_at <= datetime.now(UTC):
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Bu bağlantının süresi dolmuş.")
+
+    user = await session.get(User, change_token.user_id)
+    if user is None or not user.is_active:
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı.")
+
+    # Re-check uniqueness at commit time — another account may have taken this email since
+    # the change was requested. The pending token is left unused so a legitimate retry can
+    # still succeed later if the conflict clears; we never overwrite/corrupt existing state.
+    conflicting = await session.scalar(
+        select(User).where(User.email == change_token.new_email, User.id != user.id)
+    )
+    if conflicting is not None:
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu e-posta adresi artık başka bir hesap tarafından kullanılıyor.",
+        )
+
+    now = datetime.now(UTC)
+    new_email = change_token.new_email
+    user.email = new_email
+    change_token.used_at = now
+    # Invalidate any other still-outstanding email-change tokens for this user so a stale,
+    # previously shared link can't be replayed after the address has already changed.
+    other_tokens = await session.scalars(
+        select(EmailChangeToken).where(
+            EmailChangeToken.user_id == user.id,
+            EmailChangeToken.id != change_token.id,
+            EmailChangeToken.used_at.is_(None),
+        )
+    )
+    for token_row in other_tokens:
+        token_row.used_at = now
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Final backstop against a concurrent race that slipped past the check above
+        # (users.email has a DB-level unique constraint).
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu e-posta adresi artık başka bir hesap tarafından kullanılıyor.",
+        ) from None
+    return EmailChangeConfirmResponse(status="ok", email=new_email)
 
 
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:

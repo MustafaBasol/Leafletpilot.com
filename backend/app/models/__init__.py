@@ -11,6 +11,7 @@ from app.models.catalog import (
     ProductAlias,
     ProductImage,
 )
+from app.models.email_change import EmailChangeToken
 from app.models.export import CampaignFile, ExportJob
 from app.models.invitation import INVITATION_STATUSES, MarketInvitation
 from app.models.market import MARKET_USER_ROLES, Market, MarketUser
@@ -32,6 +33,7 @@ __all__ = [
     "CatalogQualityDecision",
     "Category",
     "Conversation",
+    "EmailChangeToken",
     "ExportJob",
     "IncomingMessage",
     "INVITATION_STATUSES",

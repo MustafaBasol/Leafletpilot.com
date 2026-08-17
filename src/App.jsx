@@ -4,6 +4,7 @@ import { BotConnections } from "./pages/BotConnections.jsx";
 import { AcceptInvitation } from "./pages/AcceptInvitation.jsx";
 import { CampaignDetail } from "./pages/CampaignDetail.jsx";
 import { Categories } from "./pages/Categories.jsx";
+import { ConfirmEmailChange } from "./pages/ConfirmEmailChange.jsx";
 import { Campaigns } from "./pages/Campaigns.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
 import { Landing } from "./pages/Landing.jsx";
@@ -226,6 +227,10 @@ export function App() {
 
   if (path.startsWith("/reset-password")) {
     return <ResetPassword />;
+  }
+
+  if (path.startsWith("/confirm-email-change")) {
+    return <ConfirmEmailChange />;
   }
 
   if (!isAuthenticated) {

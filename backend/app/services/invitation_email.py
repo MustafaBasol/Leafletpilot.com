@@ -64,6 +64,27 @@ PASSWORD_RESET_ACTION_LINES = {
     "de": "Link zum Zurücksetzen:",
 }
 
+EMAIL_CHANGE_SUBJECTS = {
+    "tr": "LeafletPilot e-posta değişikliğini doğrulayın",
+    "en": "Confirm your LeafletPilot email change",
+    "fr": "Confirmez votre changement d'adresse e-mail LeafletPilot",
+    "de": "Bestätigen Sie Ihre LeafletPilot E-Mail-Änderung",
+}
+
+EMAIL_CHANGE_INTRO_LINES = {
+    "tr": "Hesabınızın e-posta adresini bu adres olarak değiştirme talebi alındı. Bu siz değilseniz bu e-postayı yok sayabilirsiniz.",
+    "en": "A request was made to change your account's email address to this one. If this wasn't you, you can ignore this email.",
+    "fr": "Une demande de changement d'adresse e-mail de votre compte vers celle-ci a été reçue. Si ce n'était pas vous, ignorez cet e-mail.",
+    "de": "Es wurde beantragt, die E-Mail-Adresse Ihres Kontos auf diese zu ändern. Wenn Sie das nicht waren, ignorieren Sie diese E-Mail.",
+}
+
+EMAIL_CHANGE_ACTION_LINES = {
+    "tr": "Doğrulama bağlantısı:",
+    "en": "Verification link:",
+    "fr": "Lien de vérification :",
+    "de": "Bestätigungslink:",
+}
+
 
 @dataclass(frozen=True)
 class OwnerInvitationEmail:
@@ -79,6 +100,14 @@ class OwnerInvitationEmail:
 class PasswordResetEmail:
     to_email: str
     reset_url: str
+    expires_at: datetime
+    language: str
+
+
+@dataclass(frozen=True)
+class EmailChangeEmail:
+    to_email: str
+    verify_url: str
     expires_at: datetime
     language: str
 
@@ -157,6 +186,30 @@ async def send_owner_invitation_email(message: OwnerInvitationEmail) -> Invitati
 
 async def send_password_reset_email(message: PasswordResetEmail) -> InvitationDeliveryDisabled | None:
     return await _send_transactional_email(build_password_reset_email(message), to_email=message.to_email)
+
+
+def build_email_change_email(message: EmailChangeEmail) -> EmailMessage:
+    language = normalize_language(message.language)
+    email = EmailMessage()
+    email["Subject"] = EMAIL_CHANGE_SUBJECTS[language]
+    email["From"] = formataddr((settings.invitation_smtp_from_name, settings.invitation_smtp_from_address))
+    email["To"] = message.to_email
+    body = "\n".join(
+        [
+            EMAIL_CHANGE_INTRO_LINES[language],
+            "",
+            EMAIL_CHANGE_ACTION_LINES[language],
+            message.verify_url,
+            "",
+            f"{EXPIRY_LINES[language]} {message.expires_at.isoformat()}",
+        ]
+    )
+    email.set_content(body)
+    return email
+
+
+async def send_email_change_email(message: EmailChangeEmail) -> InvitationDeliveryDisabled | None:
+    return await _send_transactional_email(build_email_change_email(message), to_email=message.to_email)
 
 
 async def _send_transactional_email(email: EmailMessage, *, to_email: str) -> InvitationDeliveryDisabled | None:
