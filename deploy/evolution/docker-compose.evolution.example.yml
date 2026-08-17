@@ -1,0 +1,154 @@
+# Evolution API — reference stack (EXAMPLE ONLY)
+#
+# This file is NOT part of LeafletPilot's production deploy. It is a
+# reference for an operator who does not already run an Evolution API v2
+# instance and wants one to point LeafletPilot at. Deploy it SEPARATELY:
+#
+#   docker compose -f deploy/evolution/docker-compose.evolution.example.yml \
+#     --env-file deploy/evolution/.env up -d
+#
+# DO NOT merge these services into docker-compose.production.yml.
+#
+# Why Evolution is kept out of the LeafletPilot stack (see
+# docs/backend/10_WHATSAPP_EVOLUTION_SETUP.md for the full rationale):
+#   - Evolution needs its own Postgres + Redis and a persistent WhatsApp
+#     session. That session has a completely different lifecycle from the
+#     LeafletPilot app — rolling/rolling back the backend image must never
+#     risk dropping a live WhatsApp connection.
+#   - Connecting the number requires an interactive QR/pairing-code scan,
+#     which does not belong in an unattended `docker compose up` on deploy.
+#   - If an Evolution instance already exists in the operator's
+#     infrastructure, LeafletPilot should integrate with it (set
+#     EVOLUTION_API_BASE_URL to it) instead of this file silently standing
+#     up a second, competing instance.
+#
+# LeafletPilot's own docker-compose.production.yml only carries the
+# environment wiring (EVOLUTION_*, WHATSAPP_*, LEAFLETPILOT_WHATSAPP_NUMBER)
+# on the backend/migration services. The `backend` service there is already
+# attached to the `egress` network, which is what lets it reach this stack
+# (or any other externally hosted Evolution instance) over HTTPS.
+#
+# SECURITY — read before deploying:
+#   - Never expose the Evolution API port directly to the public internet.
+#     Put a TLS-terminating reverse proxy in front of it (Traefik, the same
+#     pattern as deploy/traefik/docker-compose.traefik.example.yml) and keep
+#     the port binding below on localhost/an internal network only.
+#   - AUTHENTICATION_API_KEY is the only thing standing between the public
+#     internet and full control of the linked WhatsApp session (send as any
+#     LeafletPilot user, read message history, disconnect the number). Set a
+#     long random value and treat it like a production database password.
+#   - This compose file does not publish a domain/TLS certificate for you —
+#     wire it into your own reverse proxy setup.
+
+services:
+  evolution-api:
+    # Pinned to a specific v2 release — never `:latest`. This container owns
+    # the one live WhatsApp session for the whole platform; an unattended tag
+    # float could silently change webhook/DB behaviour or drop the paired
+    # session on a routine restart. Check
+    # https://hub.docker.com/r/atendai/evolution-api/tags for current v2.x
+    # releases and bump this deliberately, as its own reviewed change.
+    image: atendai/evolution-api:v2.2.3
+    restart: unless-stopped
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_healthy
+    environment:
+      # Public URL of THIS Evolution instance (used in a few API responses,
+      # e.g. QR code payloads). Not the LeafletPilot API.
+      SERVER_URL: ${EVOLUTION_SERVER_URL:?EVOLUTION_SERVER_URL is required, e.g. https://evolution.example.com}
+      # Same value LeafletPilot's own EVOLUTION_API_KEY must be configured
+      # with (see backend/.env.production.example). Sent as the `apikey`
+      # header on every request; generate with: openssl rand -hex 32
+      AUTHENTICATION_API_KEY: ${EVOLUTION_AUTHENTICATION_API_KEY:?EVOLUTION_AUTHENTICATION_API_KEY is required}
+      # Persist instance/session state in Postgres rather than local files
+      # only, so `docker compose up` on a fresh host doesn't discard it.
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-evolution}:${EVOLUTION_POSTGRES_PASSWORD:?EVOLUTION_POSTGRES_PASSWORD is required}@evolution-postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      # LeafletPilot never reads message/contact/chat history back out of
+      # Evolution's own store (all of that flows through the webhook
+      # instead), so there is no reason to duplicate it here.
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      LOG_LEVEL: ERROR
+      # Cosmetic only: the device name WhatsApp shows for this linked session.
+      CONFIG_SESSION_PHONE_CLIENT: LeafletPilot
+      CONFIG_SESSION_PHONE_NAME: Chrome
+    volumes:
+      # Local auth/session fallback alongside DATABASE_SAVE_DATA_INSTANCE.
+      # Do not delete this volume without accepting that the WhatsApp number
+      # will need to be re-paired (QR/pairing-code scan) on next start.
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+    ports:
+      # Bound to localhost only — reach this through a TLS reverse proxy or
+      # from another container on a shared internal Docker network. Remove
+      # this mapping entirely if a proxy container reaches it over a Docker
+      # network instead of the host's loopback interface.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # Evolution's root path returns a simple 200 status page when the
+      # process is up; this only proves the HTTP server is listening, not
+      # that a WhatsApp session is connected (see the runbook's
+      # `/instance/connectionState/{instance}` check for that).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    networks:
+      - evolution
+
+  evolution-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${EVOLUTION_POSTGRES_DB:-evolution}
+      POSTGRES_USER: ${EVOLUTION_POSTGRES_USER:-evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:?EVOLUTION_POSTGRES_PASSWORD is required}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - evolution
+
+  evolution-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - evolution_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - evolution
+
+volumes:
+  # Named, persistent volumes: this is the whole point of not folding
+  # Evolution into the app stack — its session must survive independently of
+  # any LeafletPilot deploy/rollback.
+  evolution_postgres_data:
+  evolution_redis_data:
+  evolution_instances:
+  evolution_store:
+
+networks:
+  evolution:
+    driver: bridge

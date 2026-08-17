@@ -520,3 +520,68 @@ Excluded work:
 Next step: Phase 19B should implement the internal Telegram Bot MVP only after
 this production baseline has been validated in a disposable production-like
 stack.
+
+## Phase 32: Central WhatsApp Channel (Evolution API)
+
+One platform-owned WhatsApp number, one centrally managed Evolution API
+instance, many markets. The channel is an authorized operator/control channel
+for LeafletPilot *market users* — it is explicitly not a customer/consumer
+messaging or broadcast system.
+
+Implemented scope:
+
+- Central Evolution connection is runtime environment configuration
+  (`EVOLUTION_*`, `LEAFLETPILOT_WHATSAPP_NUMBER`, `WHATSAPP_*`), validated at
+  startup by `Settings` in the same style as the Telegram and Stripe blocks.
+  Credentials are never persisted, never returned by an API, and never reach
+  the browser bundle; Platform Admin sees derived health/status only.
+- `POST /api/webhooks/evolution/whatsapp` accepts Evolution deliveries,
+  authenticated by a constant-time comparison against
+  `EVOLUTION_WEBHOOK_SECRET` presented as `X-Evolution-Webhook-Token` (or
+  `Authorization: Bearer`). Evolution does not sign its payloads, so a
+  configured header token is the strongest control the deployed version
+  supports; reverse-proxy source-IP restriction is documented as additional
+  defence, never as the only check.
+- `whatsapp_webhook_events` is the idempotency ledger, with the same
+  processing-lease semantics as `telegram_updates`, so a redelivered
+  `messages.upsert` cannot verify twice or generate a second campaign.
+- Verification: LeafletPilot issues a cryptographically random `LP-XXXX-XXXX`
+  code, stored only as a keyed HMAC digest, single-use, expiring (10 minutes
+  by default), with resend cooldown, attempt limits and per-user rate limits.
+  The user sends it from their own handset; the Evolution webhook sender —
+  not the number typed into the UI — establishes the verified identity.
+- `user_whatsapp_identities` carries three partial unique indexes (per phone,
+  per JID, per user, all scoped to `status='verified'`) so one verified
+  WhatsApp identity can never silently represent two LeafletPilot users, while
+  a user may still act for N markets.
+- Single-market users resolve automatically; multi-market users are prompted
+  and select by number, validated against live memberships. Every command
+  re-resolves `market_users`, so a removed membership, deactivated user or
+  suspended market takes effect on the next message with no cache to
+  invalidate.
+- Brochure generation reuses the existing channel-independent services
+  (`app.services.campaign`, `app.services.templates`,
+  `app.services.product_image_resolution`). The externally visible step
+  (final PDF/PNG delivery) requires an explicit `ONAYLA` bound to user,
+  market, action and expiry.
+- Market UI lives on the existing Ekip page (`WhatsAppTeamPanel`); Platform
+  Admin gains a WhatsApp page with connection health, a connection test, and a
+  searchable/filterable identity table with revoke.
+- Rate limiting reuses the proven `signup_throttles` bucketed counter; the
+  migration only widens its `key_type` CHECK constraint.
+
+Excluded work (deliberate):
+
+- No customer/consumer phone books, bulk messaging, or campaign broadcast.
+- No per-market WhatsApp accounts — one central number by design.
+- No WhatsApp flyer *edit* intents yet (the Telegram channel's
+  `parse_flyer_edit_intent` is intentionally not imported, to avoid coupling
+  the new channel to code scheduled for removal).
+- Evolution API is not added to `docker-compose.production.yml`; it is an
+  external dependency, with a reference stack in
+  `deploy/evolution/docker-compose.evolution.example.yml`.
+
+Telegram: unchanged. No Telegram implementation file, route, model, or record
+is touched by this phase; Telegram shutdown remains a separate future task.
+
+Setup and operations: `docs/backend/10_WHATSAPP_EVOLUTION_SETUP.md`.
