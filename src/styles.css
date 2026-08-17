@@ -582,6 +582,11 @@ td small {
   gap: 10px;
 }
 
+.page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .edit-image-actions {
   margin-top: 20px;
   flex-wrap: wrap;
@@ -715,14 +720,20 @@ td small {
   gap: 12px;
 }
 
-.metric-top > span {
+.metric-icon {
   display: grid;
   width: 34px;
   height: 34px;
+  flex: 0 0 auto;
   place-items: center;
   border-radius: 12px;
   background: var(--primary-50);
   color: var(--primary-600);
+}
+
+.metric-top .badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .metric-card p {
@@ -751,17 +762,17 @@ td small {
   font-weight: 700;
 }
 
-.metric-success .metric-top > span {
+.metric-success .metric-icon {
   background: var(--success-50);
   color: var(--success-700);
 }
 
-.metric-warning .metric-top > span {
+.metric-warning .metric-icon {
   background: var(--warning-50);
   color: var(--warning-700);
 }
 
-.metric-danger .metric-top > span {
+.metric-danger .metric-icon {
   background: var(--danger-50);
   color: var(--danger-700);
 }
@@ -923,6 +934,14 @@ tbody tr:hover {
   border-radius: 14px;
   background: var(--primary-600);
   color: var(--white);
+}
+
+.bot-status-muted {
+  background: var(--neutral-100);
+}
+
+.bot-status-muted .bot-orb {
+  background: var(--neutral-400);
 }
 
 .bot-status h3 {

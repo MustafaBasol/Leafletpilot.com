@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { canManageTemplates, canMutateCampaigns, canMutateCatalog, getSelectedMarket } from "../api/authSession.js";
+import { canMutateCatalog, getSelectedMarket } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import {
   activities,
   campaigns as mockCampaigns,
-  market,
   metrics,
   missingProducts,
   products,
   waitingApprovals,
 } from "../data/mockData.js";
-import { getCampaigns } from "../data/dataSource.js";
+import { getCampaigns, getTelegramStatus } from "../data/dataSource.js";
 import { Badge, Button, Card, Icon, StatusBadge, Table } from "../components/ui/index.js";
 
 function metricIconName(tone) {
@@ -25,7 +24,7 @@ function MetricCards({ items }) {
       {items.map((metric) => (
         <section className={`metric-card metric-${metric.tone}`} key={metric.label}>
           <div className="metric-top">
-            <span>
+            <span className="metric-icon">
               <Icon name={metricIconName(metric.tone)} />
             </span>
             <Badge tone={metric.tone}>{metric.badge || "Güncel"}</Badge>
@@ -33,7 +32,7 @@ function MetricCards({ items }) {
           <p>{metric.label}</p>
           <strong>{metric.value}</strong>
           <small>{metric.helper}</small>
-          <span className="metric-trend">{metric.trend}</span>
+          {metric.trend ? <span className="metric-trend">{metric.trend}</span> : null}
         </section>
       ))}
     </div>
@@ -81,64 +80,58 @@ function RecentCampaigns({ items, isLoading }) {
 }
 
 function BotStatus({ selectedMarket }) {
-  if (isRealApiEnabled) {
-    return (
-      <Card title="Bot Bağlantı Durumu" className="span-4">
-        <div className="bot-status bot-status-muted">
-          <div className="bot-orb">
-            <Icon name="bot" />
-          </div>
-          <div>
-            <Badge>Yapılandırılmadı</Badge>
-            <h3>Bot bağlantısı henüz yapılandırılmadı.</h3>
-            <p>Telegram ve WhatsApp entegrasyonları bu fazda aktif değildir.</p>
-          </div>
-        </div>
-        <dl className="detail-list">
-          <div>
-            <dt>Market</dt>
-            <dd>{selectedMarket?.name || "-"}</dd>
-          </div>
-          <div>
-            <dt>Durum</dt>
-            <dd>Beklemede</dd>
-          </div>
-        </dl>
-      </Card>
-    );
-  }
+  const [botStatus, setBotStatus] = useState(null);
+  const [botStatusError, setBotStatusError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+    setBotStatusError("");
+    getTelegramStatus()
+      .then((result) => {
+        if (isMounted) setBotStatus(result);
+      })
+      .catch((error) => {
+        if (isMounted) setBotStatusError(error.message || "Bot bağlantı durumu yüklenemedi.");
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedMarket?.id]);
+
+  const connected = Boolean(botStatus?.connected);
 
   return (
     <Card title="Bot Bağlantı Durumu" className="span-4">
-      <div className="bot-status">
+      <div className={`bot-status ${connected ? "" : "bot-status-muted"}`}>
         <div className="bot-orb">
           <Icon name="bot" />
         </div>
         <div>
-          <Badge tone="success">Bot aktif</Badge>
-          <h3>Telegram bağlantısı çalışıyor</h3>
-          <p>Son mesaj: 3 dakika önce</p>
+          <Badge tone={connected ? "success" : undefined}>{connected ? "Bağlı" : "Yapılandırılmadı"}</Badge>
+          <h3>{connected ? "Telegram bağlantısı aktif" : "Bot bağlantısı henüz yapılandırılmadı."}</h3>
+          <p>
+            {connected
+              ? `${botStatus.username ? `@${botStatus.username}` : "Bir ekip üyesi"} Telegram hesabını bağladı.`
+              : "Ekip üyelerinizden biri Telegram botunu bağladığında bağlantı durumu burada görünür."}
+          </p>
         </div>
       </div>
+      {botStatusError ? <p className="inline-result inline-result-warning">{botStatusError}</p> : null}
       <dl className="detail-list">
         <div>
-          <dt>Kanal</dt>
-          <dd>Telegram</dd>
-        </div>
-        <div>
-          <dt>Bot</dt>
-          <dd>@LeafletPilotBot</dd>
-        </div>
-        <div>
-          <dt>Webhook</dt>
-          <dd>
-            <Badge tone="success">Sağlıklı</Badge>
-          </dd>
-        </div>
-        <div>
           <dt>Market</dt>
-          <dd>{market.name}</dd>
+          <dd>{selectedMarket?.name || "-"}</dd>
         </div>
+        <div>
+          <dt>Durum</dt>
+          <dd>{connected ? "Aktif" : "Beklemede"}</dd>
+        </div>
+        {connected ? (
+          <div>
+            <dt>Bağlı hesap sayısı</dt>
+            <dd>{botStatus.connected_member_count}</dd>
+          </div>
+        ) : null}
       </dl>
     </Card>
   );
@@ -195,30 +188,6 @@ function MissingList({ items }) {
   );
 }
 
-function QuickActions() {
-  const actions = [
-    canMutateCampaigns() ? ["Yeni Kampanya Oluştur", "#/campaigns/new", "plus"] : null,
-    ["Ürün Kataloğuna Git", "#/products", "box"],
-    canMutateCatalog() ? ["Excel İçe Aktar", "#/products", "file"] : null,
-    canManageTemplates() ? ["Yeni Şablon Ekle", "#/templates", "file"] : null,
-    ["Bot Bağlantısını Kontrol Et", "#/bot-connections", "bot"],
-    ["Market Ayarları", "#/markets", "store"],
-  ].filter(Boolean);
-
-  return (
-    <Card title="Hızlı Aksiyonlar" className="span-6">
-      <div className="quick-grid">
-        {actions.map(([label, href, iconName]) => (
-          <a className="quick-action" href={href} key={label}>
-            <Icon name={iconName} />
-            <span>{label}</span>
-          </a>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
 function ActivityHistory() {
   return (
     <Card title="Son İşlem Geçmişi" className="span-6">
@@ -253,14 +222,14 @@ function buildRealMetrics(campaignItems) {
       label: "Toplam Kampanya",
       value: campaignItems.length,
       helper: "Seçili marketteki kampanya sayısı",
-      trend: "Gerçek API verisi",
+      trend: "",
       tone: "success",
     },
     {
       label: "Onay Bekleyen",
       value: approvalCount,
       helper: "Onay veya revizyon durumundaki kampanyalar",
-      trend: "Seçili market",
+      trend: "",
       tone: approvalCount ? "warning" : "success",
       badge: approvalCount ? "Aksiyon gerekli" : "Güncel",
     },
@@ -268,15 +237,15 @@ function buildRealMetrics(campaignItems) {
       label: "Eksik Ürün",
       value: missingCount,
       helper: "Kampanyalardaki eksik ürün toplamı",
-      trend: "Seçili market",
+      trend: "",
       tone: missingCount ? "danger" : "success",
       badge: missingCount ? "Aksiyon gerekli" : "Güncel",
     },
     {
       label: "Üretilen Dosya",
       value: "-",
-      helper: "Bu metrik için gerçek veri henüz yok",
-      trend: "Sahte veri gösterilmiyor",
+      helper: "Kampanyalarınız için henüz üretilmiş dosya yok",
+      trend: "",
       tone: "neutral",
       badge: "Hazır değil",
     },
@@ -341,11 +310,19 @@ export function Dashboard() {
               Bot Testi
             </Button>
           ) : null}
-          {canMutateCampaigns() ? (
-            <Button variant="primary" href="#/campaigns/new">
-              Yeni Kampanya
+          {canMutateCatalog() ? (
+            <Button variant="secondary" href="#/products?action=create-private">
+              <Icon name="box" /> Ürün Ekle
             </Button>
           ) : null}
+          {canMutateCatalog() ? (
+            <Button variant="secondary" href="#/products">
+              <Icon name="alert" /> Eksik Ürünleri Çöz
+            </Button>
+          ) : null}
+          <Button variant="secondary" href="#/campaigns">
+            <Icon name="file" /> Kampanyaları Gör
+          </Button>
         </div>
       </section>
       {apiError ? <p className="inline-result inline-result-warning">{apiError}</p> : null}
@@ -355,7 +332,6 @@ export function Dashboard() {
         <BotStatus selectedMarket={selectedMarket} />
         <WaitingList items={waitingItems} />
         <MissingList items={missingItems} />
-        <QuickActions />
         <ActivityHistory />
       </section>
     </>

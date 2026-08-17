@@ -5,6 +5,7 @@ import * as campaignApi from "../api/campaignApi.js";
 import * as templateApi from "../api/templateApi.js";
 import * as planApi from "../api/planApi.js";
 import * as billingApi from "../api/billingApi.js";
+import * as telegramApi from "../api/telegramApi.js";
 import { getPublicPlans as fetchPublicPlans } from "../api/publicApi.js";
 import {
   activities,
@@ -314,6 +315,12 @@ export async function updateCampaignDetail(id, form) {
       marketId,
     ),
   );
+}
+
+export async function getTelegramStatus() {
+  if (!isRealApiEnabled) return { connected: true, username: "LeafletPilotBot", connected_member_count: 1 };
+  const marketId = requireSelectedMarketId();
+  return telegramApi.getTelegramStatus(marketId);
 }
 
 export async function getCampaignPreviewHtml(campaignId) {

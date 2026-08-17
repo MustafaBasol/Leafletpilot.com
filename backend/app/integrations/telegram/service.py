@@ -36,6 +36,7 @@ from app.models import (
 from app.models.base import utc_now
 from app.schemas.campaign import RAW_TEXT_MAX_LENGTH, CampaignCreateFromTextRequest
 from app.schemas.export import ExportJobCreate
+from app.schemas.telegram import TelegramStatusRead
 from app.services import campaign as campaign_service
 from app.services import templates as template_service
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
@@ -96,6 +97,40 @@ async def process_update(
     record.last_error = None
     record.processed_at = utc_now()
     await session.commit()
+
+
+async def get_market_telegram_status(session: AsyncSession, market_id: UUID) -> TelegramStatusRead:
+    member_ids = (
+        (
+            await session.scalars(
+                select(MarketUser.user_id).where(
+                    MarketUser.market_id == market_id,
+                    MarketUser.is_active.is_(True),
+                )
+            )
+        )
+        .all()
+    )
+    if not member_ids:
+        return TelegramStatusRead(connected=False, connected_member_count=0)
+
+    accounts = (
+        await session.scalars(
+            select(TelegramAccount)
+            .where(TelegramAccount.user_id.in_(member_ids), TelegramAccount.is_active.is_(True))
+            .order_by(TelegramAccount.linked_at.desc())
+        )
+    ).all()
+    if not accounts:
+        return TelegramStatusRead(connected=False, connected_member_count=0)
+
+    latest = accounts[0]
+    return TelegramStatusRead(
+        connected=True,
+        username=latest.username,
+        linked_at=latest.linked_at,
+        connected_member_count=len(accounts),
+    )
 
 
 async def _begin_update(session: AsyncSession, update: TelegramUpdatePayload) -> TelegramUpdate | None:
