@@ -64,6 +64,7 @@ async def readiness(
         "database": await _check_database(),
         "storage": _check_storage(),
         "telegram_config": _check_telegram_config(),
+        "whatsapp_config": _check_whatsapp_config(),
         "supermarket_templates": await _check_supermarket_templates(),
         "security_config": _check_security_config(),
     }
@@ -114,6 +115,33 @@ def _check_telegram_config() -> dict[str, object]:
         "bot_token_configured": bool(settings.telegram_bot_token.strip()),
         "webhook_secret_configured": bool(settings.telegram_webhook_secret.strip()),
         "webhook_base_url_configured": bool(settings.telegram_webhook_base_url.strip()),
+    }
+
+
+def _check_whatsapp_config() -> dict[str, object]:
+    """Configuration-only WhatsApp readiness.
+
+    Deliberately does NOT probe Evolution. Readiness is what a load balancer
+    polls, and Evolution being temporarily unreachable is a *degraded
+    integration*, not an unhealthy LeafletPilot API — turning it into a 503
+    would take the whole product offline because a third-party WhatsApp
+    gateway blipped. Live connectivity is surfaced to operators through
+    Platform Admin (`POST /platform/integrations/whatsapp/connection-test`)
+    instead. Reports booleans only, never values.
+    """
+    if not settings.evolution_whatsapp_enabled:
+        return {"ok": True, "enabled": False}
+    # Settings() already validates base URL / api key / instance / secret /
+    # number presence and shape at startup when the channel is enabled, so a
+    # running process implies these are present.
+    return {
+        "ok": True,
+        "enabled": True,
+        "api_base_url_configured": bool(settings.evolution_api_base_url.strip()),
+        "api_key_configured": bool(settings.evolution_api_key.strip()),
+        "instance_name_configured": bool(settings.evolution_instance_name.strip()),
+        "webhook_secret_configured": bool(settings.evolution_webhook_secret.strip()),
+        "whatsapp_number_configured": bool(settings.leafletpilot_whatsapp_number.strip()),
     }
 
 

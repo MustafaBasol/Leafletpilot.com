@@ -15,8 +15,11 @@ from app.api.routes.platform_templates import router as platform_templates_route
 from app.api.routes.plans import router as plans_router
 from app.api.routes.public import router as public_router
 from app.api.routes.team import router as team_router
+from app.api.routes.platform_whatsapp import router as platform_whatsapp_router
 from app.api.routes.telegram import router as telegram_router
 from app.api.routes.templates import router as templates_router
+from app.api.routes.whatsapp import router as whatsapp_router
+from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -35,5 +38,10 @@ api_router.include_router(platform_catalog_quality_router)
 api_router.include_router(platform_catalog_router)
 api_router.include_router(platform_market_import_router)
 api_router.include_router(platform_templates_router)
+api_router.include_router(platform_whatsapp_router)
 api_router.include_router(telegram_router)
+# Central LeafletPilot WhatsApp channel (Evolution API). Entirely separate
+# from the Telegram routes above — no shared router, dependency or state.
+api_router.include_router(whatsapp_router)
+api_router.include_router(whatsapp_webhook_router)
 api_router.include_router(health_router, tags=["health"])

@@ -28,6 +28,7 @@ from app.api.routes.health import (
     _check_storage,
     _check_supermarket_templates,
     _check_telegram_config,
+    _check_whatsapp_config,
 )
 from app.core.database import engine
 from app.services.rendering import (
@@ -99,6 +100,7 @@ async def run_checks() -> dict[str, object]:
         "database": await _check_database(),
         "storage": _check_storage(),
         "telegram_config": _check_telegram_config(),
+        "whatsapp_config": _check_whatsapp_config(),
         "supermarket_templates": await _check_supermarket_templates(),
         "security_config": _check_security_config(),
     }
