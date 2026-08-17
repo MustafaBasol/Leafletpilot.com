@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createMarketInvitation, listMarketInvitations, listMarketMembers, revokeMarketInvitation, updateMarketMember } from "../api/teamApi.js";
-import { Badge, Button, Card, Table } from "../components/ui/index.js";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, PageHeader, Table } from "../components/ui/index.js";
 
 const roleLabels = {
   market_admin: "Yönetici",
@@ -22,15 +22,27 @@ const statusTones = {
   expired: "neutral",
 };
 
+const memberColumns = [
+  { label: "Kullanıcı" },
+  { label: "Rol", width: "16%" },
+  { label: "Durum", width: "12%" },
+  { label: "Aksiyonlar", width: "30%" },
+];
+
 export function Team() {
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [form, setForm] = useState({ email: "", role: "market_staff" });
   const [createdInvite, setCreatedInvite] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [copyError, setCopyError] = useState("");
   const [isLoading, setLoading] = useState(true);
+  const [roleChange, setRoleChange] = useState(null);
+  const [isRoleChanging, setRoleChanging] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [isRevoking, setRevoking] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -50,13 +62,24 @@ export function Team() {
     load();
   }, []);
 
-  async function handleRoleChange(member, role) {
-    if (!window.confirm(`${member.email} rolü ${roleLabels[role]} olarak değiştirilsin mi?`)) return;
+  function requestRoleChange(member, role) {
+    if (role === member.role) return;
+    setNotice("");
+    setRoleChange({ member, role });
+  }
+
+  async function confirmRoleChange() {
+    if (!roleChange) return;
+    setRoleChanging(true);
+    setError("");
     try {
-      await updateMarketMember(member.membership_id, { role });
+      await updateMarketMember(roleChange.member.membership_id, { role: roleChange.role });
+      setRoleChange(null);
       await load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setRoleChanging(false);
     }
   }
 
@@ -66,6 +89,7 @@ export function Team() {
     setCopyMessage("");
     setCopyError("");
     setError("");
+    setNotice("");
     try {
       const invitation = await createMarketInvitation(form);
       setCreatedInvite(invitation);
@@ -89,55 +113,79 @@ export function Team() {
     }
   }
 
-  async function handleRevoke(invitation) {
-    if (!window.confirm(`${invitation.email} daveti iptal edilsin mi?`)) return;
+  function requestRevoke(invitation) {
+    setNotice("");
+    setRevokeTarget(invitation);
+  }
+
+  async function confirmRevoke() {
+    if (!revokeTarget) return;
+    setRevoking(true);
+    setError("");
     try {
-      await revokeMarketInvitation(invitation.id);
+      await revokeMarketInvitation(revokeTarget.id);
+      setRevokeTarget(null);
       await load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setRevoking(false);
     }
+  }
+
+  // TODO(Phase 7b): wire to a real resend endpoint once invitation email sending is implemented.
+  function handleResendInvitation(invitation) {
+    setError("");
+    setNotice(`${invitation.email} için yeniden gönderme özelliği yakında eklenecek.`);
+  }
+
+  // TODO(Phase 7c): wire to the admin-triggered password-reset endpoint once implemented.
+  function handlePasswordReset(member) {
+    setError("");
+    setNotice(`${member.email} için şifre sıfırlama bağlantısı gönderme özelliği yakında eklenecek.`);
   }
 
   return (
     <>
-      <section className="page-heading">
-        <div>
-          <h2>Ekip</h2>
-          <p>Market üyelerini ve manuel paylaşılacak davet bağlantılarını yönetin.</p>
-        </div>
-      </section>
-      {error && <div className="form-error">{error}</div>}
-      <Card title="Üyeler">
-        <Table columns={["Kullanıcı", "Rol", "Durum", "İşlem"]}>
-          {members.map((member) => (
-            <tr key={member.membership_id}>
-              <td>
-                <strong>{member.full_name || member.email}</strong>
-                <small>{member.email}</small>
-              </td>
-              <td><Badge>{roleLabels[member.role] || member.role}</Badge></td>
-              <td>{member.is_active ? "Aktif" : "Pasif"}</td>
-              <td>
-                <select value={member.role} onChange={(event) => handleRoleChange(member, event.target.value)}>
-                  <option value="market_admin">Yönetici</option>
-                  <option value="market_staff">Personel</option>
-                  <option value="viewer">Görüntüleyici</option>
-                </select>
-              </td>
-            </tr>
-          ))}
-        </Table>
-        {isLoading && <p>Yükleniyor...</p>}
+      <PageHeader title="Ekip" description="Market üyelerini ve manuel paylaşılacak davet bağlantılarını yönetin." />
+      {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}
+      {notice ? <p className="inline-result" role="status">{notice}</p> : null}
+      <Card title="Üyeler" action={<span className="card-summary">{members.length} üye</span>}>
+        {isLoading ? <p className="inline-result">Yükleniyor...</p> : null}
+        {!isLoading && !members.length ? (
+          <EmptyState title="Henüz üye yok" text="Ekip üyeleri davet ettikçe burada listelenecek." />
+        ) : null}
+        {!isLoading && members.length ? (
+          <Table columns={memberColumns}>
+            {members.map((member) => (
+              <tr key={member.membership_id}>
+                <td>
+                  <strong>{member.full_name || member.email}</strong>
+                  <small>{member.email}</small>
+                </td>
+                <td><Badge>{roleLabels[member.role] || member.role}</Badge></td>
+                <td>{member.is_active ? "Aktif" : "Pasif"}</td>
+                <td className="table-actions">
+                  <label className="field">
+                    <span>Rol</span>
+                    <select value={member.role} onChange={(event) => requestRoleChange(member, event.target.value)}>
+                      <option value="market_admin">Yönetici</option>
+                      <option value="market_staff">Personel</option>
+                      <option value="viewer">Görüntüleyici</option>
+                    </select>
+                  </label>
+                  <Button onClick={() => handlePasswordReset(member)}>Şifre Sıfırlama Bağlantısı Gönder</Button>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        ) : null}
       </Card>
       <Card title="Davet Oluştur">
-        <form className="settings-form" onSubmit={handleCreateInvitation}>
-          <label>
-            E-posta
-            <input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
-          </label>
-          <label>
-            Rol
+        <form className="inline-form field-stack" onSubmit={handleCreateInvitation}>
+          <Input label="E-posta" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
+          <label className="field">
+            <span>Rol</span>
             <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
               <option value="market_staff">Personel</option>
               <option value="viewer">Görüntüleyici</option>
@@ -147,33 +195,58 @@ export function Team() {
           <Button variant="primary" type="submit">Davet Oluştur</Button>
         </form>
         {createdInvite && (
-          <div className="invite-result">
+          <div className="invite-result field-stack">
             <strong>Davet bağlantısı</strong>
-            <input readOnly value={createdInvite.accept_url} />
+            <Input label="Bağlantı" readOnly value={createdInvite.accept_url} />
             <Button onClick={handleCopyInvite}>{copyMessage ? "Kopyalandı" : "Kopyala"}</Button>
-            {copyMessage ? <p className="inline-result">{copyMessage}</p> : null}
-            {copyError ? <p className="inline-result inline-result-warning">{copyError}</p> : null}
-            <p>E-posta gönderimi henüz otomatik değildir. Bu bağlantıyı kullanıcıyla güvenli şekilde paylaşın.</p>
+            {copyMessage ? <p className="inline-result" role="status">{copyMessage}</p> : null}
+            {copyError ? <p className="inline-result inline-result-warning" role="alert">{copyError}</p> : null}
+            <p className="table-hint">E-posta gönderimi henüz otomatik değildir. Bu bağlantıyı kullanıcıyla güvenli şekilde paylaşın.</p>
           </div>
         )}
       </Card>
       <Card title="Davetler">
-        <Table columns={["E-posta", "Rol", "Durum", "Son Tarih", "İşlem"]}>
-          {invitations.map((invitation) => (
-            <tr key={invitation.id}>
-              <td>{invitation.email}</td>
-              <td>{roleLabels[invitation.role] || invitation.role}</td>
-              <td><Badge tone={statusTones[invitation.status] || "neutral"}>{statusLabels[invitation.status] || invitation.status}</Badge></td>
-              <td>{new Date(invitation.expires_at).toLocaleString("tr-TR")}</td>
-              <td>
-                {invitation.status === "pending" && (
-                  <Button variant="danger" onClick={() => handleRevoke(invitation)}>İptal Et</Button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </Table>
+        {!invitations.length ? (
+          <EmptyState title="Henüz davet yok" text="Oluşturduğunuz davetler burada listelenecek." />
+        ) : (
+          <Table columns={["E-posta", "Rol", "Durum", "Son Tarih", "Aksiyonlar"]}>
+            {invitations.map((invitation) => (
+              <tr key={invitation.id}>
+                <td>{invitation.email}</td>
+                <td>{roleLabels[invitation.role] || invitation.role}</td>
+                <td><Badge tone={statusTones[invitation.status] || "neutral"}>{statusLabels[invitation.status] || invitation.status}</Badge></td>
+                <td>{new Date(invitation.expires_at).toLocaleString("tr-TR")}</td>
+                <td className="table-actions">
+                  {invitation.status === "pending" && (
+                    <>
+                      <Button onClick={() => handleResendInvitation(invitation)}>Yeniden Gönder</Button>
+                      <Button variant="danger" onClick={() => requestRevoke(invitation)}>İptal Et</Button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
       </Card>
+      <ConfirmDialog
+        isOpen={Boolean(roleChange)}
+        title="Rol değişikliği"
+        description={roleChange ? `${roleChange.member.email} rolü ${roleLabels[roleChange.role]} olarak değiştirilsin mi?` : ""}
+        confirmLabel="Rolü Değiştir"
+        onCancel={() => setRoleChange(null)}
+        onConfirm={confirmRoleChange}
+        isLoading={isRoleChanging}
+      />
+      <ConfirmDialog
+        isOpen={Boolean(revokeTarget)}
+        title="Daveti iptal et"
+        description={revokeTarget ? `${revokeTarget.email} daveti iptal edilsin mi?` : ""}
+        confirmLabel="Daveti İptal Et"
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={confirmRevoke}
+        isLoading={isRevoking}
+      />
     </>
   );
 }
