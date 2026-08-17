@@ -59,12 +59,29 @@ def _environment_tag() -> str:
     return "live" if key.startswith(("sk_live_", "rk_live_")) else "sandbox"
 
 
+_MISSING = object()
+
+
+def _field(obj, key: str, default=None):
+    """Reads ``key`` from a live Stripe API response object or a plain-dict
+    test fixture. The installed Stripe SDK's ``StripeObject`` does not
+    implement ``.get()`` (only attribute/item access) — this works for both,
+    so call sites don't need to know which one they were handed.
+    """
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    value = getattr(obj, key, _MISSING)
+    return default if value is _MISSING else value
+
+
 def _as_id(value) -> str | None:
     if value is None:
         return None
     if isinstance(value, dict):
         return value.get("id")
-    return value
+    return getattr(value, "id", value)
 
 
 def _to_datetime(value) -> datetime | None:
@@ -85,14 +102,17 @@ async def _resolve_price(plan_code: str) -> "stripe.Price":
     return price
 
 
-def _plan_code_for_price(price: dict) -> str | None:
-    plan_code = plan_code_for_lookup_key(price.get("lookup_key"))
+def _plan_code_for_price(price) -> str | None:
+    if price is None:
+        return None
+    plan_code = plan_code_for_lookup_key(_field(price, "lookup_key"))
     if plan_code:
         return plan_code
     # Defensive fallback for a price without a lookup_key attached: match by id
     # against whichever price we've already resolved for each plan this run.
+    price_id = _field(price, "id")
     for code, cached_price in _PRICE_CACHE.items():
-        if cached_price.id == price.get("id"):
+        if cached_price.id == price_id:
             return code
     return None
 
@@ -136,10 +156,16 @@ async def _local_terminal_status_still_blocks_checkout(existing: MarketSubscript
         raise BillingError(
             "Abonelik durumu Stripe üzerinden doğrulanamadı. Lütfen tekrar deneyin.", status_code=503
         ) from exc
-    return stripe_subscription.get("status") in CHECKOUT_BLOCKING_STATUSES
+    return _field(stripe_subscription, "status") in CHECKOUT_BLOCKING_STATUSES
 
 
-async def create_checkout_session(session: AsyncSession, market: Market, plan_code: str) -> dict:
+async def create_checkout_session(
+    session: AsyncSession,
+    market: Market,
+    plan_code: str,
+    *,
+    fallback_customer_email: str | None = None,
+) -> dict:
     _require_enabled()
     if not is_sellable_plan_code(plan_code):
         raise BillingError("Geçersiz plan. Yalnızca starter, standard veya pro seçilebilir.")
@@ -187,15 +213,22 @@ async def create_checkout_session(session: AsyncSession, market: Market, plan_co
                 "environment": _environment_tag(),
             },
         },
+        # Always sent explicitly rather than relying on Stripe account-level
+        # defaults — a TEST account can default Managed Payments (and thus
+        # automatic tax) ON even when the Dashboard still shows an unfinished
+        # "Get started" setup page, which silently changes checkout totals.
+        "automatic_tax": {"enabled": settings.stripe_automatic_tax_enabled},
+        "managed_payments": {"enabled": False},
     }
-    if settings.stripe_automatic_tax_enabled:
-        checkout_kwargs["automatic_tax"] = {"enabled": True}
+    # `customer_creation` is only valid for Checkout mode="payment" — sending
+    # it in mode="subscription" is a hard Stripe API error. Subscription mode
+    # always creates (or reuses) a customer on its own; nothing to request.
     if existing and existing.stripe_customer_id:
         checkout_kwargs["customer"] = existing.stripe_customer_id
     else:
-        checkout_kwargs["customer_creation"] = "always"
-        if market.contact_email:
-            checkout_kwargs["customer_email"] = market.contact_email
+        customer_email = (market.contact_email or "").strip() or (fallback_customer_email or "").strip()
+        if customer_email:
+            checkout_kwargs["customer_email"] = customer_email
 
     checkout_session = await stripe.checkout.Session.create_async(**checkout_kwargs)
     return {"checkout_url": checkout_session.url, "checkout_session_id": checkout_session.id}
@@ -207,7 +240,7 @@ async def _get_or_create_portal_configuration() -> str:
         return _PORTAL_CONFIGURATION_CACHE
     existing = await stripe.billing_portal.Configuration.list_async(limit=100)
     for configuration in existing.data:
-        if (configuration.get("metadata") or {}).get("application") == "leafletpilot":
+        if _field(_field(configuration, "metadata"), "application") == "leafletpilot":
             _PORTAL_CONFIGURATION_CACHE = configuration.id
             return configuration.id
     created = await stripe.billing_portal.Configuration.create_async(
@@ -252,8 +285,8 @@ async def change_plan(session: AsyncSession, market: Market, plan_code: str) -> 
         )
 
     stripe_subscription = await stripe.Subscription.retrieve_async(row.stripe_subscription_id)
-    if stripe_subscription.get("schedule"):
-        await stripe.SubscriptionSchedule.release_async(stripe_subscription["schedule"])
+    if _field(stripe_subscription, "schedule"):
+        await stripe.SubscriptionSchedule.release_async(_field(stripe_subscription, "schedule"))
         stripe_subscription = await stripe.Subscription.retrieve_async(row.stripe_subscription_id)
 
     price = await _resolve_price(plan_code)
@@ -266,11 +299,11 @@ async def change_plan(session: AsyncSession, market: Market, plan_code: str) -> 
             proration_behavior="always_invoice",
             payment_behavior="pending_if_incomplete",
         )
-        pending_update = updated.get("pending_update")
+        pending_update = _field(updated, "pending_update")
         if pending_update:
             return {
                 "status": "pending_payment",
-                "expires_at": _to_datetime(pending_update.get("expires_at")),
+                "expires_at": _to_datetime(_field(pending_update, "expires_at")),
             }
         return {"status": "applied"}
 
@@ -281,7 +314,7 @@ async def change_plan(session: AsyncSession, market: Market, plan_code: str) -> 
         phases=[
             {
                 "items": [
-                    {"price": _as_id(item.get("price")), "quantity": item.get("quantity", 1)}
+                    {"price": _as_id(_field(item, "price")), "quantity": _field(item, "quantity", 1)}
                     for item in current_phase["items"]
                 ],
                 "start_date": current_phase["start_date"],
@@ -322,25 +355,25 @@ async def list_invoices(session: AsyncSession, market: Market, *, limit: int = 2
     return {"items": items, "has_more": invoices.has_more}
 
 
-def _normalize_invoice(invoice: dict) -> dict:
-    status = invoice.get("status")
-    attempted = bool(invoice.get("attempted"))
+def _normalize_invoice(invoice) -> dict:
+    status = _field(invoice, "status")
+    attempted = bool(_field(invoice, "attempted"))
     return {
-        "invoice_id": invoice.get("id"),
-        "number": invoice.get("number"),
-        "created_at": _to_datetime(invoice.get("created")),
-        "period_start": _to_datetime(invoice.get("period_start")),
-        "period_end": _to_datetime(invoice.get("period_end")),
-        "subtotal": invoice.get("subtotal"),
-        "total": invoice.get("total"),
-        "amount_paid": invoice.get("amount_paid"),
-        "amount_due": invoice.get("amount_due"),
-        "currency": invoice.get("currency"),
+        "invoice_id": _field(invoice, "id"),
+        "number": _field(invoice, "number"),
+        "created_at": _to_datetime(_field(invoice, "created")),
+        "period_start": _to_datetime(_field(invoice, "period_start")),
+        "period_end": _to_datetime(_field(invoice, "period_end")),
+        "subtotal": _field(invoice, "subtotal"),
+        "total": _field(invoice, "total"),
+        "amount_paid": _field(invoice, "amount_paid"),
+        "amount_due": _field(invoice, "amount_due"),
+        "currency": _field(invoice, "currency"),
         "status": status,
-        "payment_failed": status == "open" and attempted and not invoice.get("paid"),
-        "paid_at": _to_datetime((invoice.get("status_transitions") or {}).get("paid_at")),
-        "hosted_invoice_url": invoice.get("hosted_invoice_url"),
-        "invoice_pdf": invoice.get("invoice_pdf"),
+        "payment_failed": status == "open" and attempted and not _field(invoice, "paid"),
+        "paid_at": _to_datetime(_field(_field(invoice, "status_transitions"), "paid_at")),
+        "hosted_invoice_url": _field(invoice, "hosted_invoice_url"),
+        "invoice_pdf": _field(invoice, "invoice_pdf"),
     }
 
 
@@ -350,9 +383,9 @@ def _normalize_invoice(invoice: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_market_id_from_metadata(stripe_object: dict) -> UUID | None:
-    metadata = stripe_object.get("metadata") or {}
-    raw = metadata.get("market_id")
+def _resolve_market_id_from_metadata(stripe_object) -> UUID | None:
+    metadata = _field(stripe_object, "metadata")
+    raw = _field(metadata, "market_id")
     if not raw:
         return None
     try:
@@ -381,20 +414,20 @@ async def _plan_code_for_price_id(price_id: str | None) -> str | None:
         if cached_price.id == price_id:
             return code
     price = await stripe.Price.retrieve_async(price_id)
-    return plan_code_for_lookup_key(price.get("lookup_key"))
+    return plan_code_for_lookup_key(_field(price, "lookup_key"))
 
 
-async def _sync_pending_state(row: MarketSubscription, stripe_subscription: dict) -> None:
-    pending_update = stripe_subscription.get("pending_update")
+async def _sync_pending_state(row: MarketSubscription, stripe_subscription) -> None:
+    pending_update = _field(stripe_subscription, "pending_update")
     if pending_update:
-        pending_items = pending_update.get("subscription_items") or []
-        pending_price = pending_items[0].get("price") if pending_items else None
-        row.pending_plan_code = _plan_code_for_price(pending_price) if isinstance(pending_price, dict) else None
+        pending_items = _field(pending_update, "subscription_items") or []
+        pending_price = _field(pending_items[0], "price") if pending_items else None
+        row.pending_plan_code = _plan_code_for_price(pending_price) if pending_price is not None else None
         row.pending_change_reason = "upgrade_pending_payment"
-        row.pending_change_at = _to_datetime(pending_update.get("expires_at"))
+        row.pending_change_at = _to_datetime(_field(pending_update, "expires_at"))
         return
 
-    schedule_id = _as_id(stripe_subscription.get("schedule"))
+    schedule_id = _as_id(_field(stripe_subscription, "schedule"))
     if schedule_id:
         # A Subscription Schedule governs this subscription — our downgrade
         # mechanism (see change_plan). The subscription payload doesn't carry
@@ -402,15 +435,15 @@ async def _sync_pending_state(row: MarketSubscription, stripe_subscription: dict
         # heading to; the transition date is simply this subscription's
         # current period end (phase 1's end_date, set to match at creation).
         schedule = await stripe.SubscriptionSchedule.retrieve_async(schedule_id)
-        phases = schedule.get("phases") or []
+        phases = _field(schedule, "phases") or []
         target_plan_code = None
         if phases:
-            last_phase_items = phases[-1].get("items") or []
+            last_phase_items = _field(phases[-1], "items") or []
             if last_phase_items:
-                target_plan_code = await _plan_code_for_price_id(_as_id(last_phase_items[0].get("price")))
+                target_plan_code = await _plan_code_for_price_id(_as_id(_field(last_phase_items[0], "price")))
         row.pending_plan_code = target_plan_code
         row.pending_change_reason = "downgrade"
-        row.pending_change_at = _to_datetime(stripe_subscription.get("current_period_end"))
+        row.pending_change_at = _to_datetime(_field(stripe_subscription, "current_period_end"))
         return
 
     row.pending_plan_code = None
@@ -420,7 +453,7 @@ async def _sync_pending_state(row: MarketSubscription, stripe_subscription: dict
 
 async def sync_subscription_from_stripe_object(
     session: AsyncSession,
-    stripe_subscription: dict,
+    stripe_subscription,
     *,
     event_created_at: datetime,
     market_id_hint: UUID | None = None,
@@ -428,12 +461,16 @@ async def sync_subscription_from_stripe_object(
     """Normalizes a Stripe Subscription object into ``MarketSubscription`` +
     ``Market.subscription_plan``. Returns ``(row, applied)`` — ``applied`` is
     False when the event was stale (out-of-order) and nothing was written.
+
+    ``stripe_subscription`` is either a live Stripe SDK object (webhook/resync
+    paths) or a plain dict (unit test fixtures) — all field access goes
+    through ``_field``/``_as_id`` so both work identically.
     """
     market_id = market_id_hint or _resolve_market_id_from_metadata(stripe_subscription)
     if market_id is None:
         existing_by_sub = await session.scalar(
             select(MarketSubscription).where(
-                MarketSubscription.stripe_subscription_id == stripe_subscription.get("id")
+                MarketSubscription.stripe_subscription_id == _field(stripe_subscription, "id")
             )
         )
         market_id = existing_by_sub.market_id if existing_by_sub else None
@@ -442,7 +479,9 @@ async def sync_subscription_from_stripe_object(
 
     row = await _get_subscription_row(session, market_id)
     if row is None:
-        row = MarketSubscription(market_id=market_id, plan_code="unassigned", status=stripe_subscription["status"])
+        row = MarketSubscription(
+            market_id=market_id, plan_code="unassigned", status=_field(stripe_subscription, "status")
+        )
         session.add(row)
         await session.flush()
 
@@ -455,34 +494,34 @@ async def sync_subscription_from_stripe_object(
         # idempotency before this function is ever called.
         return row, False
 
-    items = stripe_subscription.get("items", {}).get("data") or []
+    items = _field(_field(stripe_subscription, "items"), "data") or []
     if not items:
         raise PermanentSyncError("Stripe subscription payload has no items.", market_id=market_id)
-    price = items[0]["price"]
+    price = _field(items[0], "price")
     plan_code = _plan_code_for_price(price)
     if plan_code is None:
-        message = f"Unmapped Stripe price id={price.get('id')} lookup_key={price.get('lookup_key')}."
+        message = f"Unmapped Stripe price id={_field(price, 'id')} lookup_key={_field(price, 'lookup_key')}."
         raise PermanentSyncError(message, market_id=market_id)
 
     row.plan_code = plan_code
-    row.status = stripe_subscription["status"]
-    row.stripe_customer_id = _as_id(stripe_subscription.get("customer"))
-    row.stripe_subscription_id = stripe_subscription.get("id")
-    row.stripe_price_id = price.get("id")
-    row.stripe_schedule_id = _as_id(stripe_subscription.get("schedule"))
-    row.currency = price.get("currency")
-    row.unit_amount = price.get("unit_amount")
-    row.interval = (price.get("recurring") or {}).get("interval")
-    row.current_period_start = _to_datetime(stripe_subscription.get("current_period_start"))
-    row.current_period_end = _to_datetime(stripe_subscription.get("current_period_end"))
+    row.status = _field(stripe_subscription, "status")
+    row.stripe_customer_id = _as_id(_field(stripe_subscription, "customer"))
+    row.stripe_subscription_id = _field(stripe_subscription, "id")
+    row.stripe_price_id = _field(price, "id")
+    row.stripe_schedule_id = _as_id(_field(stripe_subscription, "schedule"))
+    row.currency = _field(price, "currency")
+    row.unit_amount = _field(price, "unit_amount")
+    row.interval = _field(_field(price, "recurring"), "interval")
+    row.current_period_start = _to_datetime(_field(stripe_subscription, "current_period_start"))
+    row.current_period_end = _to_datetime(_field(stripe_subscription, "current_period_end"))
     if row.subscription_started_at is None:
-        row.subscription_started_at = _to_datetime(stripe_subscription.get("start_date")) or utc_now()
-    row.cancel_at_period_end = bool(stripe_subscription.get("cancel_at_period_end"))
-    row.canceled_at = _to_datetime(stripe_subscription.get("canceled_at"))
-    row.ended_at = _to_datetime(stripe_subscription.get("ended_at"))
-    row.trial_start = _to_datetime(stripe_subscription.get("trial_start"))
-    row.trial_end = _to_datetime(stripe_subscription.get("trial_end"))
-    row.latest_invoice_id = _as_id(stripe_subscription.get("latest_invoice"))
+        row.subscription_started_at = _to_datetime(_field(stripe_subscription, "start_date")) or utc_now()
+    row.cancel_at_period_end = bool(_field(stripe_subscription, "cancel_at_period_end"))
+    row.canceled_at = _to_datetime(_field(stripe_subscription, "canceled_at"))
+    row.ended_at = _to_datetime(_field(stripe_subscription, "ended_at"))
+    row.trial_start = _to_datetime(_field(stripe_subscription, "trial_start"))
+    row.trial_end = _to_datetime(_field(stripe_subscription, "trial_end"))
+    row.latest_invoice_id = _as_id(_field(stripe_subscription, "latest_invoice"))
 
     await _sync_pending_state(row, stripe_subscription)
     if row.pending_change_reason == "downgrade" and row.pending_plan_code == row.plan_code:
@@ -508,11 +547,11 @@ async def sync_subscription_from_stripe_object(
 
 async def apply_checkout_completed(
     session: AsyncSession,
-    checkout_session_obj: dict,
+    checkout_session_obj,
     *,
     event_created_at: datetime,
 ) -> tuple[MarketSubscription, bool] | None:
-    subscription_id = _as_id(checkout_session_obj.get("subscription"))
+    subscription_id = _as_id(_field(checkout_session_obj, "subscription"))
     if not subscription_id:
         return None
     market_id = _resolve_market_id_from_metadata(checkout_session_obj)
@@ -524,12 +563,12 @@ async def apply_checkout_completed(
 
 async def apply_invoice_event(
     session: AsyncSession,
-    invoice: dict,
+    invoice,
     *,
     event_created_at: datetime,
     kind: str,
 ) -> tuple[MarketSubscription, bool]:
-    subscription_id = _as_id(invoice.get("subscription"))
+    subscription_id = _as_id(_field(invoice, "subscription"))
     if not subscription_id:
         raise PermanentSyncError("Invoice event has no associated subscription.")
     row = await session.scalar(
@@ -546,8 +585,8 @@ async def apply_invoice_event(
     status_map = {"paid": "paid", "payment_failed": "payment_failed", "payment_action_required": "requires_action"}
     row.last_payment_status = status_map[kind]
     if kind == "paid":
-        row.last_payment_at = _to_datetime((invoice.get("status_transitions") or {}).get("paid_at")) or utc_now()
-    row.latest_invoice_id = invoice.get("id")
+        row.last_payment_at = _to_datetime(_field(_field(invoice, "status_transitions"), "paid_at")) or utc_now()
+    row.latest_invoice_id = _field(invoice, "id")
     row.last_invoice_event_at = event_created_at
     row.last_synced_at = utc_now()
     row.sync_error = None

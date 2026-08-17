@@ -133,6 +133,35 @@ def _event(event_id: str, event_type: str, obj: dict, *, created_ts: int, livemo
     return {"id": event_id, "type": event_type, "livemode": livemode, "created": created_ts, "data": {"object": obj}}
 
 
+class _FakeStripeObject:
+    """Minimal stand-in for the installed Stripe SDK's ``StripeObject``:
+    supports recursive attribute/item access but — like the real SDK — has
+    NO ``.get()`` method, so a lingering ``.get()`` call in production code
+    fails here exactly as it does against a real Stripe response. Used to
+    prove ``_field``/webhook processing are compatible with real Stripe
+    objects, not just the plain-dict fixtures the rest of this file uses.
+    """
+
+    def __init__(self, data: dict) -> None:
+        wrapped = {}
+        for key, value in data.items():
+            if isinstance(value, dict):
+                value = _FakeStripeObject(value)
+            elif isinstance(value, list):
+                value = [_FakeStripeObject(item) if isinstance(item, dict) else item for item in value]
+            wrapped[key] = value
+        object.__setattr__(self, "_data", wrapped)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __getattr__(self, key):
+        try:
+            return self._data[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+
 def _stub_subscription_retrieve(monkeypatch, resolver) -> None:
     """Stubs the authoritative pre-apply Stripe fetch that ``webhook._dispatch``
     now performs for subscription-state events (see
@@ -158,7 +187,7 @@ async def test_checkout_route_enforces_admin_role_and_tenant_scope_when_test_dat
     engine, session_factory = await _setup_engine()
     monkeypatch.setattr(settings, "stripe_enabled", True)
 
-    async def fake_create_checkout_session(session, market, plan_code):
+    async def fake_create_checkout_session(session, market, plan_code, **kwargs):
         return {"checkout_url": "https://stripe.test/checkout/cs_1", "checkout_session_id": "cs_1"}
 
     monkeypatch.setattr(billing_service, "create_checkout_session", fake_create_checkout_session)
@@ -452,6 +481,197 @@ async def _fake_checkout_session(checkout_id: str) -> _FakeCheckoutSession:
 
 async def _fake_stripe_subscription(status: str, *, sub_id: str = "sub_stale") -> dict:
     return {"id": sub_id, "status": status}
+
+
+# ---------------------------------------------------------------------------
+# Checkout Session request shape: no `customer_creation` in subscription
+# mode, `customer` only when known, Managed Payments always explicitly off,
+# automatic tax always sent explicitly either way.
+# ---------------------------------------------------------------------------
+
+
+async def _capture_checkout_kwargs(monkeypatch, session_id: str) -> dict:
+    captured: dict = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return await _fake_checkout_session(session_id)
+
+    monkeypatch.setattr("stripe.checkout.Session.create_async", fake_create)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_never_sends_customer_creation_in_subscription_mode_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_shape")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter")
+
+        assert captured["mode"] == "subscription"
+        assert "customer_creation" not in captured
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_uses_existing_customer_id_when_present_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_existing_customer")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="unassigned",
+                    status="canceled",
+                    stripe_customer_id="cus_known",
+                    stripe_subscription_id=None,
+                )
+            )
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter")
+
+        assert captured["customer"] == "cus_known"
+        assert "customer_email" not in captured
+        assert "customer_creation" not in captured
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_omits_customer_when_none_known_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_no_customer")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter")
+
+        assert "customer" not in captured
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_always_sends_managed_payments_disabled_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_managed_payments")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter")
+
+        assert captured["managed_payments"] == {"enabled": False}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automatic_tax_enabled", [True, False])
+async def test_checkout_session_always_sends_automatic_tax_explicitly_when_test_database_url_is_configured(
+    automatic_tax_enabled, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(settings, "stripe_automatic_tax_enabled", automatic_tax_enabled)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_automatic_tax")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter")
+
+        assert captured["automatic_tax"] == {"enabled": automatic_tax_enabled}
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Checkout email fallback: market.contact_email > fallback user email > omit.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_uses_market_contact_email_over_fallback_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_email_contact")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, contact_email=" market@example.com ")
+            await session.commit()
+            await billing_service.create_checkout_session(
+                session, market, "starter", fallback_customer_email="user@example.com"
+            )
+
+        assert captured["customer_email"] == "market@example.com"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_falls_back_to_user_email_when_contact_email_empty_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_email_fallback")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, contact_email="   ")
+            await session.commit()
+            await billing_service.create_checkout_session(
+                session, market, "starter", fallback_customer_email=" user@example.com "
+            )
+
+        assert captured["customer_email"] == "user@example.com"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_checkout_session_omits_customer_email_when_both_sources_empty_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _resolved_price(plan_code))
+    captured = await _capture_checkout_kwargs(monkeypatch, "cs_email_none")
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, contact_email=None)
+            await session.commit()
+            await billing_service.create_checkout_session(session, market, "starter", fallback_customer_email=None)
+
+        assert "customer_email" not in captured
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1328,4 +1548,325 @@ async def test_platform_market_detail_reports_pending_plan_and_sync_status_when_
             assert detail.billing.pending_change_reason == "downgrade"
             assert detail.billing.billing_sync_status == "ok"
     finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Stripe SDK compatibility — the installed SDK's StripeObject has no
+# `.get()`. These use `_FakeStripeObject` fixtures (no `.get()` at all)
+# instead of the plain dicts the rest of this file uses, to prove the fix
+# actually works against something shaped like a real Stripe response.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_claim_persists_livemode_from_stripe_object_like_event_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_sdk_1")
+            event = _FakeStripeObject(
+                _event(
+                    "evt_sdk_livemode",
+                    "customer.subscription.created",
+                    sub,
+                    created_ts=1_700_000_100,
+                    livemode=True,
+                )
+            )
+            _stub_subscription_retrieve(monkeypatch, _FakeStripeObject(sub))
+            await process_event(session, event)
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_sdk_livemode")
+            )
+            assert webhook_row.status == "processed"
+            assert webhook_row.livemode is True
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_subscription_from_stripe_object_like_fixture_extracts_ids_and_plan_when_test_database_url_is_configured() -> (
+    None
+):
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            sub = _FakeStripeObject(
+                _subscription(
+                    market_id=market.id,
+                    plan_code="pro",
+                    status="active",
+                    sub_id="sub_sdk_2",
+                    customer_id="cus_sdk_2",
+                )
+            )
+            row, applied = await sync_subscription_from_stripe_object(session, sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            assert applied is True
+            assert row.plan_code == "pro"
+            assert row.stripe_subscription_id == "sub_sdk_2"
+            assert row.stripe_customer_id == "cus_sdk_2"
+            await session.refresh(market)
+            assert market.subscription_plan == "pro"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supported_events_process_without_attribute_error_for_stripe_object_like_fixtures_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            market_id = market.id
+
+            sub = _subscription(market_id=market_id, plan_code="standard", status="active", sub_id="sub_sdk_3")
+            event = _FakeStripeObject(
+                _event("evt_sdk_full", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            )
+            _stub_subscription_retrieve(monkeypatch, _FakeStripeObject(sub))
+            await process_event(session, event)
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_sdk_full")
+            )
+            assert webhook_row.status == "processed"
+
+            invoice = _FakeStripeObject(
+                {"id": "in_sdk", "subscription": "sub_sdk_3", "status_transitions": {"paid_at": 1_700_000_150}}
+            )
+            row, applied = await apply_invoice_event(session, invoice, event_created_at=_dt(1_700_000_200), kind="paid")
+            await session.commit()
+            assert applied is True
+            assert row.last_payment_status == "paid"
+
+            subscription_row = await session.scalar(
+                select(MarketSubscription).where(MarketSubscription.market_id == market_id)
+            )
+            assert subscription_row.plan_code == "standard"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_delivery_of_stripe_object_like_event_remains_idempotent_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_sdk_4")
+            event = _FakeStripeObject(
+                _event("evt_sdk_dup", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            )
+            _stub_subscription_retrieve(monkeypatch, _FakeStripeObject(sub))
+
+            await process_event(session, event)
+            await process_event(session, event)
+
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_sdk_dup")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Legacy plan code display (item: raw "growth" code must not leak to the UI).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_billing_subscription_endpoint_normalizes_legacy_plan_code_without_subscription_row_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            user = User(email=f"user-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id, subscription_plan="growth")
+            session.add(user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=user.id, role="market_admin", is_active=True))
+            await session.commit()
+            token = create_access_token(str(user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.get(
+                "/api/billing/subscription", headers={"Authorization": f"Bearer {token}", "X-Market-Id": str(market_id)}
+            )
+            assert response.status_code == 200
+            assert response.json()["plan_code"] == "standard"
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# RBAC: market_staff must not be able to perform billing mutations.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        ("/api/billing/portal", None),
+        ("/api/billing/change-plan", {"plan_code": "starter"}),
+        ("/api/billing/cancel", None),
+        ("/api/billing/resume", None),
+    ],
+)
+async def test_billing_mutation_endpoints_reject_market_staff_when_test_database_url_is_configured(
+    path, body, monkeypatch
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            staff_user = User(email=f"staff-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id)
+            session.add(staff_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=staff_user.id, role="market_staff", is_active=True))
+            await session.commit()
+            staff_token = create_access_token(str(staff_user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(
+                path,
+                json=body,
+                headers={"Authorization": f"Bearer {staff_token}", "X-Market-Id": str(market_id)},
+            )
+            assert response.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Stripe API errors must translate to a controlled response, not an
+# unhandled 500 that reaches the browser looking like a CORS failure.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stripe_invalid_request_error_becomes_controlled_response_without_leaking_details_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id)
+            session.add(admin_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+
+        async def failing_create_checkout_session(session, market, plan_code, **kwargs):
+            raise stripe.error.InvalidRequestError(
+                "customer_creation can only be used in `payment` mode.", param="customer_creation"
+            )
+
+        monkeypatch.setattr(billing_service, "create_checkout_session", failing_create_checkout_session)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/billing/checkout",
+                json={"plan_code": "starter"},
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+            )
+            assert response.status_code == 502
+            detail = response.json()["detail"]
+            assert "customer_creation" not in detail
+            assert "sk_" not in detail
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_non_stripe_exception_still_surfaces_as_server_error_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # A genuine programmer bug must not be silently swallowed by the Stripe
+    # error translation — only `stripe.error.StripeError` is caught.
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id)
+            session.add(admin_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+
+        async def buggy_create_checkout_session(session, market, plan_code, **kwargs):
+            raise RuntimeError("simulated programmer bug")
+
+        monkeypatch.setattr(billing_service, "create_checkout_session", buggy_create_checkout_session)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            with pytest.raises(RuntimeError):
+                await client.post(
+                    "/api/billing/checkout",
+                    json={"plan_code": "starter"},
+                    headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+                )
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()

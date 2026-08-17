@@ -157,7 +157,7 @@ async def get_current_market_membership(
         )
     statement = (
         select(MarketUser)
-        .options(selectinload(MarketUser.market))
+        .options(selectinload(MarketUser.market), selectinload(MarketUser.user))
         .where(
             MarketUser.market_id == x_market_id,
             MarketUser.user_id == current_user.id,

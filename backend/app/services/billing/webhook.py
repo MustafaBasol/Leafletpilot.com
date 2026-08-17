@@ -14,7 +14,12 @@ from app.core.config import settings
 from app.models.base import utc_now
 from app.models.billing import MarketSubscription, StripeWebhookEvent
 from app.services.billing.errors import PermanentSyncError, WebhookSignatureError
-from app.services.billing.service import apply_checkout_completed, apply_invoice_event, sync_subscription_from_stripe_object
+from app.services.billing.service import (
+    _field,
+    apply_checkout_completed,
+    apply_invoice_event,
+    sync_subscription_from_stripe_object,
+)
 
 SUBSCRIPTION_EVENT_TYPES = {
     "customer.subscription.created",
@@ -76,7 +81,7 @@ async def _claim_event_row(session: AsyncSession, event: "stripe.Event") -> Stri
     webhook_row = StripeWebhookEvent(
         stripe_event_id=stripe_event_id,
         event_type=event["type"],
-        livemode=bool(event.get("livemode")),
+        livemode=bool(_field(event, "livemode")),
         status="received",
     )
     session.add(webhook_row)
@@ -163,13 +168,13 @@ async def process_event(session: AsyncSession, event: "stripe.Event") -> None:
         raise
 
 
-async def _fetch_authoritative_subscription(stripe_object: dict) -> dict:
+async def _fetch_authoritative_subscription(stripe_object):
     """Re-fetches the subscription fresh from Stripe rather than trusting the
     webhook event's embedded snapshot (see ``SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH``).
     Falls back to the event's own payload if the subscription is no longer
     retrievable (e.g. it was deleted between event dispatch and this fetch).
     """
-    subscription_id = stripe_object.get("id")
+    subscription_id = _field(stripe_object, "id")
     if not subscription_id:
         return stripe_object
     try:

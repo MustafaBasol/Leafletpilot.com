@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from app.schemas.billing import (
 from app.services.billing import service as billing_service
 from app.services.billing.errors import BillingError, WebhookSignatureError
 from app.services.billing.webhook import construct_event, process_event
+from app.services.plans import normalize_plan_code
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -29,6 +31,35 @@ MAX_STRIPE_WEBHOOK_BODY_BYTES = 512 * 1024
 
 def _http_error(exc: BillingError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _stripe_error_to_http(exc: "stripe.error.StripeError") -> HTTPException:
+    """Translates a raised Stripe API error (bad request params, missing
+    restricted-key permission, rate limit, network blip, ...) into a normal
+    JSON error response instead of letting it escape as an unhandled 500.
+    An unhandled exception here previously reached the browser as a
+    misleading CORS failure rather than a readable API error — the request
+    never actually left the origin, but a crashed handler can skip the
+    response path that attaches CORS headers.
+
+    Only ``stripe.error.StripeError`` (a *known* Stripe-side failure) is
+    translated; anything else is a programmer bug and must keep propagating
+    as an unhandled 500 so it isn't silently swallowed. No Stripe request
+    payload, key, or internal trace is included in the message.
+    """
+    if isinstance(exc, stripe.error.AuthenticationError | stripe.error.PermissionError):
+        detail = "Faturalandırma sağlayıcısı yapılandırması eksik veya yetkisiz. Lütfen destek ile iletişime geçin."
+        status_code = 502
+    elif isinstance(exc, stripe.error.RateLimitError | stripe.error.APIConnectionError):
+        detail = "Faturalandırma sağlayıcısına şu anda ulaşılamıyor. Lütfen tekrar deneyin."
+        status_code = 503
+    else:
+        # InvalidRequestError and anything else Stripe-side: the request as
+        # built was rejected — not something the customer can fix by retrying
+        # with different input, but also not proof of a local outage.
+        detail = "Faturalandırma isteği işlenemedi. Lütfen tekrar deneyin veya destek ile iletişime geçin."
+        status_code = 502
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 @router.get("/subscription", response_model=BillingSubscriptionRead)
@@ -40,7 +71,12 @@ async def get_subscription(
         select(MarketSubscription).where(MarketSubscription.market_id == membership.market_id)
     )
     if row is None:
-        return BillingSubscriptionRead(plan_code=membership.market.subscription_plan or "unassigned")
+        # No Stripe subscription has ever been created for this market yet —
+        # fall back to the market's raw plan code, normalized so a legacy
+        # alias (e.g. "growth") displays as its canonical plan ("standard")
+        # rather than literally, since a real MarketSubscription row (below)
+        # only ever stores canonical codes.
+        return BillingSubscriptionRead(plan_code=normalize_plan_code(membership.market.subscription_plan))
     return BillingSubscriptionRead.model_validate(row)
 
 
@@ -57,6 +93,8 @@ async def list_invoices(
         )
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return InvoiceListRead(**result)
 
 
@@ -67,9 +105,13 @@ async def start_checkout(
     session: AsyncSession = Depends(get_catalog_session),
 ) -> CheckoutResponse:
     try:
-        result = await billing_service.create_checkout_session(session, membership.market, payload.plan_code)
+        result = await billing_service.create_checkout_session(
+            session, membership.market, payload.plan_code, fallback_customer_email=membership.user.email
+        )
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return CheckoutResponse(**result)
 
 
@@ -82,6 +124,8 @@ async def open_portal(
         result = await billing_service.create_portal_session(session, membership.market)
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return PortalResponse(**result)
 
 
@@ -95,6 +139,8 @@ async def change_plan(
         result = await billing_service.change_plan(session, membership.market, payload.plan_code)
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return ChangePlanResponse(**result)
 
 
@@ -107,6 +153,8 @@ async def cancel_subscription(
         result = await billing_service.cancel_subscription(session, membership.market)
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return BillingActionResponse(**result)
 
 
@@ -119,6 +167,8 @@ async def resume_subscription(
         result = await billing_service.resume_subscription(session, membership.market)
     except BillingError as exc:
         raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
     return BillingActionResponse(**result)
 
 
