@@ -97,6 +97,7 @@ export const platformApi = {
   resyncMarketBilling: (id) => request(`/platform/markets/${id}/billing/resync`, { method: "POST" }),
   listMarketBillingInvoices: (id, params) => request(`/platform/markets/${id}/billing/invoices`, { params }),
   getBillingPlanHealth: () => request("/platform/billing/plans"),
+  getBillingHealth: () => request("/platform/billing/health"),
   createOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation`, { method: "POST", body }),
   rotateOwnerInvitation: (id, body) => request(`/platform/markets/${id}/owner-invitation/rotate`, { method: "POST", body }),
   revokeOwnerInvitation: (id) => request(`/platform/markets/${id}/owner-invitation/revoke`, { method: "POST" }),

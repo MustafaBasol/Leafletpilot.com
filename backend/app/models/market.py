@@ -18,8 +18,22 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
+# "growth" is a legacy code (existing markets/seed data/fixtures still write
+# it); the service layer resolves it as an alias of "standard". "unassigned"
+# is the terminal/no-entitlement state a market lands in when it has no
+# active paid subscription (see app/services/billing/service.py:_apply_entitlement)
+# — it must stay in this list alongside the sellable codes.
+MARKET_SUBSCRIPTION_PLAN_CODES = ("starter", "standard", "growth", "pro", "unassigned")
+
+
 class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "markets"
+    __table_args__ = (
+        CheckConstraint(
+            f"subscription_plan in {MARKET_SUBSCRIPTION_PLAN_CODES}",
+            name="ck_markets_subscription_plan",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)

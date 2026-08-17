@@ -55,6 +55,10 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
 - `past_due` / `incomplete` / `paused` → **grace**: plan değiştirilmez, yalnızca durum güncellenir, müşteri arayüzünde uyarı gösterilir.
 - `unpaid` / `canceled` / `incomplete_expired` → `market.subscription_plan = "unassigned"` (geri alınabilir: sonraki başarılı `active` event'i planı geri yükler).
 
+**`unassigned` canonical DB değeri (migration `20260817_0026`)**: `market.subscription_plan = "unassigned"` uygulama katmanında (`_apply_entitlement`, `plans.py::PLAN_REGISTRY`, `entitlements.py`) her zaman geçerli bir durumdu, ancak `markets` tablosundaki `ck_markets_subscription_plan` CHECK constraint'i bunu hiç allow-list'e almamıştı. Production'da gerçek bir `customer.subscription.deleted` event'i bu satırı yazmaya çalışınca `CheckViolationError`/`IntegrityError` fırlattı ve webhook `stripe_webhook_events` tablosunda kalıcı olarak `status="received"` durumunda takılı kaldı (terminal olmayan, ama işlenmemiş). Constraint artık `starter | standard | growth | pro | unassigned` kümesini kabul ediyor — bkz. `backend/alembic/versions/20260817_0026_market_subscription_plan_unassigned.py` ve `app/models/market.py::MARKET_SUBSCRIPTION_PLAN_CODES` (ORM tarafında da aynı liste `CheckConstraint` olarak ayna tutulur, şema/kod birbirinden sapmasın diye). Bu saf bir şema-katch-up'tır; hiçbir uygulama mantığı değişmedi.
+
+**Terminal iptal + sıra dışı event koruması**: Gerçek bir Stripe iptali (`status=canceled`, `cancel_at_period_end=false`, `canceled_at` dolu) geldiğinde `customer.subscription.deleted` event'i satırı doğrudan bu terminal duruma yazar ve `market.subscription_plan="unassigned"` olur — event kendi otoriter payload'ını taşır, yeniden fetch edilmez (bkz. `SUBSCRIPTION_EVENT_TYPES_REQUIRING_REFETCH`). Bu iptalden SONRA, iptalden ÖNCEki bir zaman damgasıyla (`event.created`) geç gelen bir `customer.subscription.updated` event'i **aboneliği diriltmez** — `last_subscription_event_at` imleci zaten iptal event'inin zaman damgasında olduğu için daha eski event `sync_subscription_from_stripe_object` içinde sessizce `ignored_stale` olarak atılır (regresyon testi: `test_stale_subscription_updated_after_deletion_does_not_resurrect_when_test_database_url_is_configured`, `backend/tests/test_billing.py`).
+
 ## Yükseltme / Düşürme / İptal
 
 - **Yükseltme**: `Subscription.modify_async(proration_behavior="always_invoice", payment_behavior="pending_if_incomplete")`. Ödeme senkron tamamlanmazsa Stripe `pending_update` döner; hak **verilmez** — yalnızca `customer.subscription.pending_update_applied` event'i planı etkinleştirir. `pending_update_expired` bekleyen değişikliği sessizce temizler.
@@ -84,6 +88,12 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
 - **Idempotency**: `stripe_webhook_events.stripe_event_id` DB UNIQUE constraint; aynı event'in eşzamanlı/tekrar teslimleri güvenle no-op (`_claim_event_row`, `SELECT ... FOR UPDATE`) — tam olarak bir aktif işleyici garantisi.
 - **Sıra dışı event koruması**: ayrı sıralama imleçleri kullanılır — `MarketSubscription.last_subscription_event_at` (abonelik durum event'leri) ve `MarketSubscription.last_invoice_event_at` (fatura/ödeme event'leri) birbirinden bağımsızdır, biri diğerini asla geride bırakmaz/bastırmaz. Bir imleçten eski bir event durumu geri almaz (`ignored_stale`).
 - **Stripe SDK uyumluluğu**: Kurulu Stripe Python SDK'sının `StripeObject`'i `dict` değildir ve `.get()` desteklemez (yalnızca attribute/item erişimi). Webhook yolu ve `sync_subscription_from_stripe_object`/`apply_checkout_completed`/`apply_invoice_event` bu yüzden `_field(obj, key, default)` yardımcı fonksiyonunu kullanır — hem gerçek SDK nesneleri hem birim testi dict fixture'ları için çalışır. Bu uyumsuzluk daha önce her webhook teslimatında `AttributeError` → 500'e yol açıyordu (bkz. altta kurtarma).
+- **`invoice.paid` → Subscription id çıkarımı (Stripe SDK `stripe==15.5.0`, API sürümü `2026-07-29.dahlia`)**: Bu API sürümünde `Invoice` nesnesinin artık üst seviye bir `subscription` alanı **yok** — production'da tüm `invoice.paid` (ilk abonelik faturası ve yükseltme/proration faturaları dahil) `"Invoice event has no associated subscription."` ile kalıcı olarak başarısız oluyordu. Gerçek ilişki artık `invoice.parent.subscription_details.subscription` altında (`invoice.parent.type == "subscription_details"`; quote'tan üretilen faturalarda `"quote_details"` ve gerçekten subscription yok). `app/services/billing/service.py::_subscription_id_from_invoice` bu üç yolu sırayla dener ve **tamamı `_field`/`_as_id` üzerinden**, yani `.get()` desteklemeyen gerçek `StripeObject`'lere karşı da çalışır:
+  1. `invoice.parent.subscription_details.subscription` (güncel API)
+  2. üst seviye `invoice.subscription` (eski API sürümleri / mevcut fixture'lar için legacy fallback)
+  3. `invoice.lines.data[0].parent.subscription_item_details.subscription` (satır seviyesi son çare)
+
+  Ekstra Stripe API çağrısı gerekmez (salt veri-şekli okuma) ve ek restricted-key izni gerektirmez.
 - **Kalıcı hatalar** (eşlenmeyen Price, bulunamayan market): event `failed` olarak işaretlenir (terminal), hata **hem** `stripe_webhook_events.error` **hem** `market_subscriptions.sync_error` alanına yazılır (Platform Admin market listesi/detayında görünür), Stripe'a 200 dönülür (retry fırtınası önlenir). Platform Admin resync, hatayı yalnızca başarılı bir otoriter senkronizasyondan sonra temizler.
 - **Geçici hatalar kurtarılabilir**: Kalıcı olmayan bir hata (Stripe API blip, DB hatası, veya düzeltilmeden önceki `.get()` hatası gibi bir kod hatası) event satırını terminal olmayan `received` durumunda bırakır — sonraki bir Stripe retry teslimatı satırı yeniden talep edip işleyebilir. Yalnızca `processed` / `ignored` / `ignored_stale` / `failed` terminaldir.
 
@@ -97,9 +107,20 @@ Bir event `failed` (kalıcı) durumuna düşerse ve kök neden bir kod hatasıys
 4. Alternatif: Platform Admin resync (`POST /platform/markets/{id}/billing/resync`) etkilenen market için Stripe'tan doğrudan otoriter durumu çeker; bu, `stripe_webhook_events` satırının durumunu değiştirmez ama `market_subscriptions.sync_error`'ı başarılı senkronizasyon sonrası temizler.
 5. Terminal olmayan (`received`) bir event için ekstra işlem gerekmez — sıradaki Stripe retry teslimatı otomatik olarak yeniden işler.
 
+**Bu PR'ın kapattığı iki spesifik production olayı için resend sırası**:
+
+1. Deploy sonrası migration `20260817_0026`'nın uygulandığını doğrula (`alembic current` → `20260817_0026`).
+2. Stripe Dashboard → Developers → Webhooks → prod endpoint → **`customer.subscription.deleted`** event'ini bul (constraint hatasıyla `failed` olan) → **Resend**. Beklenen sonuç: `MarketSubscription.status="canceled"`, `cancel_at_period_end=false`, `canceled_at` dolu, `Market.subscription_plan="unassigned"`, webhook satırı `processed`.
+3. Aynı Dashboard'da **`invoice.paid`** olarak `failed` işaretli event'leri bul (hem ilk abonelik faturası hem yükseltme/proration faturaları) → her birini **Resend** et. Beklenen sonuç: ilgili `MarketSubscription.last_payment_status="paid"`, `latest_invoice_id` güncellenir, webhook satırı `processed`.
+4. Platform Admin → Faturalandırma panelinde (`/#/platform/billing`) "Webhook Sağlığı" ve "Son Faturalandırma Hataları" bölümlerinden `failed` sayacının düştüğünü doğrula.
+
 ## Testler
 
 `cd backend && pytest tests/test_billing.py` — plan mapping, checkout RBAC, checkout body içeriği (customer_creation gönderilmez, managed_payments/automatic_tax açık gönderilir, email fallback sırası), durum bazlı hak politikası, sıra dışı event koruması, idempotency, pending-update ödeme güvenliği, sync-error görünürlüğü/resync, pending plan görünürlüğü (müşteri + Platform Admin), gerçek Stripe SDK nesnesi gibi davranan (`.get()` desteklemeyen) fixture'larla webhook/sync uyumluluğu. Gerçek Stripe ağ çağrısı yapılmaz (SDK çağrıları `monkeypatch` ile stub'lanır).
+
+Bu PR ayrıca ekliyor: `ck_markets_subscription_plan`'ın `unassigned`'ı kabul ettiğini ve geçersiz değerleri hâlâ reddettiğini doğrulayan constraint testleri; gerçek production regresyonunu birebir üreten terminal iptal testi (`test_subscription_deleted_writes_unassigned_plan_without_constraint_violation_...`) ve iptal-sonrası-sıra-dışı-event regresyon testi; modern (`invoice.parent.subscription_details.subscription`), legacy (üst seviye `invoice.subscription`) ve satır-seviyesi fallback şekillerinin tümünü kapsayan `_subscription_id_from_invoice` testleri (`.get()` desteklemeyen `_FakeStripeObject` dahil); ilk abonelik/yükseltme-proration/ilgisiz/yinelenen/sıra-dışı `invoice.paid` senaryoları; `GET /platform/billing/health` için DB-backed aggregation + sır sızdırmama testleri (`backend/tests/test_platform_billing.py`).
+
+Frontend: `npm run test:platform` (`src/pages/platform/PlatformBilling.test.mjs`, `src/api/platformApi.test.mjs`) — sağlık kartlarının, TEST/LIVE rozetinin, webhook uyarı tonunun, plan eşleştirme tablosunun ve son hatalar bölümünün var olduğunu, hiçbir Stripe secret alanının kaynak koduna sızmadığını doğrular (bu harness gerçek DOM render'ı değil, kaynak/metin tabanlı assertion kullanır — bkz. `src/components/ui/PlanChangeModal.test.mjs` ile aynı desen).
 
 ## Manuel E2E
 
@@ -114,6 +135,15 @@ Bu entegrasyon HTTPS webhook endpoint'i gerektirdiğinden (`api.leafletpilot.com
 7. Backend loglarını kontrol et: `POST /api/billing/stripe/webhook` için tekrarlayan 500 olmamalı (bu PR'ın kapattığı `.get()`/`AttributeError` regresyonu).
 
 **Not**: Ödeme → webhook → yerel abonelik → fatura → Billing UI durumu zincirinin uçtan uca gerçek bir Stripe TEST ödemesiyle doğrulanması, bu PR'ın "tamamlandı" sayılabilmesi için ayrı bir manuel adım olarak kalır — bkz. PR açıklaması.
+
+## Platform Admin Billing Operations Dashboard
+
+`GET /api/platform/billing/health` (`backend/app/api/routes/platform_billing.py::billing_health`) + `/#/platform/billing` (`src/pages/platform/PlatformBilling.jsx`) — Platform Admin'in tek bakışta "Stripe doğru yapılandırılmış mı, webhook'lar sağlıklı mı, abonelikler senkronize mi, hangi marketler resync gerektiriyor?" sorularına cevap vermesi için. Mevcut "Plan Eşleştirmeleri" tablosu (Price↔plan sağlığı) aynı sayfada, altta korunur.
+
+- **Ortam (TEST/LIVE)**: `service.py::_environment_tag()` ile aynı mantık — `STRIPE_SECRET_KEY`'in `sk_live_`/`rk_live_` ile başlayıp başlamadığına bakar. Stripe secret/webhook key değeri **hiçbir zaman** response'a girmez.
+- **Müşteri Portalı hazırlığı (`portal_status`)**: Her sayfa yüklemesinde Stripe'a canlı bir istek **atılmaz** (maliyetli olur) — `service.py::_portal_readiness_status()` yalnızca bu process ömrü boyunca `create_portal_session` gerçekten başarıyla çalışıp `_PORTAL_CONFIGURATION_CACHE`'i doldurmuşsa `"ready"` döner; aksi halde Stripe etkinse `"not_checked"`, değilse `"unavailable"`. Yani `STRIPE_ENABLED=true` olması tek başına asla `"ready"` görünmesine yol açmaz — sahte pozitif yok.
+- **Webhook/abonelik/plan sayaçları ve "Dikkat Gerektiren Marketler"**: Tamamı yerel DB agregasyonu (`StripeWebhookEvent`/`MarketSubscription`/`Market` üzerinde `GROUP BY`) — her market için ayrı Stripe API çağrısı **yapılmaz**. "Dikkat Gerektiren Marketler" iki yerel sinyali birleştirir: `MarketSubscription.sync_error is not null` ve marketine bağlı en az bir `failed` webhook event'i olan marketler (üst sınır 20 satır).
+- **Sır sızdırmama**: Tüm hata metinleri (`sync_error`, webhook `error`) response'a girmeden önce `_sanitize_error()`'dan geçer — `sk_test_`/`sk_live_`/`rk_test_`/`rk_live_`/`whsec_` önekinden sonraki karakterler `[redacted]` ile değiştirilir (önek okunabilir kalır, hangi tür sırrın sızdığını teşhis için; asıl materyal asla).
 
 ## Production'a geçiş (bu PR'ın kapsamı dışında)
 

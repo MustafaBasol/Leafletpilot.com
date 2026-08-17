@@ -77,6 +77,25 @@ test("previewMarketProductImport posts the workbook to the market-scoped preview
   }
 });
 
+test("getBillingHealth requests the platform billing health endpoint", async () => {
+  const values = installBrowserGlobals();
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return { ok: true, text: async () => JSON.stringify({ stripe_enabled: true, environment: "sandbox" }) };
+  };
+  try {
+    const result = await platformApi.getBillingHealth();
+    assert.match(captured.url, /\/platform\/billing\/health$/);
+    assert.equal(captured.options.method, "GET");
+    assert.equal(result.environment, "sandbox");
+  } finally {
+    globalThis.fetch = originalFetch;
+    values.clear();
+  }
+});
+
 test("commitMarketProductImport posts row decisions to the commit endpoint", async () => {
   const values = installBrowserGlobals();
   const originalFetch = globalThis.fetch;

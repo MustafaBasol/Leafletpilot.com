@@ -59,6 +59,22 @@ def _environment_tag() -> str:
     return "live" if key.startswith(("sk_live_", "rk_live_")) else "sandbox"
 
 
+def _portal_readiness_status() -> str:
+    """Cheap, local-only Customer Portal readiness signal for the Platform
+    Admin billing dashboard. Deliberately does NOT make a Stripe API call on
+    every dashboard load (that would mean a remote round-trip per page view)
+    — it only reports whether a portal configuration has already been
+    resolved/cached by a real ``create_portal_session`` call this process
+    lifetime (see ``_get_or_create_portal_configuration``). A missing
+    restricted-key permission surfaces there as a ``BillingError`` the caller
+    already handles; this flag only ever claims "ready" after that path has
+    actually succeeded — never merely from ``STRIPE_ENABLED`` being set.
+    """
+    if not settings.stripe_enabled:
+        return "unavailable"
+    return "ready" if _PORTAL_CONFIGURATION_CACHE else "not_checked"
+
+
 _MISSING = object()
 
 
@@ -714,6 +730,43 @@ async def apply_checkout_completed(
     )
 
 
+def _subscription_id_from_invoice(invoice) -> str | None:
+    """Extracts the Stripe Subscription id an Invoice belongs to, across API
+    shapes.
+
+    As of Stripe API version 2026-07-29.dahlia (installed SDK: stripe==15.5.0),
+    ``Invoice`` no longer has a top-level ``subscription`` field at all — the
+    relationship moved to ``invoice.parent.subscription_details.subscription``
+    (``invoice.parent.type == "subscription_details"`` for subscription-
+    generated invoices; a quote-generated invoice has
+    ``parent.type == "quote_details"`` and genuinely has no subscription).
+    Older/pinned API versions and existing test fixtures may still carry the
+    legacy top-level ``invoice.subscription``. As a last resort, the first
+    line item's ``parent.subscription_item_details.subscription`` is used —
+    present even when the invoice-level relation is absent.
+
+    All field access goes through ``_field``/``_as_id`` (not ``.get()``) so
+    this works against both a live ``StripeObject`` and plain-dict fixtures.
+    Returns ``None`` only when the invoice genuinely has no subscription.
+    """
+    parent = _field(invoice, "parent")
+    subscription_details = _field(parent, "subscription_details")
+    modern = _as_id(_field(subscription_details, "subscription"))
+    if modern:
+        return modern
+
+    legacy = _as_id(_field(invoice, "subscription"))
+    if legacy:
+        return legacy
+
+    lines = _field(_field(invoice, "lines"), "data") or []
+    if lines:
+        line_parent = _field(lines[0], "parent")
+        item_details = _field(line_parent, "subscription_item_details")
+        return _as_id(_field(item_details, "subscription"))
+    return None
+
+
 async def apply_invoice_event(
     session: AsyncSession,
     invoice,
@@ -721,7 +774,7 @@ async def apply_invoice_event(
     event_created_at: datetime,
     kind: str,
 ) -> tuple[MarketSubscription, bool]:
-    subscription_id = _as_id(_field(invoice, "subscription"))
+    subscription_id = _subscription_id_from_invoice(invoice)
     if not subscription_id:
         raise PermanentSyncError("Invoice event has no associated subscription.")
     row = await session.scalar(

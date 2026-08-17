@@ -2347,3 +2347,382 @@ async def test_create_portal_session_route_translates_permission_error_to_502_wh
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PART A — `ck_markets_subscription_plan` widened to allow "unassigned".
+#
+# Production incident: `customer.subscription.deleted` writing
+# `markets.subscription_plan = "unassigned"` (the app's own no-active-paid-
+# entitlement terminal state) raised a CheckViolationError because the DB
+# constraint never allowed that value. See migration 20260817_0026.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_market_persists_unassigned_subscription_plan_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="unassigned")
+            await session.commit()
+            await session.refresh(market)
+            assert market.subscription_plan == "unassigned"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plan_code", ["starter", "standard", "growth", "pro", "unassigned"])
+async def test_market_accepts_every_canonical_subscription_plan_code_when_test_database_url_is_configured(plan_code) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan=plan_code)
+            await session.commit()
+            await session.refresh(market)
+            assert market.subscription_plan == plan_code
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_market_rejects_invalid_subscription_plan_when_test_database_url_is_configured() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            with pytest.raises(IntegrityError):
+                await _create_market(session, subscription_plan="not-a-real-plan")
+                await session.commit()
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PART B — terminal cancellation via `customer.subscription.deleted`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subscription_deleted_writes_unassigned_plan_without_constraint_violation_when_test_database_url_is_configured() -> None:
+    """Reproduces the exact production incident: an active Pro subscription
+    receives a real Stripe `customer.subscription.deleted` webhook
+    (status=canceled, cancel_at_period_end=False, canceled_at populated).
+    Before the Part A migration, committing `subscription_plan="unassigned"`
+    raised a CheckViolationError and left the webhook row stuck at
+    status="received" with the IntegrityError text recorded as its error."""
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="pro")
+            await session.commit()
+
+            active_sub = _subscription(market_id=market.id, plan_code="pro", status="active", sub_id="sub_cancel")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+            await session.refresh(market)
+            assert market.subscription_plan == "pro"
+
+            deleted_sub = _subscription(
+                market_id=market.id, plan_code="pro", status="canceled", sub_id="sub_cancel", cancel_at_period_end=False
+            )
+            deleted_sub["canceled_at"] = 1_700_000_300
+            deleted_event = _event("evt_sub_deleted", "customer.subscription.deleted", deleted_sub, created_ts=1_700_000_300)
+            await process_event(session, deleted_event)
+
+            row = await session.scalar(select(MarketSubscription).where(MarketSubscription.market_id == market.id))
+            assert row.status == "canceled"
+            assert row.cancel_at_period_end is False
+            assert row.canceled_at == _dt(1_700_000_300)
+            await session.refresh(market)
+            assert market.subscription_plan == "unassigned"
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_sub_deleted")
+            )
+            assert webhook_row.status == "processed"
+            assert webhook_row.error is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_subscription_updated_after_deletion_does_not_resurrect_when_test_database_url_is_configured() -> None:
+    """PART B critical regression case: an active Pro subscription is
+    canceled (deleted event applied -> canceled + unassigned), then an OLDER
+    `subscription.updated` event (timestamped BEFORE the deletion) is
+    delivered late — it must not resurrect the subscription."""
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="pro")
+            await session.commit()
+
+            active_sub = _subscription(
+                market_id=market.id, plan_code="pro", status="active", sub_id="sub_stale_after_cancel"
+            )
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_000))
+            await session.commit()
+
+            deleted_sub = _subscription(
+                market_id=market.id,
+                plan_code="pro",
+                status="canceled",
+                sub_id="sub_stale_after_cancel",
+                cancel_at_period_end=False,
+            )
+            deleted_sub["canceled_at"] = 3_000
+            await sync_subscription_from_stripe_object(session, deleted_sub, event_created_at=_dt(3_000))
+            await session.commit()
+            await session.refresh(market)
+            assert market.subscription_plan == "unassigned"
+
+            # Same subscription, `updated` event stamped BEFORE the deletion,
+            # arriving out of order after it.
+            stale_update = _subscription(
+                market_id=market.id, plan_code="pro", status="active", sub_id="sub_stale_after_cancel"
+            )
+            row_after, applied = await sync_subscription_from_stripe_object(
+                session, stale_update, event_created_at=_dt(2_000)
+            )
+            await session.commit()
+
+            assert applied is False
+            assert row_after.status == "canceled"
+            assert row_after.plan_code == "unassigned"
+            await session.refresh(market)
+            assert market.subscription_plan == "unassigned"
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PART C — Invoice -> Subscription id extraction across API shapes.
+# ---------------------------------------------------------------------------
+
+
+def test_subscription_id_from_invoice_prefers_modern_parent_shape_over_legacy_field():
+    invoice = {
+        "id": "in_both",
+        "subscription": "sub_legacy",
+        "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_modern"}},
+    }
+    assert billing_service._subscription_id_from_invoice(invoice) == "sub_modern"
+
+
+def test_subscription_id_from_invoice_falls_back_to_legacy_top_level_field():
+    invoice = {"id": "in_legacy", "subscription": "sub_legacy"}
+    assert billing_service._subscription_id_from_invoice(invoice) == "sub_legacy"
+
+
+def test_subscription_id_from_invoice_falls_back_to_line_item_subscription():
+    invoice = {
+        "id": "in_line",
+        "parent": {"type": "subscription_details", "subscription_details": {"subscription": None}},
+        "lines": {"data": [{"parent": {"subscription_item_details": {"subscription": "sub_from_line"}}}]},
+    }
+    assert billing_service._subscription_id_from_invoice(invoice) == "sub_from_line"
+
+
+def test_subscription_id_from_invoice_returns_none_for_quote_generated_invoice():
+    invoice = {"id": "in_quote", "parent": {"type": "quote_details", "quote_details": {}}}
+    assert billing_service._subscription_id_from_invoice(invoice) is None
+
+
+def test_subscription_id_from_invoice_works_against_stripeobject_lacking_get():
+    """Same shape as the production Stripe response — a real ``StripeObject``
+    has no ``.get()`` at all; ``_FakeStripeObject`` mirrors that."""
+    invoice = _FakeStripeObject(
+        {
+            "id": "in_modern",
+            "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_modern"}},
+        }
+    )
+    assert billing_service._subscription_id_from_invoice(invoice) == "sub_modern"
+
+
+@pytest.mark.asyncio
+async def test_invoice_event_genuinely_unrelated_raises_permanent_sync_error():
+    invoice = {"id": "in_quote", "parent": {"type": "quote_details", "quote_details": {}}}
+    with pytest.raises(PermanentSyncError, match="Invoice event has no associated subscription"):
+        await apply_invoice_event(None, invoice, event_created_at=_dt(1_700_000_100), kind="paid")
+
+
+# ---------------------------------------------------------------------------
+# PART D — invoice.paid processing against the modern (2026-07-29.dahlia)
+# Invoice shape, end to end.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_resolves_subscription_via_modern_parent_shape_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            active_sub = _subscription(market_id=market.id, plan_code="pro", status="active", sub_id="sub_modern")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            invoice = _FakeStripeObject(
+                {
+                    "id": "in_modern",
+                    "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_modern"}},
+                    "status_transitions": {"paid_at": 1_700_000_200},
+                }
+            )
+            row, applied = await apply_invoice_event(session, invoice, event_created_at=_dt(1_700_000_200), kind="paid")
+            await session.commit()
+
+            assert applied is True
+            assert row.last_payment_status == "paid"
+            assert row.plan_code == "pro"
+            assert row.last_payment_at == _dt(1_700_000_200)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_falls_back_to_line_item_subscription_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_line")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            invoice = {
+                "id": "in_line",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": None}},
+                "lines": {"data": [{"parent": {"subscription_item_details": {"subscription": "sub_line"}}}]},
+            }
+            row, applied = await apply_invoice_event(session, invoice, event_created_at=_dt(1_700_000_200), kind="paid")
+            await session.commit()
+
+            assert applied is True
+            assert row.plan_code == "starter"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_proration_invoice_paid_updates_latest_invoice_id_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_upgrade")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            # First invoice — the initial subscription invoice.
+            first_invoice = {
+                "id": "in_initial",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_upgrade"}},
+            }
+            await apply_invoice_event(session, first_invoice, event_created_at=_dt(1_700_000_200), kind="paid")
+            await session.commit()
+
+            # Second invoice — the proration invoice issued for an upgrade.
+            proration_invoice = {
+                "id": "in_proration",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_upgrade"}},
+            }
+            row, applied = await apply_invoice_event(
+                session, proration_invoice, event_created_at=_dt(1_700_000_300), kind="paid"
+            )
+            await session.commit()
+
+            assert applied is True
+            assert row.latest_invoice_id == "in_proration"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unrelated_invoice_event_marks_webhook_row_failed_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            invoice = {"id": "in_quote_e2e", "parent": {"type": "quote_details", "quote_details": {}}}
+            event = _event("evt_invoice_unrelated", "invoice.paid", invoice, created_ts=1_700_000_100)
+            await process_event(session, event)
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_invoice_unrelated")
+            )
+            assert webhook_row.status == "failed"
+            assert "Invoice event has no associated subscription" in webhook_row.error
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_invoice_paid_event_is_idempotent_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            market_id = market.id
+            await session.commit()
+            active_sub = _subscription(market_id=market_id, plan_code="starter", status="active", sub_id="sub_invoice_dup")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            invoice = {
+                "id": "in_dup",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_invoice_dup"}},
+            }
+            event = _event("evt_invoice_dup", "invoice.paid", invoice, created_ts=1_700_000_200)
+            await process_event(session, event)
+            await process_event(session, event)  # duplicate delivery of the same event id — expires the session
+
+            webhook_rows = (
+                await session.execute(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_invoice_dup")
+                )
+            ).scalars().all()
+            assert len(webhook_rows) == 1
+            assert webhook_rows[0].status == "processed"
+
+            row = await session.scalar(select(MarketSubscription).where(MarketSubscription.market_id == market_id))
+            assert row.last_payment_status == "paid"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_invoice_event_is_discarded_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            active_sub = _subscription(market_id=market.id, plan_code="starter", status="active", sub_id="sub_stale_invoice")
+            await sync_subscription_from_stripe_object(session, active_sub, event_created_at=_dt(1_700_000_100))
+            await session.commit()
+
+            newer_invoice = {
+                "id": "in_newer",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_stale_invoice"}},
+            }
+            await apply_invoice_event(session, newer_invoice, event_created_at=_dt(1_700_000_500), kind="paid")
+            await session.commit()
+
+            older_invoice = {
+                "id": "in_older",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_stale_invoice"}},
+            }
+            row, applied = await apply_invoice_event(session, older_invoice, event_created_at=_dt(1_700_000_200), kind="paid")
+            await session.commit()
+
+            assert applied is False
+            assert row.latest_invoice_id == "in_newer"
+    finally:
+        await engine.dispose()
