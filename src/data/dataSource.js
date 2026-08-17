@@ -271,6 +271,8 @@ function mapTemplate(template) {
     recommendation: template.description || "Bu şablon için açıklama henüz girilmedi.",
     bestFor: template.is_global ? "Tüm marketler" : "Bu market",
     previewTone: config.preview_tone || "classic",
+    minimumPlan: template.minimum_plan || "starter",
+    thumbnailKey: template.thumbnail_key || null,
     createdAt: formatDateTime(template.created_at),
     updatedAt: formatDateTime(template.updated_at),
     raw: template,

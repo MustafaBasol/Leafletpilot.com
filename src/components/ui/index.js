@@ -21,3 +21,4 @@ export { StatusBadge } from "./StatusBadge.jsx";
 export { Stepper } from "./Stepper.jsx";
 export { Table } from "./Table.jsx";
 export { TemplateCard } from "./TemplateCard.jsx";
+export { TemplateThumbnail } from "./TemplateThumbnail.jsx";

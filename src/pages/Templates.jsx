@@ -2,10 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { canManageTemplates, getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
 import { outputFormats, templates as mockTemplates } from "../data/mockData.js";
-import { getTemplates, updateTemplateStatus } from "../data/dataSource.js";
+import { getBillingSubscription, getTemplates, updateTemplateStatus } from "../data/dataSource.js";
 import { adoptTemplate, createCustomTemplate, getMyTemplates, getSharedTemplates, getTemplatePresets, updateTemplate, uploadTemplateThumbnail } from "../api/templateApi.js";
-import { Button, ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard } from "../components/ui/index.js";
+import { Badge, Button, ConfirmDialog, FilterBar, FilterChip, PageHeader, TemplateCard, TemplateThumbnail } from "../components/ui/index.js";
 import { TemplateBuilderModal } from "../components/templates/TemplateBuilderModal.jsx";
+
+// Mirrors backend/app/services/plans.py's CANONICAL_PLAN_CODES/PLAN_RANK — the
+// display-name + rank convention already established in Billing.jsx.
+const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro" };
+const PLAN_ORDER = ["starter", "standard", "pro"];
+const PLAN_BADGE_TONE = { standard: "primary", pro: "warning" };
+
+function planRankOf(code) {
+  const index = PLAN_ORDER.indexOf(code);
+  return index === -1 ? 0 : index;
+}
 
 const fallbackPresets = {
   items: [
@@ -32,9 +43,12 @@ export function Templates() {
   const [presets, setPresets] = useState(fallbackPresets);
   const [isSaving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
+  const [planCode, setPlanCode] = useState("");
+  const [addingId, setAddingId] = useState("");
   const submittingRef = useRef(false);
   const selectedMarketId = getSelectedMarketId();
   const canManage = canManageTemplates();
+  const currentPlanRank = planRankOf(planCode);
 
   async function loadTemplates() {
     try {
@@ -43,10 +57,16 @@ export function Templates() {
       const templates = await getTemplates();
       setItems(templates);
       if (isRealApiEnabled) {
-        const [sharedResult, mineResult, presetResult] = await Promise.all([getSharedTemplates(selectedMarketId), getMyTemplates(selectedMarketId), getTemplatePresets(selectedMarketId)]);
+        const [sharedResult, mineResult, presetResult, subscription] = await Promise.all([
+          getSharedTemplates(selectedMarketId),
+          getMyTemplates(selectedMarketId),
+          getTemplatePresets(selectedMarketId),
+          getBillingSubscription(),
+        ]);
         setShared(sharedResult.items || []);
         setMine(mineResult.items || []);
         setPresets(presetResult);
+        setPlanCode(subscription?.plan_code || "starter");
       }
       setApiError("");
     } catch (error) {
@@ -58,11 +78,20 @@ export function Templates() {
   }
 
   async function addShared(template) {
+    if (addingId) return;
+    setAddingId(template.id);
     try {
       await adoptTemplate(template.id, selectedMarketId);
       setActionError("");
+      setSuccess(`${template.name} şablonu marketinize eklendi.`);
       await loadTemplates();
-    } catch (error) { setActionError(error.message || "Şablon eklenemedi."); }
+    } catch (error) {
+      if (error.status === 409) setActionError("Bu şablon zaten markete eklenmiş.");
+      else if (error.status === 403) setActionError("Bu şablonu eklemek için planınızı yükseltmeniz gerekiyor.");
+      else setActionError(error.message || "Şablon eklenemedi.");
+    } finally {
+      setAddingId("");
+    }
   }
 
   async function saveBuilder(form) {
@@ -160,12 +189,46 @@ export function Templates() {
             <div className="template-management-grid">
               {shared.map((template) => {
                 const added = mine.some((item) => item.source_template_id === template.id);
-                return <article className="card template-real-card" key={template.id}><span className="template-source">Global</span><h3>{template.name}</h3><p>{template.description || ""}</p><small>{template.config_json?.page_format === "a4_landscape" ? "A4 yatay" : "A4 dikey"} · {template.config_json?.slot_count || "-"} ürün</small><div className="table-actions"><Button href={`#/templates/${template.id}`}>Önizle</Button><Button variant="primary" onClick={() => addShared(template)} disabled={added}>{added ? "Eklendi" : "Marketime ekle"}</Button></div></article>;
+                const minimumPlan = template.minimum_plan || "starter";
+                const locked = planRankOf(minimumPlan) > currentPlanRank;
+                return (
+                  <article className="card template-real-card" key={template.id}>
+                    <a className="template-thumb-link" href={`#/templates/${template.id}`}>
+                      <TemplateThumbnail
+                        templateId={template.id}
+                        thumbnailKey={template.thumbnail_key}
+                        marketId={selectedMarketId}
+                        previewTone={template.config_json?.preview_tone || "classic"}
+                        name={template.name}
+                        type={template.template_type}
+                      />
+                    </a>
+                    <span className="template-source">Global</span>
+                    {minimumPlan !== "starter" ? <Badge tone={PLAN_BADGE_TONE[minimumPlan] || "primary"}>{PLAN_LABELS[minimumPlan] || minimumPlan}</Badge> : null}
+                    <h3>{template.name}</h3>
+                    <p>{template.description || ""}</p>
+                    <small>{template.config_json?.page_format === "a4_landscape" ? "A4 yatay" : "A4 dikey"} · {template.config_json?.slot_count || "-"} ürün</small>
+                    <div className="table-actions">
+                      <Button href={`#/templates/${template.id}`}>Önizle</Button>
+                      {locked ? null : (
+                        <Button variant="primary" onClick={() => addShared(template)} disabled={added || addingId === template.id}>
+                          {added ? "Eklendi" : addingId === template.id ? "Ekleniyor..." : "Marketime ekle"}
+                        </Button>
+                      )}
+                    </div>
+                    {locked ? (
+                      <div className="template-lock">
+                        <p className="template-lock-note">Bu şablon {PLAN_LABELS[minimumPlan] || minimumPlan} planına dahildir.</p>
+                        <Button href="#/settings/billing">Planı Yükselt</Button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
               })}
             </div>
           </section>
           <section className="card" style={{ marginBottom: 24 }}><h2>Özel şablon oluştur</h2><p>Planınız izin veriyorsa marketinize özel bir şablon oluşturabilirsiniz.</p><Button variant="primary" disabled={!canManage} onClick={() => { setActionError(""); setBuilderTemplate(null); }}>Özel şablon oluştur</Button></section>
-          <section className="card" style={{ marginBottom: 24 }}><h2>Marketimin şablonları</h2><div className="template-management-grid">{mine.map((template) => <article className="card template-real-card" key={template.id}><span className="template-source">{template.source_template_id ? "Globalden kopyalandı" : "Markete özel"}</span><h3>{template.name}</h3><p>{template.description || ""}</p><small>{template.config_json?.page_format === "a4_landscape" ? "A4 yatay" : "A4 dikey"} · {template.config_json?.slot_count || "-"} ürün · {template.is_active ? "Aktif" : "Pasif"}</small><div className="table-actions"><Button href={`#/templates/${template.id}`}>Önizle</Button>{canManage ? <><Button variant="primary" onClick={() => { setActionError(""); setBuilderTemplate(template); }}>Düzenle</Button><Button onClick={async () => { await updateTemplate(template.id, { is_active: !template.is_active }, selectedMarketId); await loadTemplates(); }}>{template.is_active ? "Pasifleştir" : "Aktifleştir"}</Button></> : null}</div></article>)}</div></section>
+          <section className="card" style={{ marginBottom: 24 }}><h2>Marketimin şablonları</h2><div className="template-management-grid">{mine.map((template) => <article className="card template-real-card" key={template.id}><a className="template-thumb-link" href={`#/templates/${template.id}`}><TemplateThumbnail templateId={template.id} thumbnailKey={template.thumbnail_key} marketId={selectedMarketId} previewTone={template.config_json?.preview_tone || "classic"} name={template.name} type={template.template_type} /></a><span className="template-source">{template.source_template_id ? "Globalden kopyalandı" : "Markete özel"}</span><h3>{template.name}</h3><p>{template.description || ""}</p><small>{template.config_json?.page_format === "a4_landscape" ? "A4 yatay" : "A4 dikey"} · {template.config_json?.slot_count || "-"} ürün · {template.is_active ? "Aktif" : "Pasif"}</small><div className="table-actions"><Button href={`#/templates/${template.id}`}>Önizle</Button>{canManage ? <><Button variant="primary" onClick={() => { setActionError(""); setBuilderTemplate(template); }}>Düzenle</Button><Button onClick={async () => { await updateTemplate(template.id, { is_active: !template.is_active }, selectedMarketId); await loadTemplates(); }}>{template.is_active ? "Pasifleştir" : "Aktifleştir"}</Button></> : null}</div></article>)}</div></section>
         </>
       ) : null}
       <section className="template-management-grid">

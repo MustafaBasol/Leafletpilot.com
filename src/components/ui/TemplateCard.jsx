@@ -1,13 +1,21 @@
 import { Badge } from "./Badge.jsx";
 import { Button } from "./Button.jsx";
 import { StatusBadge } from "./StatusBadge.jsx";
+import { TemplateThumbnail } from "./TemplateThumbnail.jsx";
+import { getSelectedMarketId } from "../../api/authSession.js";
 
 export function TemplateCard({ template, onMakeDefault, onDuplicate, onToggle, canManage = true }) {
   return (
     <article className="template-management-card">
-      <a className={`template-thumb template-${template.previewTone}`} href={`#/templates/${template.id}`}>
-        <span>{template.name}</span>
-        <strong>{template.type}</strong>
+      <a className="template-thumb-link" href={`#/templates/${template.id}`}>
+        <TemplateThumbnail
+          templateId={template.id}
+          thumbnailKey={template.thumbnailKey}
+          marketId={getSelectedMarketId()}
+          previewTone={template.previewTone}
+          name={template.name}
+          type={template.type}
+        />
       </a>
       <div className="template-card-body">
         <div className="template-title-row">

@@ -17,7 +17,9 @@ from app.services.entitlements import (
     has_capacity,
     require_capability,
     resolve_capabilities,
+    resolve_plan_code,
 )
+from app.services.plans import plan_rank
 from app.services.preview_renderer import render_campaign_preview_html
 from app.services.rendering import storage_path_for_key
 from app.services.template_presets import SUPERMARKET_PRESETS
@@ -178,6 +180,11 @@ async def adopt_global_template(session: AsyncSession, source_id: UUID, market_i
     if market is None or source is None:
         raise _not_found()
     require_capability(market, "clone_global_template")
+    if plan_rank(resolve_plan_code(market)) < plan_rank(source.minimum_plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu şablon mevcut planınızdan daha yüksek bir plan gerektiriyor.",
+        )
     existing = await session.scalar(select(Template).where(Template.market_id == market_id, Template.source_template_id == source.id))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This global template is already added to the market.")

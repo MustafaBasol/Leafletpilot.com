@@ -1927,6 +1927,10 @@ tbody tr:hover {
   overflow: hidden;
 }
 
+.template-thumb-link {
+  display: block;
+}
+
 .template-thumb {
   display: grid;
   min-height: 170px;
@@ -1934,6 +1938,20 @@ tbody tr:hover {
   gap: 8px;
   color: var(--white);
   padding: 20px;
+}
+
+.template-thumb-image {
+  padding: 0;
+  overflow: hidden;
+  background: var(--neutral-100);
+}
+
+.template-thumb-image img {
+  width: 100%;
+  height: 100%;
+  min-height: 170px;
+  object-fit: cover;
+  display: block;
 }
 
 .template-thumb span {
@@ -2667,6 +2685,23 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.template-lock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--warning-50);
+}
+
+.template-lock-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--warning-700);
+  font-weight: 600;
 }
 
 @media (max-width: 760px) {
