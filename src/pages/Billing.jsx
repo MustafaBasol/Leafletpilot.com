@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { canManageBilling } from "../api/authSession.js";
 import {
+  cancelBillingPlanChange,
   cancelBillingSubscription,
   changeBillingPlan,
   getBillingSubscription,
@@ -139,6 +140,7 @@ export function Billing({ checkoutStatus = "" }) {
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [confirmPlanChangeCancel, setConfirmPlanChangeCancel] = useState(null);
   const [planChange, setPlanChange] = useState(null);
   const [showCheckoutSuccess] = useState(checkoutStatus === "success");
   const [pendingSync, setPendingSync] = useState(false);
@@ -367,6 +369,28 @@ export function Billing({ checkoutStatus = "" }) {
     );
   }
 
+  // Undo for a scheduled downgrade (see docs/backend/09_STRIPE_BILLING_SANDBOX.md):
+  // only releases the Stripe SubscriptionSchedule, never mutates the current
+  // plan directly — so convergence must also confirm plan_code held steady,
+  // not just that the pending_* fields cleared (no optimistic entitlement change).
+  async function handleCancelPlanChange() {
+    setConfirmPlanChangeCancel(null);
+    const planBeforeCancel = currentPlanCode;
+    await runActionWithSync(
+      "cancel-plan-change",
+      () => cancelBillingPlanChange(),
+      (s) =>
+        s?.pending_plan_code == null &&
+        s?.pending_change_reason == null &&
+        s?.pending_change_at == null &&
+        s?.plan_code === planBeforeCancel,
+      {
+        convergedMessage: `Plan değişikliği iptal edildi. ${PLAN_LABELS[planBeforeCancel] || planBeforeCancel} planınız devam edecek.`,
+        pendingMessage: "Plan değişikliği iptali alındı. Bilgileriniz birkaç saniye içinde güncellenecek.",
+      },
+    );
+  }
+
   // A subscription row existing at all (any status, including terminal ones
   // like "canceled") is enough to justify Customer Portal access for invoice
   // history/payment method management — see PART F. It is NOT enough to
@@ -433,6 +457,14 @@ export function Billing({ checkoutStatus = "" }) {
                   <p className="inline-result billing-alert">
                     <Icon name="refresh" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
                     geçiş {formatDate(subscription.pending_change_at)} tarihinde gerçekleşecek.
+                    <Button
+                      variant="secondary"
+                      className="billing-inline-refresh"
+                      disabled={!canManage || Boolean(busyAction)}
+                      onClick={() => setConfirmPlanChangeCancel(true)}
+                    >
+                      {busyAction === "cancel-plan-change" ? "İşleniyor..." : "Plan değişikliğini iptal et"}
+                    </Button>
                   </p>
                 ) : null}
                 {subscription?.pending_change_reason === "upgrade_pending_payment" ? (
@@ -598,6 +630,16 @@ export function Billing({ checkoutStatus = "" }) {
         onCancel={() => setConfirm(null)}
         onConfirm={handleCancel}
         isLoading={busyAction === "cancel"}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmPlanChangeCancel)}
+        title="Plan değişikliğini iptal et"
+        description={`${PLAN_LABELS[subscription?.pending_plan_code] || subscription?.pending_plan_code || ""} planına planlanan geçiş iptal edilecek ve mevcut ${PLAN_LABELS[currentPlanCode] || currentPlanCode} planınız devam edecek.`}
+        confirmLabel="Plan değişikliğini iptal et"
+        onCancel={() => setConfirmPlanChangeCancel(null)}
+        onConfirm={handleCancelPlanChange}
+        isLoading={busyAction === "cancel-plan-change"}
       />
     </>
   );

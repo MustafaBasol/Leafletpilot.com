@@ -704,6 +704,12 @@ export async function resumeBillingSubscription() {
   return billingApi.resumeSubscription(marketId);
 }
 
+export async function cancelBillingPlanChange() {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.cancelPlanChange(marketId);
+}
+
 export const dataSourceInfo = {
   isRealApiEnabled,
   demoMarketId,

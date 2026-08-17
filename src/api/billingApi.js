@@ -31,3 +31,7 @@ export function cancelSubscription(marketId) {
 export function resumeSubscription(marketId) {
   return apiClient.post("/billing/resume", {}, { marketId });
 }
+
+export function cancelPlanChange(marketId) {
+  return apiClient.post("/billing/cancel-plan-change", {}, { marketId });
+}

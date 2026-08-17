@@ -189,6 +189,20 @@ async def resume_subscription(
     return BillingActionResponse(**result)
 
 
+@router.post("/cancel-plan-change", response_model=BillingActionResponse)
+async def cancel_plan_change(
+    membership: MarketUser = Depends(require_market_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> BillingActionResponse:
+    try:
+        result = await billing_service.cancel_plan_change(session, membership.market)
+    except BillingError as exc:
+        raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
+    return BillingActionResponse(**result)
+
+
 @router.post("/stripe/webhook")
 async def stripe_webhook(
     request: Request,

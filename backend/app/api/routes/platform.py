@@ -44,6 +44,17 @@ from app.services.entitlements import resolve_capabilities, resolve_plan_code
 from app.services.invitation_email import InvitationDeliveryDisabled, InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
 from app.services.plans import get_plan, is_valid_assignable_plan_code
 
+# Stable filter values the frontend sends (`plan=starter|standard|pro|unassigned`)
+# mapped to the raw `Market.subscription_plan` values that satisfy them — the
+# legacy "growth" alias is folded into "standard" so `plan=standard` matches
+# both, same as `resolve_plan_code`/`get_plan` already do for display.
+MARKET_PLAN_FILTER_RAW_CODES: dict[str, tuple[str, ...]] = {
+    "starter": ("starter",),
+    "standard": ("standard", "growth"),
+    "pro": ("pro",),
+    "unassigned": ("unassigned",),
+}
+
 router = APIRouter(prefix="/platform", tags=["platform"])
 
 
@@ -292,6 +303,7 @@ async def list_platform_markets(
     lifecycle_status: str | None = None,
     readiness: str | None = None,
     billing_sync_status: str | None = Query(default=None),
+    plan: str | None = None,
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     _: PlatformAdmin = Depends(get_current_platform_admin),
@@ -305,6 +317,11 @@ async def list_platform_markets(
         base_conditions.append(Market.lifecycle_status == lifecycle_status)
     if readiness:
         base_conditions.append(readiness_state == readiness)
+    if plan:
+        raw_codes = MARKET_PLAN_FILTER_RAW_CODES.get(plan)
+        if raw_codes is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid plan filter.")
+        base_conditions.append(Market.subscription_plan.in_(raw_codes))
     if billing_sync_status == "error":
         base_conditions.append(MarketSubscription.sync_error.is_not(None))
     elif billing_sync_status == "no_subscription":

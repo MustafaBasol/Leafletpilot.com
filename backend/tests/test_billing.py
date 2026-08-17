@@ -2094,6 +2094,7 @@ async def test_billing_subscription_endpoint_normalizes_legacy_plan_code_without
         ("/api/billing/change-plan", {"plan_code": "starter"}),
         ("/api/billing/cancel", None),
         ("/api/billing/resume", None),
+        ("/api/billing/cancel-plan-change", None),
     ],
 )
 async def test_billing_mutation_endpoints_reject_market_staff_when_test_database_url_is_configured(
@@ -3175,4 +3176,262 @@ async def test_stale_invoice_event_is_discarded_when_test_database_url_is_config
             assert applied is False
             assert row.latest_invoice_id == "in_newer"
     finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PR #69 final closure round — PART A: customer-facing cancellation of a
+# scheduled downgrade. Only releases the Stripe SubscriptionSchedule; the
+# active subscription (plan_code/status/cancel_at_period_end) is left
+# untouched, and the local pending_* fields are only ever cleared by the
+# webhook/resync path (core rule at the top of this module), never written
+# directly by cancel_plan_change itself.
+# ---------------------------------------------------------------------------
+
+
+async def _add_pending_downgrade_subscription_row(session, market, *, sub_id: str, schedule_id: str) -> MarketSubscription:
+    row = MarketSubscription(
+        market_id=market.id,
+        plan_code="standard",
+        status="active",
+        stripe_customer_id="cus_pending_downgrade",
+        stripe_subscription_id=sub_id,
+        stripe_schedule_id=schedule_id,
+        currency="eur",
+        unit_amount=11900,
+        current_period_start=_dt(1_700_000_000),
+        current_period_end=_dt(1_702_592_000),
+        cancel_at_period_end=False,
+        pending_plan_code="starter",
+        pending_change_reason="downgrade",
+        pending_change_at=_dt(1_702_592_000),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_releases_schedule_and_returns_controlled_status_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    released: dict = {}
+
+    async def fake_release(schedule_id):
+        released["schedule_id"] = schedule_id
+        return {"id": schedule_id, "status": "released"}
+
+    monkeypatch.setattr("stripe.SubscriptionSchedule.release_async", fake_release)
+    monkeypatch.setattr("stripe.Subscription.modify_async", _unexpected_stripe_call("stripe.Subscription.modify_async"))
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="standard")
+            row = await _add_pending_downgrade_subscription_row(
+                session, market, sub_id="sub_cancel_plan_change", schedule_id="sub_sched_cancel_plan_change"
+            )
+            await session.commit()
+
+            result = await billing_service.cancel_plan_change(session, market)
+
+            assert result == {"status": "plan_change_canceled"}
+            assert released["schedule_id"] == "sub_sched_cancel_plan_change"
+
+            # No direct entitlement/local-state mutation — pending_* fields
+            # (webhook/resync-owned) and the active plan are unchanged; only
+            # the same webhook/resync path that wrote them may clear them.
+            await session.refresh(row)
+            assert row.plan_code == "standard"
+            assert row.status == "active"
+            assert row.cancel_at_period_end is False
+            assert row.pending_plan_code == "starter"
+            assert row.pending_change_reason == "downgrade"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_rejects_when_no_pending_downgrade_exists_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(
+        "stripe.SubscriptionSchedule.release_async", _unexpected_stripe_call("stripe.SubscriptionSchedule.release_async")
+    )
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="standard")
+            await _add_active_subscription_row(session, market, plan_code="standard", sub_id="sub_no_pending")
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.cancel_plan_change(session, market)
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_rejects_pending_upgrade_not_downgrade_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # A pending upgrade-payment (pending_change_reason="upgrade_pending_payment")
+    # has no Subscription Schedule to release — only a scheduled *downgrade*
+    # is eligible for this endpoint.
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    monkeypatch.setattr(
+        "stripe.SubscriptionSchedule.release_async", _unexpected_stripe_call("stripe.SubscriptionSchedule.release_async")
+    )
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="starter")
+            row = await _add_active_subscription_row(session, market, plan_code="starter", sub_id="sub_pending_upgrade")
+            row.pending_plan_code = "standard"
+            row.pending_change_reason = "upgrade_pending_payment"
+            row.pending_change_at = _dt(1_702_592_000)
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.cancel_plan_change(session, market)
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_rejects_when_no_subscription_row_at_all_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.cancel_plan_change(session, market)
+            assert exc_info.value.status_code == 404
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_handles_already_released_schedule_safely_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def fake_release_already_gone(schedule_id):
+        raise stripe.error.InvalidRequestError(
+            "No such subscription schedule.", param="schedule", code="resource_missing"
+        )
+
+    monkeypatch.setattr("stripe.SubscriptionSchedule.release_async", fake_release_already_gone)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="standard")
+            await _add_pending_downgrade_subscription_row(
+                session, market, sub_id="sub_already_released", schedule_id="sub_sched_already_released"
+            )
+            await session.commit()
+
+            result = await billing_service.cancel_plan_change(session, market)
+            assert result == {"status": "plan_change_canceled"}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_reraises_unrelated_stripe_invalid_request_error_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def fake_release_rejected(schedule_id):
+        raise stripe.error.InvalidRequestError("Something else went wrong.", param="schedule", code="other_error")
+
+    monkeypatch.setattr("stripe.SubscriptionSchedule.release_async", fake_release_rejected)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session, subscription_plan="standard")
+            await _add_pending_downgrade_subscription_row(
+                session, market, sub_id="sub_reraise", schedule_id="sub_sched_reraise"
+            )
+            await session.commit()
+
+            with pytest.raises(stripe.error.InvalidRequestError):
+                await billing_service.cancel_plan_change(session, market)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_plan_change_route_success_and_market_scoping_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    released_schedule_ids: list[str] = []
+
+    async def fake_release(schedule_id):
+        released_schedule_ids.append(schedule_id)
+        return {"id": schedule_id, "status": "released"}
+
+    monkeypatch.setattr("stripe.SubscriptionSchedule.release_async", fake_release)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        other_market_id = uuid4()
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id, subscription_plan="standard")
+            other_market = await _create_market(session, id=other_market_id, subscription_plan="standard")
+            session.add(admin_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            await _add_pending_downgrade_subscription_row(
+                session, market, sub_id="sub_route_own", schedule_id="sub_sched_route_own"
+            )
+            await _add_pending_downgrade_subscription_row(
+                session, other_market, sub_id="sub_route_other", schedule_id="sub_sched_route_other"
+            )
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            # A market admin scoped to `market_id` can never reach the other
+            # market's schedule — require_market_admin's tenant check (403)
+            # fires before billing_service.cancel_plan_change is ever called.
+            cross_tenant_response = await client.post(
+                "/api/billing/cancel-plan-change",
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(other_market_id)},
+            )
+            assert cross_tenant_response.status_code == 403
+            assert "sub_sched_route_other" not in released_schedule_ids
+
+            own_response = await client.post(
+                "/api/billing/cancel-plan-change",
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+            )
+            assert own_response.status_code == 200
+            assert own_response.json() == {"status": "plan_change_canceled"}
+            assert released_schedule_ids == ["sub_sched_route_own"]
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()

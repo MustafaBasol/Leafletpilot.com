@@ -5,7 +5,7 @@ Every ``stripe.*`` call in the backend lives in this package (mirrors how
 
 Core rule (see the implementation plan): mutation functions here
 (``create_checkout_session``, ``change_plan``, ``cancel_subscription``,
-``resume_subscription``, ``create_portal_session``) only call Stripe and
+``resume_subscription``, ``cancel_plan_change``, ``create_portal_session``) only call Stripe and
 return its response — they never write ``MarketSubscription`` or
 ``Market.subscription_plan``. The only functions that write that state are
 ``sync_subscription_from_stripe_object`` / ``apply_invoice_event`` /
@@ -519,6 +519,30 @@ async def resume_subscription(session: AsyncSession, market: Market) -> dict:
     row = await _require_subscription_row(session, market.id)
     await stripe.Subscription.modify_async(row.stripe_subscription_id, cancel_at_period_end=False)
     return {"status": "resumed"}
+
+
+async def cancel_plan_change(session: AsyncSession, market: Market) -> dict:
+    """Releases a pending downgrade's Stripe Subscription Schedule, leaving
+    the active subscription untouched at its current plan — the customer-
+    facing undo for a scheduled downgrade (see ``change_plan``). Only ever
+    releases the schedule id on this market's own row (tenant-scoped by
+    ``_require_subscription_row``), never mutates ``cancel_at_period_end`` or
+    any entitlement directly; the webhook/resync path remains the sole writer
+    of ``pending_plan_code``/``pending_change_reason``/``pending_change_at``.
+    """
+    _require_enabled()
+    row = await _require_subscription_row(session, market.id)
+    if row.pending_change_reason != "downgrade" or not row.pending_plan_code or not row.stripe_schedule_id:
+        raise BillingError("Bekleyen bir plan değişikliği bulunamadı.", status_code=409)
+    try:
+        await stripe.SubscriptionSchedule.release_async(row.stripe_schedule_id)
+    except stripe.error.InvalidRequestError as exc:
+        if not (exc.http_status == 404 or getattr(exc, "code", None) == "resource_missing"):
+            raise
+        # Already released/no longer active on Stripe's side (e.g. a retried
+        # request) — nothing left to release, safe no-op; the next webhook/
+        # resync will reconcile the local pending_* fields regardless.
+    return {"status": "plan_change_canceled"}
 
 
 async def list_invoices(session: AsyncSession, market: Market, *, limit: int = 20, starting_after: str | None = None) -> dict:

@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
+from app.api.routes.platform import list_platform_markets
 from app.api.routes.platform_billing import billing_health, plan_mapping_health
 from app.core.database import Base
 from app.core.config import settings
@@ -360,3 +361,206 @@ async def test_billing_health_reports_not_configured_environment_when_stripe_dis
             assert result["portal_status"] == "unavailable"
     finally:
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PR #69 final closure round — PART C: GET /platform/markets exposes a
+# canonical `plan`/`Plan` display label and supports `plan=` filtering,
+# entirely from local DB state (Market.subscription_plan / MarketSubscription)
+# — no per-market Stripe call, ever (see PART C3 in the task brief).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_exposes_canonical_plan_and_public_display_label_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            starter_market = await _create_market(session, subscription_plan="starter")
+            growth_market = await _create_market(session, subscription_plan="growth")
+            unassigned_market = await _create_market(session, subscription_plan="unassigned")
+            await session.commit()
+
+            response = await list_platform_markets(plan=None, limit=25, offset=0, session=session)
+            by_id = {item.id: item for item in response.items}
+
+            assert by_id[starter_market.id].subscription_plan == "starter"
+            assert by_id[starter_market.id].subscription_plan_display == "Başlangıç"
+            # The raw code preserves the legacy "growth" alias (see
+            # entitlements.resolve_plan_code) but the *display* name is
+            # always the canonical public "Plus" — never "growth"/"standard"
+            # raw. The UI (PlatformMarketList.jsx) renders subscription_plan_display,
+            # never subscription_plan, for exactly this reason.
+            assert by_id[growth_market.id].subscription_plan == "growth"
+            assert by_id[growth_market.id].subscription_plan_display == "Plus"
+            assert by_id[unassigned_market.id].subscription_plan == "unassigned"
+            assert by_id[unassigned_market.id].subscription_plan_display == "Atanmamış"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_plan_filter_matches_each_canonical_code_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            starter_market = await _create_market(session, subscription_plan="starter")
+            pro_market = await _create_market(session, subscription_plan="pro")
+            unassigned_market = await _create_market(session, subscription_plan="unassigned")
+            await session.commit()
+
+            # Assertions tolerate other markets left over from earlier test
+            # runs against the shared TEST_DATABASE_URL (no per-test
+            # truncation) — every item in a filtered page must itself carry
+            # the requested plan, and this test's own market must be among them.
+            starter_response = await list_platform_markets(plan="starter", limit=25, offset=0, session=session)
+            assert all(item.subscription_plan == "starter" for item in starter_response.items)
+            assert starter_market.id in {item.id for item in starter_response.items}
+
+            pro_response = await list_platform_markets(plan="pro", limit=25, offset=0, session=session)
+            assert all(item.subscription_plan == "pro" for item in pro_response.items)
+            assert pro_market.id in {item.id for item in pro_response.items}
+
+            unassigned_response = await list_platform_markets(plan="unassigned", limit=25, offset=0, session=session)
+            assert all(item.subscription_plan == "unassigned" for item in unassigned_response.items)
+            assert unassigned_market.id in {item.id for item in unassigned_response.items}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_plan_filter_standard_includes_legacy_growth_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            standard_market = await _create_market(session, subscription_plan="standard")
+            growth_market = await _create_market(session, subscription_plan="growth")
+            starter_market = await _create_market(session, subscription_plan="starter")
+            await session.commit()
+
+            response = await list_platform_markets(plan="standard", limit=25, offset=0, session=session)
+            returned_ids = {item.id for item in response.items}
+
+            # Raw subscription_plan preserves the legacy "growth" alias, but
+            # every returned row's *display* name (what the admin UI shows)
+            # is the canonical "Plus" regardless.
+            assert all(item.subscription_plan_display == "Plus" for item in response.items)
+            assert {standard_market.id, growth_market.id} <= returned_ids
+            assert starter_market.id not in returned_ids
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_plan_filter_rejects_unknown_value_when_test_database_url_is_configured() -> None:
+    from fastapi import HTTPException
+
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            with pytest.raises(HTTPException) as exc_info:
+                await list_platform_markets(plan="not-a-real-plan", session=session)
+            assert exc_info.value.status_code == 422
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_plan_filter_composes_with_lifecycle_status_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            active_pro = await _create_market(session, subscription_plan="pro", lifecycle_status="active")
+            trial_pro = await _create_market(session, subscription_plan="pro", lifecycle_status="trial")
+            active_starter = await _create_market(session, subscription_plan="starter", lifecycle_status="active")
+            await session.commit()
+
+            response = await list_platform_markets(plan="pro", lifecycle_status="active", limit=25, offset=0, session=session)
+            returned_ids = {item.id for item in response.items}
+
+            assert all(item.subscription_plan == "pro" and item.lifecycle_status == "active" for item in response.items)
+            assert active_pro.id in returned_ids
+            assert trial_pro.id not in returned_ids
+            assert active_starter.id not in returned_ids
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_plan_filter_composes_with_billing_sync_status_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            healthy_pro = await _create_market(session, subscription_plan="pro")
+            erroring_pro = await _create_market(session, subscription_plan="pro")
+            await session.commit()
+            session.add(
+                MarketSubscription(
+                    market_id=healthy_pro.id,
+                    plan_code="pro",
+                    status="active",
+                    stripe_customer_id="cus_plan_filter_ok",
+                    stripe_subscription_id="sub_plan_filter_ok",
+                )
+            )
+            session.add(
+                MarketSubscription(
+                    market_id=erroring_pro.id,
+                    plan_code="pro",
+                    status="active",
+                    stripe_customer_id="cus_plan_filter_err",
+                    stripe_subscription_id="sub_plan_filter_err",
+                    sync_error="Unmapped Stripe price id=price_x",
+                )
+            )
+            await session.commit()
+
+            response = await list_platform_markets(plan="pro", billing_sync_status="error", limit=25, offset=0, session=session)
+            returned_ids = {item.id for item in response.items}
+
+            assert all(item.subscription_plan == "pro" and item.billing.billing_sync_status == "error" for item in response.items)
+            assert erroring_pro.id in returned_ids
+            assert healthy_pro.id not in returned_ids
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_market_list_and_plan_filter_never_call_stripe_when_test_database_url_is_configured(monkeypatch) -> None:
+    import stripe
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("the platform market list must never call the Stripe API per row")
+
+    monkeypatch.setattr(stripe.Subscription, "retrieve_async", _unexpected)
+    monkeypatch.setattr(stripe.Price, "list_async", _unexpected)
+    monkeypatch.setattr(stripe.SubscriptionSchedule, "retrieve_async", _unexpected)
+
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            growth_market = await _create_market(session, subscription_plan="growth")
+            standard_market = await _create_market(session, subscription_plan="standard")
+            await session.commit()
+
+            # Getting this far without the monkeypatched Stripe stubs raising
+            # is itself the assertion — a per-row Stripe call would have
+            # thrown AssertionError above. Also sanity-check the filter still
+            # returned exactly this market pair's normalized plan.
+            response = await list_platform_markets(plan="standard", limit=25, offset=0, session=session)
+            returned_ids = {item.id for item in response.items}
+            assert {growth_market.id, standard_market.id} <= returned_ids
+            assert all(item.subscription_plan_display == "Plus" for item in response.items)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_platform_markets_route_requires_platform_admin_auth_with_plan_param() -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/api/platform/markets", params={"plan": "starter"})
+    assert response.status_code == 401
