@@ -25,6 +25,13 @@ const statusToneMap = {
   "MVP hazır": "success",
   Sağlıklı: "success",
   "Kurulu değil": "warning",
+  "Abonelik aktif": "success",
+  "Deneme sürümü": "primary",
+  "Ödeme gecikti": "warning",
+  "Ödenmedi": "danger",
+  "Abonelik iptal edildi": "danger",
+  "Ödeme onayı bekleniyor": "warning",
+  "Abonelik yok": "neutral",
 };
 
 export function StatusBadge({ status }) {

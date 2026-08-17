@@ -2,23 +2,23 @@ export const navGroups = [
   {
     label: "Operasyon",
     items: [
-      { label: "Dashboard", path: "/dashboard", icon: "chart" },
-      { label: "Kampanyalar", path: "/campaigns", icon: "file" },
-      { label: "Yeni Kampanya", path: "/campaigns/new", icon: "plus", mutationOnly: true },
+      { label: "Dashboard", path: "/dashboard", icon: "dashboard" },
+      { label: "Kampanyalar", path: "/campaigns", icon: "megaphone" },
+      { label: "Yeni Kampanya", path: "/campaigns/new", icon: "plusCircle", mutationOnly: true },
     ],
   },
   {
     label: "Katalog",
     items: [
       { label: "Ürünlerim", path: "/products", icon: "box" },
-      { label: "Kategoriler", path: "/categories", icon: "file" },
-      { label: "Markalar", path: "/brands", icon: "check" },
+      { label: "Kategoriler", path: "/categories", icon: "tags" },
+      { label: "Markalar", path: "/brands", icon: "badge" },
     ],
   },
   {
     label: "Tasarım",
     items: [
-      { label: "Şablonlar", path: "/templates", icon: "file" },
+      { label: "Şablonlar", path: "/templates", icon: "layoutTemplate" },
       { label: "Dosyalar", path: "/files", icon: "file" },
     ],
   },
@@ -26,10 +26,11 @@ export const navGroups = [
     label: "Yönetim",
     items: [
       { label: "Marketler", path: "/markets", icon: "store" },
-      { label: "Ekip", path: "/team", icon: "settings", adminOnly: true },
+      { label: "Ekip", path: "/team", icon: "users", adminOnly: true },
       { label: "Bot Bağlantıları", path: "/bot-connections", icon: "bot" },
       { label: "Raporlar", path: "/reports", icon: "chart" },
       { label: "Ayarlar", path: "/settings", icon: "settings" },
+      { label: "Faturalandırma", path: "/settings/billing", icon: "creditCard" },
     ],
   },
 ];
@@ -110,6 +111,10 @@ export const pageMeta = {
     description: "Market, dil, para birimi ve çıktı tercihleri.",
     action: "Kaydet",
     actionHref: "#/settings",
+  },
+  "/settings/billing": {
+    title: "Faturalandırma",
+    description: "Abonelik planı, ödeme durumu ve fatura geçmişi.",
   },
 };
 

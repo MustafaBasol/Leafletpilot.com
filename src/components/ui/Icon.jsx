@@ -128,6 +128,59 @@ const paths = {
       <path d="M21 12H9" />
     </>
   ),
+  dashboard: (
+    <>
+      <rect x="3" y="3" width="7" height="9" rx="1" />
+      <rect x="14" y="3" width="7" height="5" rx="1" />
+      <rect x="14" y="12" width="7" height="9" rx="1" />
+      <rect x="3" y="16" width="7" height="5" rx="1" />
+    </>
+  ),
+  megaphone: (
+    <>
+      <path d="M3 10v4a1 1 0 0 0 1 1h2l11 5V4L6 9H4a1 1 0 0 0-1 1Z" />
+      <path d="M17 8a4 4 0 0 1 0 8" />
+    </>
+  ),
+  plusCircle: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </>
+  ),
+  tags: (
+    <>
+      <path d="M12 2h7a2 2 0 0 1 2 2v7l-9.5 9.5a2 2 0 0 1-2.83 0L3 15.17a2 2 0 0 1 0-2.83Z" />
+      <circle cx="17" cy="7" r="1.2" />
+    </>
+  ),
+  badge: (
+    <>
+      <path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  layoutTemplate: (
+    <>
+      <rect x="3" y="3" width="18" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 4.5a3.2 3.2 0 0 1 0 6.2" />
+      <path d="M21.5 20a5.8 5.8 0 0 0-4-5.6" />
+    </>
+  ),
+  creditCard: (
+    <>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
+    </>
+  ),
 };
 
 export function Icon({ name = "file" }) {

@@ -123,10 +123,10 @@ const fallbackPlans = [
   },
   {
     code: "standard",
-    name: "Standart",
+    name: "Plus",
     monthly_price: 119,
     currency: "EUR",
-    tagline: "Düzenli kampanya yapan marketler için",
+    tagline: "Büyüyen ve düzenli kampanya yapan marketler için",
     features: ["Ayda 10 kampanya", "Tüm broşür şablonları", "A4 PDF + PNG çıktı", "Öncelikli destek"],
     is_recommended: true,
   },

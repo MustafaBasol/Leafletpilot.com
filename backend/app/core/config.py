@@ -29,6 +29,13 @@ EXAMPLE_SIGNUP_THROTTLE_SECRETS = {
     "secret",
     "changeme",
 }
+EXAMPLE_STRIPE_SECRETS = {
+    "secret",
+    "changeme",
+    "change-me",
+    "stripe-webhook-secret",
+    "example-secret",
+}
 
 
 class Settings(BaseSettings):
@@ -90,6 +97,25 @@ class Settings(BaseSettings):
     telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
     telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
     telegram_http_max_attempts: int = Field(default=1, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
+    stripe_enabled: bool = Field(default=False, alias="STRIPE_ENABLED")
+    stripe_secret_key: str = Field(default="", alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str = Field(default="", alias="STRIPE_WEBHOOK_SECRET")
+    stripe_price_lookup_key_starter: str = Field(
+        default="leafletpilot_starter_monthly_eur", alias="STRIPE_PRICE_LOOKUP_KEY_STARTER"
+    )
+    stripe_price_lookup_key_standard: str = Field(
+        default="leafletpilot_standard_monthly_eur", alias="STRIPE_PRICE_LOOKUP_KEY_STANDARD"
+    )
+    stripe_price_lookup_key_pro: str = Field(
+        default="leafletpilot_pro_monthly_eur", alias="STRIPE_PRICE_LOOKUP_KEY_PRO"
+    )
+    stripe_checkout_success_url: str = Field(default="", alias="STRIPE_CHECKOUT_SUCCESS_URL")
+    stripe_checkout_cancel_url: str = Field(default="", alias="STRIPE_CHECKOUT_CANCEL_URL")
+    stripe_portal_return_url: str = Field(default="", alias="STRIPE_PORTAL_RETURN_URL")
+    # VAT/TVA is not currently collected; Stripe Automatic Tax must stay off
+    # until that changes. Kept as a flag (not deleted) so enabling it later is
+    # a config change, not a code change — see docs/backend/09_STRIPE_BILLING_SANDBOX.md.
+    stripe_automatic_tax_enabled: bool = Field(default=False, alias="STRIPE_AUTOMATIC_TAX_ENABLED")
     demo_operations_enabled: bool = Field(default=False, alias="DEMO_OPERATIONS_ENABLED")
     demo_market_id: UUID | None = Field(default=None, alias="DEMO_MARKET_ID")
     demo_market_slug: str = Field(default="", alias="DEMO_MARKET_SLUG")
@@ -108,6 +134,18 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def stripe_checkout_success_url_resolved(self) -> str:
+        return self.stripe_checkout_success_url or f"{self.frontend_base_url}/#/settings/billing?checkout=success"
+
+    @property
+    def stripe_checkout_cancel_url_resolved(self) -> str:
+        return self.stripe_checkout_cancel_url or f"{self.frontend_base_url}/#/settings/billing?checkout=cancel"
+
+    @property
+    def stripe_portal_return_url_resolved(self) -> str:
+        return self.stripe_portal_return_url or f"{self.frontend_base_url}/#/settings/billing"
 
     @property
     def local_storage_path(self) -> Path:
@@ -164,6 +202,8 @@ class Settings(BaseSettings):
             self._validate_enabled_telegram_settings()
         if self.platform_admin_enabled:
             self._validate_platform_settings()
+        if self.stripe_enabled:
+            self._validate_enabled_stripe_settings()
 
         if self.demo_operations_enabled:
             if self.demo_market_id is None:
@@ -229,6 +269,30 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_BOT_ENABLED=true.")
         if self.is_production and urlparse(self.telegram_webhook_base_url).scheme != "https":
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
+
+    def _validate_enabled_stripe_settings(self) -> None:
+        secret_key = self.stripe_secret_key.strip()
+        if not secret_key:
+            raise ValueError("STRIPE_SECRET_KEY is required when STRIPE_ENABLED=true.")
+        if (secret_key.startswith("sk_live_") or secret_key.startswith("rk_live_")) and not self.is_production:
+            raise ValueError("STRIPE_SECRET_KEY must not be a live-mode key outside ENVIRONMENT=production.")
+        normalized_webhook_secret = self.stripe_webhook_secret.strip().lower()
+        if len(self.stripe_webhook_secret.strip()) < 32 or normalized_webhook_secret in EXAMPLE_STRIPE_SECRETS:
+            raise ValueError("STRIPE_WEBHOOK_SECRET must be a strong non-placeholder value.")
+        if not (
+            self.stripe_price_lookup_key_starter.strip()
+            and self.stripe_price_lookup_key_standard.strip()
+            and self.stripe_price_lookup_key_pro.strip()
+        ):
+            raise ValueError("STRIPE_PRICE_LOOKUP_KEY_STARTER/STANDARD/PRO are required when STRIPE_ENABLED=true.")
+        if self.is_production:
+            for url in (
+                self.stripe_checkout_success_url_resolved,
+                self.stripe_checkout_cancel_url_resolved,
+                self.stripe_portal_return_url_resolved,
+            ):
+                if urlparse(url).scheme != "https":
+                    raise ValueError("Stripe checkout/portal URLs must use HTTPS in production.")
 
     def _validate_platform_settings(self) -> None:
         normalized_secret = self.platform_jwt_secret.strip().lower()

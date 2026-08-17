@@ -12,6 +12,7 @@ export { Input, SelectPlaceholder } from "./Input.jsx";
 export { MissingProductModal } from "./MissingProductModal.jsx";
 export { Modal } from "./Modal.jsx";
 export { PageHeader } from "./PageHeader.jsx";
+export { PlanChangeModal } from "./PlanChangeModal.jsx";
 export { PreviewFrame } from "./PreviewFrame.jsx";
 export { ProviderConnectionCard, SetupChecklist } from "./ProviderConnectionCard.jsx";
 export { ProductThumbnail } from "./ProductThumbnail.jsx";

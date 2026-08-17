@@ -14,6 +14,8 @@ from app.core.lifecycle import can_transition_lifecycle
 from app.core.security import create_platform_access_token, generate_invitation_token, hash_invitation_token, verify_password
 from app.models import ActivityLog, Campaign, Market, MarketInvitation, MarketUser, PlatformAdmin, PlatformAuditLog, Product, SignupRequest
 from app.models.base import utc_now
+from app.models.billing import MarketSubscription
+from app.schemas.billing import InvoiceListRead
 from app.schemas.common import ListResponse
 from app.schemas.platform import (
     LifecycleUpdateRequest,
@@ -22,6 +24,7 @@ from app.schemas.platform import (
     OwnerInvitationActionResponse,
     PlatformAdminRead,
     PlatformAuditLogRead,
+    PlatformBillingSummary,
     PlatformInvitationSummary,
     PlatformLoginRequest,
     PlatformLoginResponse,
@@ -35,9 +38,22 @@ from app.schemas.platform import (
     SignupRequestRead,
     SignupRequestUpdate,
 )
+from app.services.billing import service as billing_service
+from app.services.billing.errors import BillingError
 from app.services.entitlements import resolve_capabilities, resolve_plan_code
 from app.services.invitation_email import InvitationDeliveryDisabled, InvitationEmailError, OwnerInvitationEmail, send_owner_invitation_email
 from app.services.plans import get_plan, is_valid_assignable_plan_code
+
+# Stable filter values the frontend sends (`plan=starter|standard|pro|unassigned`)
+# mapped to the raw `Market.subscription_plan` values that satisfy them — the
+# legacy "growth" alias is folded into "standard" so `plan=standard` matches
+# both, same as `resolve_plan_code`/`get_plan` already do for display.
+MARKET_PLAN_FILTER_RAW_CODES: dict[str, tuple[str, ...]] = {
+    "starter": ("starter",),
+    "standard": ("standard", "growth"),
+    "pro": ("pro",),
+    "unassigned": ("unassigned",),
+}
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -286,6 +302,8 @@ async def provision_signup_request(
 async def list_platform_markets(
     lifecycle_status: str | None = None,
     readiness: str | None = None,
+    billing_sync_status: str | None = Query(default=None),
+    plan: str | None = None,
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     _: PlatformAdmin = Depends(get_current_platform_admin),
@@ -299,19 +317,37 @@ async def list_platform_markets(
         base_conditions.append(Market.lifecycle_status == lifecycle_status)
     if readiness:
         base_conditions.append(readiness_state == readiness)
+    if plan:
+        raw_codes = MARKET_PLAN_FILTER_RAW_CODES.get(plan)
+        if raw_codes is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid plan filter.")
+        base_conditions.append(Market.subscription_plan.in_(raw_codes))
+    if billing_sync_status == "error":
+        base_conditions.append(MarketSubscription.sync_error.is_not(None))
+    elif billing_sync_status == "no_subscription":
+        base_conditions.append(MarketSubscription.id.is_(None))
+    elif billing_sync_status == "ok":
+        base_conditions.append(MarketSubscription.id.is_not(None))
+        base_conditions.append(MarketSubscription.sync_error.is_(None))
 
-    total_from_clause = Market.__table__.outerjoin(counts, counts.c.market_id == Market.id)
+    total_from_clause = (
+        Market.__table__
+        .outerjoin(counts, counts.c.market_id == Market.id)
+        .outerjoin(MarketSubscription, MarketSubscription.market_id == Market.id)
+    )
     from_clause = (
         Market.__table__
         .outerjoin(counts, counts.c.market_id == Market.id)
         .outerjoin(latest_invitation_subquery, latest_invitation_subquery.c.market_id == Market.id)
         .outerjoin(latest_invitation, latest_invitation.id == latest_invitation_subquery.c.invitation_id)
+        .outerjoin(MarketSubscription, MarketSubscription.market_id == Market.id)
     )
     total_statement = select(func.count()).select_from(total_from_clause)
     statement = (
         select(
             Market,
             latest_invitation,
+            MarketSubscription,
             func.coalesce(counts.c.member_count, 0).label("member_count"),
             func.coalesce(counts.c.active_user_count, 0).label("active_user_count"),
             func.coalesce(counts.c.product_count, 0).label("product_count"),
@@ -332,12 +368,13 @@ async def list_platform_markets(
         _market_item_from_counts(
             market,
             invitation,
+            subscription,
             member_count=member_count,
             active_user_count=active_user_count,
             product_count=product_count,
             campaign_count=campaign_count,
         )
-        for market, invitation, member_count, active_user_count, product_count, campaign_count in rows
+        for market, invitation, subscription, member_count, active_user_count, product_count, campaign_count in rows
     ]
     return ListResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
@@ -433,6 +470,47 @@ async def update_market_plan(
     await session.commit()
     await session.refresh(market)
     return await _market_detail(session, market)
+
+
+@router.post("/markets/{market_id}/billing/resync", response_model=PlatformMarketDetail)
+async def resync_market_billing(
+    market_id: UUID,
+    admin: PlatformAdmin = Depends(get_current_platform_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> PlatformMarketDetail:
+    market = await session.get(Market, market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
+    try:
+        await billing_service.resync_from_stripe(session, market)
+    except BillingError as exc:
+        _add_platform_audit(
+            session, admin, "billing_resync_failed", "market", market.id, {"error": str(exc)[:500]}
+        )
+        await session.commit()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    _add_platform_audit(session, admin, "billing_resynced", "market", market.id, {})
+    await session.commit()
+    await session.refresh(market)
+    return await _market_detail(session, market)
+
+
+@router.get("/markets/{market_id}/billing/invoices", response_model=InvoiceListRead)
+async def platform_market_invoices(
+    market_id: UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+    starting_after: str | None = Query(default=None),
+    _: PlatformAdmin = Depends(get_current_platform_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> InvoiceListRead:
+    market = await session.get(Market, market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found.")
+    try:
+        result = await billing_service.list_invoices(session, market, limit=limit, starting_after=starting_after)
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return InvoiceListRead(**result)
 
 
 @router.post("/markets/{market_id}/owner-invitation", response_model=OwnerInvitationActionResponse)
@@ -549,12 +627,39 @@ async def _market_slug(session: AsyncSession, value: str, *, explicit: bool) -> 
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Could not resolve a safe market slug.")
 
 
+def _billing_summary_from_row(subscription: MarketSubscription | None, market: Market) -> PlatformBillingSummary:
+    if subscription is None:
+        return PlatformBillingSummary(
+            plan_code=resolve_plan_code(market),
+            billing_sync_status="no_subscription",
+        )
+    return PlatformBillingSummary(
+        plan_code=subscription.plan_code,
+        pending_plan_code=subscription.pending_plan_code,
+        pending_change_at=subscription.pending_change_at,
+        pending_change_reason=subscription.pending_change_reason,
+        status=subscription.status,
+        billing_sync_status="error" if subscription.sync_error else "ok",
+        sync_error=subscription.sync_error,
+        last_synced_at=subscription.last_synced_at,
+        cancel_at_period_end=subscription.cancel_at_period_end,
+        canceled_at=subscription.canceled_at,
+        current_period_end=subscription.current_period_end,
+        stripe_customer_id=subscription.stripe_customer_id,
+        stripe_subscription_id=subscription.stripe_subscription_id,
+        stripe_price_id=subscription.stripe_price_id,
+        unit_amount=subscription.unit_amount,
+        currency=subscription.currency,
+    )
+
+
 async def _market_item(session: AsyncSession, market: Market) -> PlatformMarketListItem:
     member_count = await session.scalar(select(func.count()).select_from(MarketUser).where(MarketUser.market_id == market.id))
     product_count = await session.scalar(select(func.count()).select_from(Product).where(Product.market_id == market.id))
     campaign_count = await session.scalar(select(func.count()).select_from(Campaign).where(Campaign.market_id == market.id))
     invitation = await _owner_invitation(session, market.id)
     readiness = await _readiness_summary(session, market, invitation=invitation)
+    subscription = await session.scalar(select(MarketSubscription).where(MarketSubscription.market_id == market.id))
     return PlatformMarketListItem(
         id=market.id,
         name=market.name,
@@ -569,6 +674,7 @@ async def _market_item(session: AsyncSession, market: Market) -> PlatformMarketL
         owner_invitation=_invitation_summary(invitation) if invitation else None,
         subscription_plan=resolve_plan_code(market),
         subscription_plan_display=get_plan(market.subscription_plan).name,
+        billing=_billing_summary_from_row(subscription, market),
         created_at=market.created_at,
     )
 
@@ -576,6 +682,7 @@ async def _market_item(session: AsyncSession, market: Market) -> PlatformMarketL
 def _market_item_from_counts(
     market: Market,
     invitation: MarketInvitation | None,
+    subscription: MarketSubscription | None,
     *,
     member_count: int,
     active_user_count: int,
@@ -602,6 +709,7 @@ def _market_item_from_counts(
         owner_invitation=_invitation_summary(invitation) if invitation else None,
         subscription_plan=resolve_plan_code(market),
         subscription_plan_display=get_plan(market.subscription_plan).name,
+        billing=_billing_summary_from_row(subscription, market),
         created_at=market.created_at,
     )
 

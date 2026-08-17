@@ -14,6 +14,7 @@ import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import { ProductCatalog } from "./pages/ProductCatalog.jsx";
 import { MarketCatalog } from "./pages/MarketCatalog.jsx";
 import { Settings } from "./pages/Settings.jsx";
+import { Billing } from "./pages/Billing.jsx";
 import { Start } from "./pages/Start.jsx";
 import { TemplateDetail } from "./pages/TemplateDetail.jsx";
 import { Templates } from "./pages/Templates.jsx";
@@ -27,6 +28,7 @@ import { SignupRequestDetail } from "./pages/platform/SignupRequestDetail.jsx";
 import { SignupRequestList } from "./pages/platform/SignupRequestList.jsx";
 import { PlatformCatalog } from "./pages/platform/PlatformCatalog.jsx";
 import { PlatformTemplates } from "./pages/platform/PlatformTemplates.jsx";
+import { PlatformBilling } from "./pages/platform/PlatformBilling.jsx";
 import { getPageTitle, pageMeta } from "./routes/routes.js";
 import { canAccessPilotPath } from "./routes/capabilities.js";
 import { getMe, login as loginWithApi } from "./api/authApi.js";
@@ -68,13 +70,16 @@ function Page({ path, sessionVersion }) {
   }
   if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
   if (pathname === "/products") return <MarketCatalog action={action} />;
-  if (path === "/categories") return <Categories />;
-  if (path === "/templates") return <Templates />;
-  if (path.startsWith("/templates/")) return <TemplateDetail templateId={path.replace("/templates/", "")} />;
-  if (path === "/bot-connections") return <BotConnections />;
-  if (path === "/settings") return <Settings />;
-  if (path === "/team") return <Team />;
-  if (path === "/onboarding") return <Onboarding />;
+  if (pathname === "/categories") return <Categories />;
+  if (pathname === "/templates") return <Templates />;
+  if (pathname.startsWith("/templates/")) return <TemplateDetail templateId={pathname.replace("/templates/", "")} />;
+  if (pathname === "/bot-connections") return <BotConnections />;
+  if (pathname === "/settings") return <Settings />;
+  if (pathname === "/settings/billing") {
+    return <Billing checkoutStatus={new URLSearchParams(search).get("checkout") || ""} />;
+  }
+  if (pathname === "/team") return <Team />;
+  if (pathname === "/onboarding") return <Onboarding />;
   if (pageMeta[pathname]) return <PlaceholderPage path={pathname} />;
   return <PlaceholderPage path="/campaigns" />;
 }
@@ -199,6 +204,7 @@ export function App() {
     else if (path === "/platform/markets") platformPage = <PlatformMarketList />;
     else if (path === "/platform/catalog") platformPage = <PlatformCatalog />;
     else if (path === "/platform/templates") platformPage = <PlatformTemplates />;
+    else if (path === "/platform/billing") platformPage = <PlatformBilling />;
     else if (path.startsWith("/platform/markets/")) platformPage = <PlatformMarketDetail id={path.replace("/platform/markets/", "")} />;
     return <PlatformAdminLayout onLogout={platformLogout}>{platformPage}</PlatformAdminLayout>;
   }

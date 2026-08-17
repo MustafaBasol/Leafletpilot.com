@@ -19,6 +19,7 @@ export function PlatformAdminLayout({ children, onLogout }) {
           <a href="#/platform/markets">{t("markets")}</a>
           <a href="#/platform/catalog">Global catalog</a>
           <a href="#/platform/templates">Templates</a>
+          <a href="#/platform/billing">Faturalandırma</a>
         </nav>
         <button className="sidebar-logout" onClick={onLogout}>{t("logout")}</button>
       </aside>

@@ -72,7 +72,7 @@ Her yeni iş şu soruyla test edilir: **"Bu, yukarıdaki cümleyi gerçekleştir
 
 ## Faz E — Gelir Altyapısı (P1)
 
-- [ ] Stripe Checkout + aylık abonelik (59/119/199€)
+- [x] Stripe Checkout + aylık abonelik (59/119/199€) — **sandbox/TEST modunda tamamlandı**, canlıya alma Faz C (auth) sonrası ayrı bir iş: `docs/backend/09_STRIPE_BILLING_SANDBOX.md`
 - [ ] Plan limitleri (kampanya/ay) uygulaması
 - [ ] Yeni market onboarding akışı (hazır 300 ürünlük katalog şablonundan kopyalama)
 - [ ] Landing: gerçek broşür görselleri + pilot müşteri yorumları + WhatsApp demo linki
