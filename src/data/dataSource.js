@@ -456,6 +456,15 @@ export async function createCatalogCategory(form) {
   );
 }
 
+export async function updateCatalogCategory(categoryId, form) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  const payload = {};
+  if (form.name !== undefined) payload.name = cleanText(form.name);
+  if (form.isActive !== undefined) payload.is_active = Boolean(form.isActive);
+  return catalogApi.updateCategory(categoryId, payload, marketId);
+}
+
 export async function parseCampaignTextPreview({ rawText, currency = "EUR", language = "tr" }) {
   if (!isRealApiEnabled) return parsedWizardProducts;
   return campaignApi.parseCampaignText({ raw_text: rawText, default_currency: currency, language }, requireSelectedMarketId());
