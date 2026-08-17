@@ -308,13 +308,63 @@ export function Billing({ checkoutStatus = "" }) {
     if (result?.portal_url) window.location.href = result.portal_url;
   }
 
+  // Cancel/resume mutate cancel_at_period_end (and, for cancel, release any
+  // pending downgrade schedule), but the local MarketSubscription mirror is
+  // only written once the resulting webhook lands — the same race as the
+  // upgrade/downgrade sync above. A single unchecked load() after the
+  // mutation can read the pre-webhook row and show stale state until a
+  // manual refresh. Bounded re-fetch here instead, shared by both actions.
+  async function runActionWithSync(actionKey, fn, isConverged, { convergedMessage, pendingMessage }) {
+    if (busyAction) return null;
+    setBusyAction(actionKey);
+    setError("");
+    setMessage("");
+    try {
+      await fn();
+      let converged = false;
+      for (let attempt = 0; attempt < PLAN_SYNC_MAX_ATTEMPTS && !converged; attempt++) {
+        if (attempt > 0) await wait(PLAN_SYNC_RETRY_DELAY_MS);
+        const subscriptionResult = await load();
+        converged = isConverged(subscriptionResult);
+      }
+      setPendingSync(!converged);
+      setMessage(converged ? convergedMessage : pendingMessage);
+      return converged;
+    } catch (e) {
+      setError(e?.message || "İşlem başarısız oldu.");
+      return null;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function handleCancel() {
     setConfirm(null);
-    await runAction("cancel", () => cancelBillingSubscription(), "İptal talebiniz alındı; dönem sonuna kadar erişiminiz devam edecek.");
+    await runActionWithSync(
+      "cancel",
+      () => cancelBillingSubscription(),
+      (s) =>
+        s?.cancel_at_period_end === true &&
+        s?.pending_plan_code == null &&
+        s?.pending_change_reason == null &&
+        s?.pending_change_at == null,
+      {
+        convergedMessage: "İptal talebiniz alındı; dönem sonuna kadar erişiminiz devam edecek.",
+        pendingMessage: "İptal talebiniz alındı. Bilgileriniz birkaç saniye içinde güncellenecek.",
+      },
+    );
   }
 
   async function handleResume() {
-    await runAction("resume", () => resumeBillingSubscription(), "Abonelik yenilemesi yeniden etkinleştirildi.");
+    await runActionWithSync(
+      "resume",
+      () => resumeBillingSubscription(),
+      (s) => s?.cancel_at_period_end === false,
+      {
+        convergedMessage: "Abonelik yenilemesi yeniden etkinleştirildi.",
+        pendingMessage: "Abonelik yenilemesi işleniyor. Bilgileriniz birkaç saniye içinde güncellenecek.",
+      },
+    );
   }
 
   // A subscription row existing at all (any status, including terminal ones

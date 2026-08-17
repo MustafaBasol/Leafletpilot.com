@@ -95,6 +95,15 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
 - Mutasyon isteği hata verirse (`catch` bloğu): modal **kapanmaz**, plan asla değişmiş gibi gösterilmez — hata modalin içinde gösterilir, kullanıcı tekrar deneyebilir veya vazgeçebilir.
 - Bu tasarım çekirdek kuralı bozmaz: hiçbir frontend kodu `subscription.plan_code`/`pending_plan_code`'u Stripe mutasyon yanıtından tahmin ederek set etmez; tek otoriteli kaynak her zaman `load()`'un döndürdüğü, backend'in yazdığı gerçek durumdur.
 
+### İptal / devam ettirme sonrası senkronizasyon
+
+`handleCancel`/`handleResume` (`cancel_at_period_end` mutasyonları) aynı webhook-yarışına maruz kalır — bu yüzden `confirmPlanChange`'deki gibi tek, kontrolsüz bir `load()`'a güvenmezler; ortak `runActionWithSync` yardımcısı üzerinden aynı `PLAN_SYNC_MAX_ATTEMPTS`/`PLAN_SYNC_RETRY_DELAY_MS` ile sınırlı yeniden-çekme yapılır:
+
+- **İptal**: başarı koşulu `subscription.cancel_at_period_end === true` **ve** `pending_plan_code`/`pending_change_reason`/`pending_change_at` alanlarının hepsi `null` — bekleyen bir düşürme varsa backend onu iptal sırasında serbest bırakır, UI da bu bayat pending state'in gerçekten temizlendiğini doğrular (aksi halde eski "planına geçiş ... tarihinde gerçekleşecek" bildirimi yanlışlıkla ekranda kalabilir).
+- **Devam ettirme**: başarı koşulu `subscription.cancel_at_period_end === false`.
+- Sınırlı deneme tükenip hâlâ senkronize olmadıysa: işlenmekte olduğunu belirten güvenli bir mesaj ve `handleManualSync` ile aynı "Yenile" aksiyonu gösterilir — plan değişikliği akışıyla aynı geri düşüş.
+- Hiçbir optimistik `setSubscription` çağrısı yoktur; iptal/devam sonrası ekranda görünen tüm alanlar (uyarı, CTA metni, erişim tarihi) doğrudan `load()`'un döndürdüğü otoriter `subscription`'a bağlıdır.
+
 ## Webhook güvenilirlik
 
 - **Idempotency**: `stripe_webhook_events.stripe_event_id` DB UNIQUE constraint; aynı event'in eşzamanlı/tekrar teslimleri güvenle no-op (`_claim_event_row`, `SELECT ... FOR UPDATE`) — tam olarak bir aktif işleyici garantisi.

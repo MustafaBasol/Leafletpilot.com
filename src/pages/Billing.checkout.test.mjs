@@ -319,6 +319,111 @@ test("usage section does not render a 0-limit progress bar for an unassigned/ter
   assert.doesNotMatch(unassignedBranch, /UsageCard/, "no usage bars must render before the metric-grid branch");
 });
 
+// ---------------------------------------------------------------------------
+// Post-cancel/resume sync (PR #69 hotfix): cancel_at_period_end mutations
+// race the webhook-driven MarketSubscription write exactly like upgrade/
+// downgrade did. handleCancel/handleResume must not trust a single
+// unchecked load() — they must bounded-retry against authoritative state
+// via the shared runActionWithSync helper, same as confirmPlanChange does
+// for plan changes.
+// ---------------------------------------------------------------------------
+
+function runActionWithSyncBody() {
+  const start = source.indexOf("async function runActionWithSync");
+  const end = source.indexOf("async function handleCancel");
+  assert.ok(start !== -1 && end !== -1, "runActionWithSync/handleCancel boundary must exist");
+  return source.slice(start, end);
+}
+
+function handleCancelBody() {
+  const start = source.indexOf("async function handleCancel");
+  const end = source.indexOf("async function handleResume");
+  assert.ok(start !== -1 && end !== -1, "handleCancel/handleResume boundary must exist");
+  return source.slice(start, end);
+}
+
+function handleResumeBody() {
+  const start = source.indexOf("async function handleResume");
+  const end = source.indexOf("// A subscription row existing at all");
+  assert.ok(start !== -1 && end !== -1, "handleResume boundary must exist");
+  return source.slice(start, end);
+}
+
+test("cancel and resume share one generic bounded sync helper instead of duplicating the polling loop", () => {
+  const helper = runActionWithSyncBody();
+  assert.match(helper, /PLAN_SYNC_MAX_ATTEMPTS/, "shared helper must reuse the bounded attempt count");
+  assert.match(helper, /PLAN_SYNC_RETRY_DELAY_MS/, "shared helper must reuse the bounded retry delay");
+  assert.match(helper, /for \(let attempt = 0; attempt < PLAN_SYNC_MAX_ATTEMPTS && !converged; attempt\+\+\)/);
+  assert.doesNotMatch(helper, /setInterval/, "must not introduce continuous polling");
+  assert.doesNotMatch(helper, /while\s*\(\s*true\s*\)/, "must not introduce unbounded polling");
+
+  const cancelBody = handleCancelBody();
+  const resumeBody = handleResumeBody();
+  assert.match(cancelBody, /runActionWithSync\(/, "cancel must go through the shared sync helper, not runAction");
+  assert.match(resumeBody, /runActionWithSync\(/, "resume must go through the shared sync helper, not runAction");
+});
+
+test("cancel waits for cancel_at_period_end=true before declaring success", () => {
+  const body = handleCancelBody();
+  assert.match(body, /s\?\.cancel_at_period_end === true/);
+});
+
+test("cancel also waits for the stale pending-downgrade fields to clear, not just cancel_at_period_end", () => {
+  const body = handleCancelBody();
+  assert.match(body, /s\?\.pending_plan_code == null/);
+  assert.match(body, /s\?\.pending_change_reason == null/);
+  assert.match(body, /s\?\.pending_change_at == null/);
+});
+
+test("cancel does not optimistically mutate subscription state before the authoritative sync resolves", () => {
+  const body = handleCancelBody();
+  assert.doesNotMatch(body, /setSubscription\(/, "cancel must rely on load() re-fetching, never a direct setSubscription optimistic write");
+});
+
+test("cancel falls back to a safe processing message (not a false success) when the bounded sync does not converge", () => {
+  const body = handleCancelBody();
+  assert.match(body, /pendingMessage: "İptal talebiniz alındı\. Bilgileriniz birkaç saniye içinde güncellenecek\."/);
+  assert.match(body, /convergedMessage: "İptal talebiniz alındı; dönem sonuna kadar erişiminiz devam edecek\."/);
+});
+
+test("resume waits for cancel_at_period_end=false before declaring success", () => {
+  const body = handleResumeBody();
+  assert.match(body, /s\?\.cancel_at_period_end === false/);
+});
+
+test("resume does not optimistically mutate subscription state before the authoritative sync resolves", () => {
+  const body = handleResumeBody();
+  assert.doesNotMatch(body, /setSubscription\(/, "resume must rely on load() re-fetching, never a direct setSubscription optimistic write");
+});
+
+test("resume falls back to a safe processing message (not a false success) when the bounded sync does not converge", () => {
+  const body = handleResumeBody();
+  assert.match(body, /pendingMessage: "Abonelik yenilemesi işleniyor\. Bilgileriniz birkaç saniye içinde güncellenecek\."/);
+  assert.match(body, /convergedMessage: "Abonelik yenilemesi yeniden etkinleştirildi\."/);
+});
+
+test("converged cancel state (cancel_at_period_end=true) renders the cancellation warning and the resume CTA, driven purely by re-fetched subscription state", () => {
+  assert.match(source, /subscription\?\.cancel_at_period_end \? \(\s*<Button onClick=\{handleResume\}/);
+  assert.match(source, /İptal talep edildi; erişiminiz \{formatDate\(subscription\.current_period_end\)\} tarihine/);
+});
+
+test("converged resume state (cancel_at_period_end=false) renders the cancel CTA instead of resume", () => {
+  const rowStart = source.indexOf('className="page-actions billing-cancel-row"');
+  const rowEnd = source.indexOf("</div>", source.indexOf("</div>", rowStart) + 1);
+  const row = source.slice(rowStart, rowEnd);
+  assert.match(row, /Aboneliği iptal et/);
+  assert.match(row, /variant="danger" onClick=\{\(\) => setConfirm\(true\)\}/);
+});
+
+test("cancel/resume reuse the same manual-sync fallback affordance as plan changes when sync does not converge", () => {
+  assert.match(source, /pendingSync \? \(\s*<Button variant="secondary" className="billing-inline-refresh" onClick=\{handleManualSync\}/);
+});
+
+test("bounded cancel/resume retry stays finite: PLAN_SYNC_MAX_ATTEMPTS is unchanged and reused, not a new unbounded constant", () => {
+  const matches = source.match(/PLAN_SYNC_MAX_ATTEMPTS\s*=\s*4/g);
+  assert.ok(matches && matches.length === 1, "PLAN_SYNC_MAX_ATTEMPTS must be defined exactly once and reused everywhere");
+});
+
 test("plan-picker CTA and click routing depend on isActiveSubscription, not row existence, for every terminal status", () => {
   assert.match(
     source,
