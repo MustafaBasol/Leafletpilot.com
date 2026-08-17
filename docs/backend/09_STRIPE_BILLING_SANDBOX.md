@@ -41,10 +41,11 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
    - **Subscriptions**: Write (`Subscription.retrieve`/`Subscription.modify` — Write izni Read'i kapsar)
    - **Subscription Schedules**: Write (`SubscriptionSchedule.create`/`.modify`/`.release`/`.retrieve` — düşürme akışı)
    - **Customer Portal**: Write (`billing_portal.Configuration.list`/`.create`, `billing_portal.Session.create`)
-   - **Invoices**: Read (`Invoice.list` — fatura geçmişi)
+   - **Invoices**: Read (`Invoice.list` — fatura geçmişi) yeterliydi; yükseltme önizlemesi artık `Invoice.create_preview` da çağırıyor (`POST /v1/invoices/create_preview`) — Stripe bu uç noktayı POST olarak sınıflandırdığından restricted key'de muhtemelen **Write** gerektirir, sandbox'ta doğrulanana kadar Write olarak ayarlayın.
    - **Webhooks**: gerekmez — imza doğrulama (`stripe.Webhook.construct_event`) yerel işlemdir, API çağrısı yapmaz.
    - Ayrı bir **Customers** izni gerekmez: uygulama hiçbir zaman `stripe.Customer.*` çağırmaz — Checkout Sessions izni, Checkout'un kendi müşteri oluşturmasına yeter; müşteri sonrasında yalnızca id ile referans alınır.
    - Prod E2E'de gözlemlenen `more_permissions_required` hatası, restricted key'de **Checkout Sessions Write** eksikliğinden kaynaklanıyordu — yukarıdaki liste eksiksiz haliyle doğrulanmıştır.
+   - **"Ödeme yöntemini yönet" 502'si (gözlemlenen, henüz üretimde açık)**: `POST /billing/portal`, restricted key'de **Customer Portal: Write** izni eksikse Stripe `PermissionError`/`AuthenticationError` döner; `create_portal_session` bunu artık ayrı yakalayıp "...API anahtarına yeterli izin tanımlı değil..." şeklinde güvenli, Türkçe bir `BillingError` (502) olarak çeviriyor (bkz. `app/services/billing/service.py::create_portal_session`) — önceden bu genel `_stripe_error_to_http` yoluna düşüyordu, aynı 502 ama daha az spesifik bir mesajla. **Kod tarafında yapılacak başka bir şey yok**; kalıcı çözüm restricted key'e Dashboard'dan Customer Portal Write izninin eklenmesidir.
 
 ## Abonelik durum politikası
 
@@ -59,6 +60,14 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
 - **Yükseltme**: `Subscription.modify_async(proration_behavior="always_invoice", payment_behavior="pending_if_incomplete")`. Ödeme senkron tamamlanmazsa Stripe `pending_update` döner; hak **verilmez** — yalnızca `customer.subscription.pending_update_applied` event'i planı etkinleştirir. `pending_update_expired` bekleyen değişikliği sessizce temizler.
 - **Düşürme**: Subscription Schedule (`SubscriptionSchedule.create_async(from_subscription=...)`, iki faz: mevcut fiyat dönem sonuna kadar, yeni (düşük) fiyat açık uçlu). Fiyat/hak, faz geçişi gerçekleşene kadar **değişmez**; `pending_plan_code`/`pending_change_at`/`pending_change_reason="downgrade"` müşteriye gösterilir.
 - **İptal**: `cancel_at_period_end=true` — erişim dönem sonuna kadar sürer, gerçek düşürme `customer.subscription.deleted` event'inde uygulanır. Bekleyen bir düşürme varsa önce schedule serbest bırakılır (`SubscriptionSchedule.release_async`).
+
+## Plan değişikliği önizlemesi (`POST /billing/change-plan-preview`)
+
+`change_plan` çağrılmadan önce frontend her zaman bu salt-okunur uç noktayı çağırır (`Billing.jsx::openPlanChangeModal`) ve sonucu bir onay modalinde (`PlanChangeModal`) gösterir — anlık plan değişikliği yoktur. Hiçbir Stripe/DB state'i mutasyona uğramaz.
+
+- **Yükseltme**: `stripe.Invoice.create_preview_async(subscription=..., subscription_details={items, proration_behavior="always_invoice", proration_date=now})` — `change_plan`'ın gerçek mutasyonuyla **birebir aynı** `proration_behavior`. Bugün tahsil edilecek tutar (`immediate_amount_due`/`net_immediate_amount`), kredi/ücret satırları (`immediate_credit_amount`/`immediate_charge_amount`/`line_items`) doğrudan Stripe'ın önizleme faturasından okunur — manuel oran hesabı **yok**. `next_renewal_amount`/`next_renewal_date`, hedef Price'ın `unit_amount`'ı ve senkronize `current_period_end`'den (ikisi de Stripe-otoriter) türetilir; upgrade'in kendisi anchor'ı değiştirmediği için bu güvenlidir. `is_estimate=true`: onay anındaki gerçek tahsilat (ödeme yöntemi/SCA'ya bağlı) birkaç saniyelik farkla önizlemeden az miktarda sapabilir.
+- **Düşürme**: Stripe fatura önizlemesi **hiç çağrılmaz** — `change_plan` düşürmede zaten proration uygulamıyor (bkz. üstte), bu yüzden önizlenecek bir oran hesabı yok. Yanıt tamamen deterministiktir: `immediate_amount_due=0`, `next_renewal_amount`=hedef Price'ın `unit_amount`'ı, `next_renewal_date`=mevcut `current_period_end` (schedule'ın ikinci fazının devreye gireceği tarih). `is_estimate=false`.
+- Zaten bir `SubscriptionSchedule`'ı olan abonelikler için (`had_pending_schedule=true`) açıklama metni, bu işlemin bekleyen değişikliğin yerine geçeceğini belirtir — `change_plan` da aynı şeyi yapar (schedule'ı serbest bırakıp yeni değişikliği uygular).
 
 ## Webhook güvenilirlik
 

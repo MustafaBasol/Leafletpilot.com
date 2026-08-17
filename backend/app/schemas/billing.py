@@ -47,6 +47,35 @@ class ChangePlanResponse(BaseModel):
     effective_at: datetime | None = None
 
 
+class ChangePlanPreviewRequest(BaseModel):
+    plan_code: str = Field(min_length=1, max_length=32)
+
+
+class ChangePlanPreviewLineItem(BaseModel):
+    description: str
+    amount: int
+
+
+class ChangePlanPreviewResponse(BaseModel):
+    current_plan_code: str
+    target_plan_code: str
+    currency: str | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    effective_behavior: str
+    proration_date: datetime | None = None
+    immediate_amount_due: int
+    immediate_credit_amount: int
+    immediate_charge_amount: int
+    net_immediate_amount: int
+    next_renewal_amount: int | None = None
+    next_renewal_date: datetime | None = None
+    line_items: list[ChangePlanPreviewLineItem] = Field(default_factory=list)
+    explanation: str
+    is_estimate: bool
+    had_pending_schedule: bool = False
+
+
 class BillingActionResponse(BaseModel):
     status: str
 

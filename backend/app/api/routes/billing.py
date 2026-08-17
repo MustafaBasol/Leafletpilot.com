@@ -12,6 +12,8 @@ from app.models.billing import MarketSubscription
 from app.schemas.billing import (
     BillingActionResponse,
     BillingSubscriptionRead,
+    ChangePlanPreviewRequest,
+    ChangePlanPreviewResponse,
     ChangePlanRequest,
     ChangePlanResponse,
     CheckoutRequest,
@@ -127,6 +129,21 @@ async def open_portal(
     except stripe.error.StripeError as exc:
         raise _stripe_error_to_http(exc) from exc
     return PortalResponse(**result)
+
+
+@router.post("/change-plan-preview", response_model=ChangePlanPreviewResponse)
+async def preview_change_plan(
+    payload: ChangePlanPreviewRequest,
+    membership: MarketUser = Depends(require_market_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> ChangePlanPreviewResponse:
+    try:
+        result = await billing_service.preview_change_plan(session, membership.market, payload.plan_code)
+    except BillingError as exc:
+        raise _http_error(exc) from exc
+    except stripe.error.StripeError as exc:
+        raise _stripe_error_to_http(exc) from exc
+    return ChangePlanPreviewResponse(**result)
 
 
 @router.post("/change-plan", response_model=ChangePlanResponse)

@@ -680,6 +680,12 @@ export async function openBillingPortal() {
   return billingApi.openPortal(marketId);
 }
 
+export async function previewBillingPlanChange(planCode) {
+  if (!isRealApiEnabled) return null;
+  const marketId = requireSelectedMarketId();
+  return billingApi.previewChangePlan(planCode, marketId);
+}
+
 export async function changeBillingPlan(planCode) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();

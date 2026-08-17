@@ -16,6 +16,10 @@ export function openPortal(marketId) {
   return apiClient.post("/billing/portal", {}, { marketId });
 }
 
+export function previewChangePlan(planCode, marketId) {
+  return apiClient.post("/billing/change-plan-preview", { plan_code: planCode }, { marketId });
+}
+
 export function changePlan(planCode, marketId) {
   return apiClient.post("/billing/change-plan", { plan_code: planCode }, { marketId });
 }

@@ -1941,3 +1941,409 @@ async def test_unexpected_non_stripe_exception_still_surfaces_as_server_error_wh
     finally:
         app.dependency_overrides.pop(get_catalog_session, None)
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Plan-change preview: Stripe-authoritative for upgrades (real proration
+# preview), deterministic (no proration call) for downgrades — mirrors
+# exactly what change_plan actually does for each branch.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResolvedPrice:
+    def __init__(self, price_id: str, *, currency: str, unit_amount: int) -> None:
+        self.id = price_id
+        self.currency = currency
+        self.unit_amount = unit_amount
+
+
+async def _async_return(value):
+    return value
+
+
+async def _add_active_subscription_row(session, market, *, plan_code: str, sub_id: str) -> MarketSubscription:
+    row = MarketSubscription(
+        market_id=market.id,
+        plan_code=plan_code,
+        status="active",
+        stripe_customer_id="cus_preview",
+        stripe_subscription_id=sub_id,
+        current_period_start=_dt(1_700_000_000),
+        current_period_end=_dt(1_702_592_000),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+def _stub_bare_subscription_retrieve(monkeypatch, *, sub_id: str, item_id: str = "si_preview", schedule=None) -> None:
+    async def fake_retrieve(subscription_id):
+        assert subscription_id == sub_id
+        return {"id": sub_id, "schedule": schedule, "items": {"data": [{"id": item_id, "price": {}}]}}
+
+    monkeypatch.setattr("stripe.Subscription.retrieve_async", fake_retrieve)
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_upgrade_uses_stripe_invoice_preview_for_proration_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    _stub_bare_subscription_retrieve(monkeypatch, sub_id="sub_preview_up", item_id="si_preview")
+    target_price = _FakeResolvedPrice("price_standard", currency="eur", unit_amount=11900)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _async_return(target_price))
+
+    captured: dict = {}
+
+    async def fake_create_preview(**kwargs):
+        captured.update(kwargs)
+        return {
+            "total": 5933,
+            "amount_due": 5933,
+            "lines": {
+                "data": [
+                    {"amount": -1967, "description": "Kalan güncel plan kredisi"},
+                    {"amount": 7900, "description": "Plus - kalan günler"},
+                ]
+            },
+        }
+
+    monkeypatch.setattr("stripe.Invoice.create_preview_async", fake_create_preview)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            row = await _add_active_subscription_row(session, market, plan_code="starter", sub_id="sub_preview_up")
+            await session.commit()
+
+            result = await billing_service.preview_change_plan(session, market, "standard")
+
+            assert result["current_plan_code"] == "starter"
+            assert result["target_plan_code"] == "standard"
+            assert result["effective_behavior"] == "immediate_prorated_charge"
+            assert result["immediate_credit_amount"] == 1967
+            assert result["immediate_charge_amount"] == 7900
+            assert result["net_immediate_amount"] == 5933
+            assert result["immediate_amount_due"] == 5933
+            assert result["is_estimate"] is True
+            assert result["next_renewal_amount"] == 11900
+            assert result["next_renewal_date"] == row.current_period_end
+            assert len(result["line_items"]) == 2
+
+            # Same proration_behavior + item swap the real mutation applies.
+            assert captured["subscription"] == "sub_preview_up"
+            assert captured["subscription_details"]["proration_behavior"] == "always_invoice"
+            assert captured["subscription_details"]["items"] == [{"id": "si_preview", "price": "price_standard"}]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_downgrade_is_deterministic_and_never_calls_stripe_invoice_preview_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    _stub_bare_subscription_retrieve(monkeypatch, sub_id="sub_preview_down", item_id="si_preview")
+    target_price = _FakeResolvedPrice("price_starter", currency="eur", unit_amount=5900)
+    monkeypatch.setattr(billing_service, "_resolve_price", lambda plan_code: _async_return(target_price))
+
+    async def _unexpected_preview(**kwargs):
+        raise AssertionError("downgrades must never call the Stripe invoice preview endpoint")
+
+    monkeypatch.setattr("stripe.Invoice.create_preview_async", _unexpected_preview)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            row = await _add_active_subscription_row(session, market, plan_code="standard", sub_id="sub_preview_down")
+            await session.commit()
+
+            result = await billing_service.preview_change_plan(session, market, "starter")
+
+            assert result["effective_behavior"] == "next_cycle_change"
+            assert result["immediate_amount_due"] == 0
+            assert result["immediate_credit_amount"] == 0
+            assert result["net_immediate_amount"] == 0
+            assert result["is_estimate"] is False
+            assert result["next_renewal_amount"] == 5900
+            assert result["next_renewal_date"] == row.current_period_end
+            assert result["line_items"] == []
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_rejects_same_plan_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await _add_active_subscription_row(session, market, plan_code="standard", sub_id="sub_same")
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.preview_change_plan(session, market, "standard")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_blocks_while_cancellation_pending_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            row = await _add_active_subscription_row(session, market, plan_code="standard", sub_id="sub_cancel_pending")
+            row.cancel_at_period_end = True
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.preview_change_plan(session, market, "pro")
+            assert exc_info.value.status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_change_plan_preview_route_enforces_admin_role_and_tenant_scope_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def fake_preview(session, market, plan_code):
+        return {
+            "current_plan_code": "starter",
+            "target_plan_code": plan_code,
+            "currency": "eur",
+            "effective_behavior": "immediate_prorated_charge",
+            "immediate_amount_due": 100,
+            "immediate_credit_amount": 0,
+            "immediate_charge_amount": 100,
+            "net_immediate_amount": 100,
+            "explanation": "test",
+            "is_estimate": True,
+        }
+
+    monkeypatch.setattr(billing_service, "preview_change_plan", fake_preview)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    market_id = uuid4()
+    other_market_id = uuid4()
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            staff_user = User(email=f"staff-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id)
+            other_market = await _create_market(session, id=other_market_id)
+            session.add_all([admin_user, staff_user])
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            session.add(MarketUser(market_id=market.id, user_id=staff_user.id, role="market_staff", is_active=True))
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+            staff_token = create_access_token(str(staff_user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            staff_response = await client.post(
+                "/api/billing/change-plan-preview",
+                json={"plan_code": "standard"},
+                headers={"Authorization": f"Bearer {staff_token}", "X-Market-Id": str(market_id)},
+            )
+            assert staff_response.status_code == 403
+
+            cross_tenant_response = await client.post(
+                "/api/billing/change-plan-preview",
+                json={"plan_code": "standard"},
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(other_market_id)},
+            )
+            assert cross_tenant_response.status_code == 403
+
+            allowed_response = await client.post(
+                "/api/billing/change-plan-preview",
+                json={"plan_code": "standard"},
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+            )
+            assert allowed_response.status_code == 200
+            assert allowed_response.json()["target_plan_code"] == "standard"
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# change_plan mutation still functions after the preview addition.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_change_plan_upgrade_still_applies_via_subscription_modify_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+    _stub_bare_subscription_retrieve(monkeypatch, sub_id="sub_change_up", item_id="si_change")
+    monkeypatch.setattr(
+        billing_service, "_resolve_price", lambda plan_code: _async_return(_FakeResolvedPrice("price_standard", currency="eur", unit_amount=11900))
+    )
+
+    async def fake_modify(subscription_id, **kwargs):
+        assert subscription_id == "sub_change_up"
+        assert kwargs["items"] == [{"id": "si_change", "price": "price_standard"}]
+        return {"pending_update": None}
+
+    monkeypatch.setattr("stripe.Subscription.modify_async", fake_modify)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await _add_active_subscription_row(session, market, plan_code="starter", sub_id="sub_change_up")
+            await session.commit()
+
+            result = await billing_service.change_plan(session, market, "standard")
+            assert result == {"status": "applied"}
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Payment method portal: success path + safe app-level error on a
+# restricted-key permission failure (the observed production 502).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_portal_session_success_returns_portal_url_when_test_database_url_is_configured(monkeypatch) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def fake_list_configurations(limit=100):
+        return type("_R", (), {"data": []})()
+
+    async def fake_create_configuration(**kwargs):
+        return type("_C", (), {"id": "bpc_leafletpilot"})()
+
+    async def fake_create_portal_session(**kwargs):
+        assert kwargs["customer"] == "cus_portal"
+        assert kwargs["configuration"] == "bpc_leafletpilot"
+        return type("_S", (), {"url": "https://billing.stripe.com/session/test"})()
+
+    monkeypatch.setattr(billing_service, "_PORTAL_CONFIGURATION_CACHE", None)
+    monkeypatch.setattr("stripe.billing_portal.Configuration.list_async", fake_list_configurations)
+    monkeypatch.setattr("stripe.billing_portal.Configuration.create_async", fake_create_configuration)
+    monkeypatch.setattr("stripe.billing_portal.Session.create_async", fake_create_portal_session)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="starter",
+                    status="active",
+                    stripe_customer_id="cus_portal",
+                    stripe_subscription_id="sub_portal",
+                )
+            )
+            await session.commit()
+
+            result = await billing_service.create_portal_session(session, market)
+            assert result == {"portal_url": "https://billing.stripe.com/session/test"}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_portal_session_permission_error_returns_safe_app_level_error_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    # Mirrors the production 502: a restricted Stripe API key missing the
+    # "Customer Portal" write scope (see docs/backend/09_STRIPE_BILLING_SANDBOX.md).
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def fake_list_configurations(limit=100):
+        raise stripe.error.PermissionError(
+            "This API key doesn't have the required permissions.", json_body={"error": {"code": "more_permissions_required"}}
+        )
+
+    monkeypatch.setattr(billing_service, "_PORTAL_CONFIGURATION_CACHE", None)
+    monkeypatch.setattr("stripe.billing_portal.Configuration.list_async", fake_list_configurations)
+
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            session.add(
+                MarketSubscription(
+                    market_id=market.id,
+                    plan_code="starter",
+                    status="active",
+                    stripe_customer_id="cus_portal_denied",
+                    stripe_subscription_id="sub_portal_denied",
+                )
+            )
+            await session.commit()
+
+            with pytest.raises(BillingError) as exc_info:
+                await billing_service.create_portal_session(session, market)
+            assert exc_info.value.status_code == 502
+            message = str(exc_info.value)
+            assert "yeterli izin tanımlı değil" in message
+            # No raw Stripe error text, error codes, or key material leaked.
+            assert "more_permissions_required" not in message
+            assert "sk_" not in message and "rk_" not in message
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_portal_session_route_translates_permission_error_to_502_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    monkeypatch.setattr(settings, "stripe_enabled", True)
+
+    async def failing_create_portal_session(session, market):
+        raise BillingError(
+            "Ödeme yöntemi portalı şu anda kullanılamıyor: faturalandırma sağlayıcısının API anahtarına "
+            "yeterli izin tanımlı değil. Lütfen destek ekibiyle iletişime geçin.",
+            status_code=502,
+        )
+
+    monkeypatch.setattr(billing_service, "create_portal_session", failing_create_portal_session)
+
+    async def override_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_catalog_session] = override_session
+    try:
+        market_id = uuid4()
+        async with session_factory() as session:
+            admin_user = User(email=f"admin-{market_id}@example.com", password_hash=hash_password("pw"), is_active=True)
+            market = await _create_market(session, id=market_id)
+            session.add(admin_user)
+            await session.flush()
+            session.add(MarketUser(market_id=market.id, user_id=admin_user.id, role="market_admin", is_active=True))
+            await session.commit()
+            admin_token = create_access_token(str(admin_user.id))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/billing/portal",
+                headers={"Authorization": f"Bearer {admin_token}", "X-Market-Id": str(market_id)},
+            )
+            assert response.status_code == 502
+            assert "yeterli izin tanımlı değil" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_catalog_session, None)
+        await engine.dispose()

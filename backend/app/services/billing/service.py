@@ -262,12 +262,29 @@ async def create_portal_session(session: AsyncSession, market: Market) -> dict:
     row = await _require_subscription_row(session, market.id)
     if not row.stripe_customer_id:
         raise BillingError("Bu market için Stripe müşteri kaydı bulunamadı.", status_code=404)
-    configuration_id = await _get_or_create_portal_configuration()
-    portal_session = await stripe.billing_portal.Session.create_async(
-        customer=row.stripe_customer_id,
-        return_url=settings.stripe_portal_return_url_resolved,
-        configuration=configuration_id,
-    )
+    try:
+        configuration_id = await _get_or_create_portal_configuration()
+        portal_session = await stripe.billing_portal.Session.create_async(
+            customer=row.stripe_customer_id,
+            return_url=settings.stripe_portal_return_url_resolved,
+            configuration=configuration_id,
+        )
+    except (stripe.error.AuthenticationError, stripe.error.PermissionError) as exc:
+        # The restricted API key is missing the "Customer Portal" write scope
+        # (billing_portal.Configuration.*, billing_portal.Session.create) —
+        # see docs/backend/09_STRIPE_BILLING_SANDBOX.md for the exact
+        # permission list. This is a Stripe Dashboard/key-config precondition,
+        # not something the request itself can fix by retrying.
+        raise BillingError(
+            "Ödeme yöntemi portalı şu anda kullanılamıyor: faturalandırma sağlayıcısının API anahtarına "
+            "yeterli izin tanımlı değil. Lütfen destek ekibiyle iletişime geçin.",
+            status_code=502,
+        ) from exc
+    except stripe.error.StripeError as exc:
+        raise BillingError(
+            "Ödeme yöntemi portalı açılamadı. Lütfen tekrar deneyin veya destek ile iletişime geçin.",
+            status_code=502,
+        ) from exc
     return {"portal_url": portal_session.url}
 
 
@@ -324,6 +341,128 @@ async def change_plan(session: AsyncSession, market: Market, plan_code: str) -> 
         ],
     )
     return {"status": "scheduled", "effective_at": _to_datetime(current_phase["end_date"])}
+
+
+async def _preview_upgrade(row: MarketSubscription, item_id: str, price, had_pending_schedule: bool) -> dict:
+    """Authoritative proration preview for an upgrade, via Stripe's invoice
+    preview endpoint with the exact same ``proration_behavior`` the real
+    mutation (``change_plan``) uses — no manual proration math.
+    """
+    proration_ts = int(datetime.now(UTC).timestamp())
+    try:
+        preview_invoice = await stripe.Invoice.create_preview_async(
+            subscription=row.stripe_subscription_id,
+            subscription_details={
+                "items": [{"id": item_id, "price": price.id}],
+                "proration_behavior": "always_invoice",
+                "proration_date": proration_ts,
+            },
+        )
+    except stripe.error.StripeError as exc:
+        raise BillingError(
+            "Plan değişikliği önizlemesi alınamadı. Lütfen tekrar deneyin.", status_code=502
+        ) from exc
+
+    line_items: list[dict] = []
+    credit_amount = 0
+    charge_amount = 0
+    for line in _field(_field(preview_invoice, "lines"), "data") or []:
+        amount = _field(line, "amount", 0) or 0
+        description = _field(line, "description") or ("Kredi" if amount < 0 else "Ücret")
+        line_items.append({"description": description, "amount": amount})
+        if amount < 0:
+            credit_amount += -amount
+        else:
+            charge_amount += amount
+
+    net_immediate_amount = _field(preview_invoice, "total", charge_amount - credit_amount)
+    immediate_amount_due = _field(preview_invoice, "amount_due", net_immediate_amount)
+
+    explanation = (
+        "Mevcut döneminizin kalan kısmı için oransal fark bugün kartınızdan çekilecektir. "
+        "Kesin tutar, onay anındaki hesaplamaya göre çok az farklılık gösterebilir."
+    )
+    if had_pending_schedule:
+        explanation += " Bu işlem, bekleyen düşürme planınızı iptal edip yerine bu değişikliği uygulayacaktır."
+
+    return {
+        "currency": _field(price, "currency") or row.currency,
+        "effective_behavior": "immediate_prorated_charge",
+        "proration_date": datetime.fromtimestamp(proration_ts, tz=UTC),
+        "immediate_amount_due": max(immediate_amount_due, 0),
+        "immediate_credit_amount": credit_amount,
+        "immediate_charge_amount": charge_amount,
+        "net_immediate_amount": net_immediate_amount,
+        "next_renewal_amount": _field(price, "unit_amount"),
+        "next_renewal_date": row.current_period_end,
+        "line_items": line_items,
+        "explanation": explanation,
+        "is_estimate": True,
+    }
+
+
+def _preview_downgrade(row: MarketSubscription, price, had_pending_schedule: bool) -> dict:
+    """Downgrades never prorate in this system — ``change_plan`` defers them
+    to a Subscription Schedule that swaps the price exactly at
+    ``current_period_end``, so there is nothing to invoice-preview: the
+    numbers below are read directly from Stripe-authoritative data (the
+    target Price and the synced period end), not computed.
+    """
+    explanation = (
+        "Değişiklik bir sonraki yenileme döneminde uygulanacaktır; "
+        "mevcut dönem için ek bir ücret veya iade oluşmaz."
+    )
+    if had_pending_schedule:
+        explanation += " Bu işlem, bekleyen mevcut plan değişikliğinizin yerine geçecektir."
+    return {
+        "currency": _field(price, "currency") or row.currency,
+        "effective_behavior": "next_cycle_change",
+        "proration_date": None,
+        "immediate_amount_due": 0,
+        "immediate_credit_amount": 0,
+        "immediate_charge_amount": 0,
+        "net_immediate_amount": 0,
+        "next_renewal_amount": _field(price, "unit_amount"),
+        "next_renewal_date": row.current_period_end,
+        "line_items": [],
+        "explanation": explanation,
+        "is_estimate": False,
+    }
+
+
+async def preview_change_plan(session: AsyncSession, market: Market, plan_code: str) -> dict:
+    """Read-only billing-impact preview for a plan change — mirrors the
+    branch ``change_plan`` will actually take (upgrade vs downgrade) without
+    mutating anything in Stripe or locally.
+    """
+    _require_enabled()
+    if not is_sellable_plan_code(plan_code):
+        raise BillingError("Geçersiz plan. Yalnızca starter, standard veya pro seçilebilir.")
+    row = await _require_subscription_row(session, market.id)
+    if plan_code == row.plan_code:
+        raise BillingError("Market zaten bu planda.", status_code=409)
+    if row.cancel_at_period_end:
+        raise BillingError(
+            "İptal talebi beklerken plan değişikliği yapılamaz; önce aboneliği devam ettirin.",
+            status_code=409,
+        )
+
+    stripe_subscription = await stripe.Subscription.retrieve_async(row.stripe_subscription_id)
+    had_pending_schedule = bool(_field(stripe_subscription, "schedule"))
+    price = await _resolve_price(plan_code)
+    item_id = stripe_subscription["items"]["data"][0]["id"]
+
+    if plan_rank(plan_code) > plan_rank(row.plan_code):
+        result = await _preview_upgrade(row, item_id, price, had_pending_schedule)
+    else:
+        result = _preview_downgrade(row, price, had_pending_schedule)
+
+    result["current_plan_code"] = row.plan_code
+    result["target_plan_code"] = plan_code
+    result["current_period_start"] = row.current_period_start
+    result["current_period_end"] = row.current_period_end
+    result["had_pending_schedule"] = had_pending_schedule
+    return result
 
 
 async def cancel_subscription(session: AsyncSession, market: Market) -> dict:

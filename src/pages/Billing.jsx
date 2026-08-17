@@ -5,12 +5,14 @@ import {
   changeBillingPlan,
   getBillingSubscription,
   getMarketPlan,
+  getPublicPlans,
   listBillingInvoices,
   openBillingPortal,
+  previewBillingPlanChange,
   resumeBillingSubscription,
   startBillingCheckout,
 } from "../data/dataSource.js";
-import { Button, Card, ConfirmDialog, PageHeader, StatusBadge, Table } from "../components/ui/index.js";
+import { Button, Card, ConfirmDialog, Icon, PageHeader, PlanChangeModal, StatusBadge, Table } from "../components/ui/index.js";
 
 const PLAN_LABELS = { starter: "Başlangıç", standard: "Plus", pro: "Pro", unassigned: "Atanmamış" };
 const PLAN_ORDER = ["starter", "standard", "pro"];
@@ -37,7 +39,13 @@ function formatDate(value) {
 
 function formatMoney(unitAmount, currency) {
   if (unitAmount === null || unitAmount === undefined) return "-";
-  return `${(unitAmount / 100).toFixed(2)} ${currency || ""}`.trim();
+  return `${(unitAmount / 100).toFixed(2)} ${(currency || "").toUpperCase()}`.trim();
+}
+
+function formatPublicPlanPrice(publicPlan) {
+  if (!publicPlan || publicPlan.monthly_price == null) return null;
+  const symbol = publicPlan.currency === "EUR" ? "€" : ` ${publicPlan.currency}`;
+  return `${publicPlan.monthly_price}${symbol}/ay`;
 }
 
 function invoiceStatusLabel(invoice) {
@@ -46,16 +54,71 @@ function invoiceStatusLabel(invoice) {
   return map[invoice.status] || invoice.status || "-";
 }
 
+function usageTone(ratio) {
+  if (ratio === null) return "success";
+  if (ratio >= 0.9) return "danger";
+  if (ratio >= 0.7) return "warning";
+  return "success";
+}
+
+function UsageCard({ label, icon, used, limit, formats }) {
+  const hasUsage = typeof used === "number";
+  const isUnlimited = limit === null || limit === undefined;
+  const ratio = hasUsage && !isUnlimited && limit > 0 ? Math.min(1, used / limit) : null;
+  const tone = usageTone(ratio);
+
+  return (
+    <section className={`metric-card usage-card metric-${tone}`}>
+      <div className="metric-top">
+        <span>
+          <Icon name={icon} />
+        </span>
+      </div>
+      <p>{label}</p>
+      {formats ? (
+        <div className="usage-format-list">
+          {formats.length ? (
+            formats.map((format) => (
+              <span key={format} className="badge badge-neutral">
+                {format.toUpperCase()}
+              </span>
+            ))
+          ) : (
+            <span className="usage-empty">-</span>
+          )}
+        </div>
+      ) : (
+        <>
+          <strong>{hasUsage ? `${used} / ${isUnlimited ? "Sınırsız" : limit}` : isUnlimited ? "Sınırsız" : limit}</strong>
+          {ratio !== null ? (
+            <div
+              className="usage-bar"
+              role="progressbar"
+              aria-valuenow={Math.round(ratio * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className={`usage-bar-fill usage-bar-${tone}`} style={{ width: `${Math.round(ratio * 100)}%` }} />
+            </div>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function Billing({ checkoutStatus = "" }) {
   const canManage = canManageBilling();
   const [subscription, setSubscription] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [publicPlans, setPublicPlans] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [planChange, setPlanChange] = useState(null);
   const [showCheckoutSuccess] = useState(checkoutStatus === "success");
 
   async function load() {
@@ -79,6 +142,9 @@ export function Billing({ checkoutStatus = "" }) {
 
   useEffect(() => {
     load();
+    getPublicPlans()
+      .then((result) => setPublicPlans(Array.isArray(result) ? result : []))
+      .catch(() => setPublicPlans([]));
   }, []);
 
   useEffect(() => {
@@ -94,7 +160,7 @@ export function Billing({ checkoutStatus = "" }) {
   }, []);
 
   async function runAction(actionKey, fn, successMessage) {
-    if (busyAction) return;
+    if (busyAction) return null;
     setBusyAction(actionKey);
     setError("");
     setMessage("");
@@ -116,15 +182,46 @@ export function Billing({ checkoutStatus = "" }) {
     if (result?.checkout_url) window.location.href = result.checkout_url;
   }
 
-  async function handleChangePlan(planCode) {
-    const result = await runAction(`change:${planCode}`, () => changeBillingPlan(planCode));
-    if (!result) return;
-    if (result.status === "pending_payment") {
-      setMessage(`Yükseltme ödeme onayı bekliyor. Son tarih: ${formatDate(result.expires_at)}.`);
-    } else if (result.status === "scheduled") {
-      setMessage(`Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`);
-    } else {
-      setMessage("Plan güncellendi.");
+  function openPlanChangeModal(planCode) {
+    if (planChange || busyAction) return;
+    setError("");
+    setPlanChange({ targetPlanCode: planCode, preview: null, isLoadingPreview: true, error: "", isConfirming: false });
+    previewBillingPlanChange(planCode)
+      .then((preview) => {
+        setPlanChange((current) =>
+          current && current.targetPlanCode === planCode ? { ...current, preview, isLoadingPreview: false } : current,
+        );
+      })
+      .catch((e) => {
+        setPlanChange((current) =>
+          current && current.targetPlanCode === planCode
+            ? { ...current, isLoadingPreview: false, error: e?.message || "Önizleme alınamadı." }
+            : current,
+        );
+      });
+  }
+
+  function closePlanChangeModal() {
+    setPlanChange((current) => (current?.isConfirming ? current : null));
+  }
+
+  async function confirmPlanChange() {
+    if (!planChange || planChange.isConfirming) return;
+    const { targetPlanCode } = planChange;
+    setPlanChange({ ...planChange, isConfirming: true, error: "" });
+    try {
+      const result = await changeBillingPlan(targetPlanCode);
+      setPlanChange(null);
+      if (result?.status === "pending_payment") {
+        setMessage(`Yükseltme ödeme onayı bekliyor. Son tarih: ${formatDate(result.expires_at)}.`);
+      } else if (result?.status === "scheduled") {
+        setMessage(`Plan değişikliği ${formatDate(result.effective_at)} tarihinde geçerli olacak.`);
+      } else {
+        setMessage("Plan güncellendi.");
+      }
+      await load();
+    } catch (e) {
+      setPlanChange({ ...planChange, isConfirming: false, error: e?.message || "Plan değişikliği uygulanamadı." });
     }
   }
 
@@ -144,100 +241,138 @@ export function Billing({ checkoutStatus = "" }) {
 
   const hasSubscription = Boolean(subscription?.status);
   const currentPlanCode = subscription?.plan_code || "unassigned";
+  const publicPlanByCode = Object.fromEntries(publicPlans.map((item) => [item.code, item]));
 
   return (
     <>
-      <PageHeader title="Faturalandırma" description="Abonelik planı, ödeme durumu ve fatura geçmişi." />
+      <PageHeader title="Faturalandırma" description="Abonelik planınızı, ödeme yönteminizi ve fatura geçmişinizi tek yerden yönetin." />
       {showCheckoutSuccess ? (
-        <p className="inline-result" role="status">Ödeme başarıyla tamamlandı. Aboneliğiniz etkinleştirildi.</p>
+        <p className="inline-result inline-result-success billing-alert" role="status">
+          <Icon name="check" /> Ödeme başarıyla tamamlandı. Aboneliğiniz etkinleştirildi.
+        </p>
       ) : null}
-      {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}
-      {message ? <p className="inline-result" role="status">{message}</p> : null}
+      {error ? (
+        <p className="inline-result inline-result-danger billing-alert" role="alert">
+          <Icon name="alert" /> {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="inline-result inline-result-success billing-alert" role="status">
+          <Icon name="check" /> {message}
+        </p>
+      ) : null}
       {loading ? <p className="inline-result">Yükleniyor...</p> : null}
 
       <section className="dashboard-grid">
         <Card title="Mevcut Abonelik" className="span-8">
-          <div className="settings-form">
-            <p>
-              Plan: <strong>{PLAN_LABELS[currentPlanCode] || currentPlanCode}</strong>{" "}
+          <div className="billing-plan-card">
+            <div className="billing-plan-heading">
+              <strong>{PLAN_LABELS[currentPlanCode] || currentPlanCode}</strong>
               <StatusBadge status={statusLabel(subscription?.status)} />
-            </p>
+            </div>
             {subscription?.unit_amount ? (
-              <p>Aylık ücret: {formatMoney(subscription.unit_amount, subscription.currency)}</p>
+              <p className="billing-plan-price">
+                Aylık ücret: <strong>{formatMoney(subscription.unit_amount, subscription.currency)}</strong>
+              </p>
             ) : null}
-            {subscription?.subscription_started_at ? <p>Başlangıç: {formatDate(subscription.subscription_started_at)}</p> : null}
-            {subscription?.current_period_end ? (
-              <p>{subscription.cancel_at_period_end ? "Erişim sona eriyor" : "Yenilenme tarihi"}: {formatDate(subscription.current_period_end)}</p>
-            ) : null}
+
+            <ul className="billing-fact-list">
+              {subscription?.subscription_started_at ? (
+                <li>
+                  <Icon name="calendar" /> Başlangıç: <strong>{formatDate(subscription.subscription_started_at)}</strong>
+                </li>
+              ) : null}
+              {subscription?.current_period_end ? (
+                <li>
+                  <Icon name="calendar" /> {subscription.cancel_at_period_end ? "Erişim sona eriyor" : "Yenilenme tarihi"}: <strong>{formatDate(subscription.current_period_end)}</strong>
+                </li>
+              ) : null}
+            </ul>
+
             {subscription?.pending_plan_code && subscription?.pending_change_reason === "downgrade" ? (
-              <p className="inline-result">
-                {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına geçiş{" "}
-                {formatDate(subscription.pending_change_at)} tarihinde gerçekleşecek.
+              <p className="inline-result billing-alert">
+                <Icon name="refresh" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
+                geçiş {formatDate(subscription.pending_change_at)} tarihinde gerçekleşecek.
               </p>
             ) : null}
             {subscription?.pending_change_reason === "upgrade_pending_payment" ? (
-              <p className="inline-result inline-result-warning">
-                {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına yükseltme ödeme onayı bekliyor
-                (son tarih {formatDate(subscription.pending_change_at)}).
+              <p className="inline-result inline-result-warning billing-alert">
+                <Icon name="alert" /> {PLAN_LABELS[subscription.pending_plan_code] || subscription.pending_plan_code} planına
+                yükseltme ödeme onayı bekliyor (son tarih {formatDate(subscription.pending_change_at)}).
               </p>
             ) : null}
             {subscription?.cancel_at_period_end ? (
-              <p className="inline-result inline-result-warning">
-                İptal talep edildi; erişiminiz {formatDate(subscription.current_period_end)} tarihine kadar devam edecek, yenileme yapılmayacak.
+              <p className="inline-result inline-result-warning billing-alert">
+                <Icon name="alert" /> İptal talep edildi; erişiminiz {formatDate(subscription.current_period_end)} tarihine
+                kadar devam edecek, yenileme yapılmayacak.
               </p>
             ) : null}
             {subscription?.status === "past_due" ? (
-              <p className="inline-result inline-result-warning">Son ödeme başarısız oldu. Lütfen ödeme yönteminizi güncelleyin.</p>
+              <p className="inline-result inline-result-warning billing-alert">
+                <Icon name="alert" /> Son ödeme başarısız oldu. Lütfen ödeme yönteminizi güncelleyin.
+              </p>
             ) : null}
             {subscription?.sync_error ? (
-              <p className="inline-result inline-result-warning">Faturalandırma senkronizasyon hatası: {subscription.sync_error}</p>
+              <p className="inline-result inline-result-warning billing-alert">
+                <Icon name="alert" /> Faturalandırma senkronizasyon hatası: {subscription.sync_error}
+              </p>
             ) : null}
           </div>
         </Card>
 
         <Card title="Ödeme Yöntemi" className="span-4">
-          <div className="settings-form">
-            <p>Kart bilgileri ve fatura adresi Stripe üzerinden güvenle yönetilir.</p>
-            <Button onClick={handlePortal} disabled={!hasSubscription || Boolean(busyAction)}>
-              {busyAction === "portal" ? "Yönlendiriliyor..." : "Ödeme yöntemini yönet"}
-            </Button>
-          </div>
+          <p className="billing-payment-copy">
+            <Icon name="creditCard" /> Kart bilgileri ve fatura adresi Stripe üzerinden güvenle yönetilir.
+          </p>
+          <Button onClick={handlePortal} disabled={!hasSubscription || Boolean(busyAction)}>
+            {busyAction === "portal" ? "Yönlendiriliyor..." : "Ödeme yöntemini yönet"}
+          </Button>
         </Card>
 
         {plan ? (
           <Card title="Plan / Kullanım" className="span-12">
-            <div className="settings-form">
-              <ul>
-                <li>
-                  Aylık kampanya: {plan.monthly_campaigns_used} / {plan.monthly_campaigns_limit ?? "Sınırsız"}
-                </li>
-                <li>Özel ürün limiti: {plan.private_products_limit ?? "Sınırsız"}</li>
-                <li>Özel şablon limiti: {plan.private_templates_limit ?? "Sınırsız"}</li>
-                <li>Çıktı formatları: {(plan.export_formats || []).join(", ").toUpperCase()}</li>
-              </ul>
+            <div className="metric-grid">
+              <UsageCard
+                label="Aylık kampanya"
+                icon="megaphone"
+                used={plan.monthly_campaigns_used}
+                limit={plan.monthly_campaigns_limit}
+              />
+              <UsageCard label="Özel ürün limiti" icon="box" limit={plan.private_products_limit} />
+              <UsageCard label="Özel şablon limiti" icon="layoutTemplate" limit={plan.private_templates_limit} />
+              <UsageCard label="Çıktı formatları" icon="file" formats={plan.export_formats || []} />
             </div>
           </Card>
         ) : null}
 
         <Card title="Plan Seçimi" className="span-12">
-          <div className="page-actions">
+          <div className="plan-picker-grid">
             {PLAN_ORDER.map((planCode) => {
               const isCurrent = hasSubscription && currentPlanCode === planCode;
               const hasPendingUpgrade = subscription?.pending_change_reason === "upgrade_pending_payment";
+              const publicPlan = publicPlanByCode[planCode];
+              const priceLabel = formatPublicPlanPrice(publicPlan);
               return (
-                <Button
-                  key={planCode}
-                  variant={isCurrent ? "primary" : "secondary"}
-                  disabled={!canManage || isCurrent || Boolean(busyAction) || (hasSubscription && hasPendingUpgrade)}
-                  onClick={() => (hasSubscription ? handleChangePlan(planCode) : handleCheckout(planCode))}
-                >
-                  {isCurrent ? `${PLAN_LABELS[planCode]} (mevcut plan)` : hasSubscription ? `${PLAN_LABELS[planCode]} planına geç` : `${PLAN_LABELS[planCode]} planıyla başla`}
-                </Button>
+                <div key={planCode} className={`plan-option-card ${isCurrent ? "is-current" : ""}`.trim()}>
+                  <div className="plan-option-heading">
+                    <strong>{PLAN_LABELS[planCode]}</strong>
+                    {isCurrent ? <StatusBadge status="Mevcut plan" /> : null}
+                  </div>
+                  {priceLabel ? <p className="plan-option-price">{priceLabel}</p> : null}
+                  {publicPlan?.tagline ? <p className="plan-option-price">{publicPlan.tagline}</p> : null}
+                  <Button
+                    variant={isCurrent ? "secondary" : "primary"}
+                    disabled={!canManage || isCurrent || Boolean(busyAction) || Boolean(planChange) || (hasSubscription && hasPendingUpgrade)}
+                    onClick={() => (hasSubscription ? openPlanChangeModal(planCode) : handleCheckout(planCode))}
+                  >
+                    {isCurrent ? "Mevcut planınız" : hasSubscription ? `${PLAN_LABELS[planCode]} planına geç` : `${PLAN_LABELS[planCode]} planıyla başla`}
+                  </Button>
+                </div>
               );
             })}
           </div>
           {hasSubscription ? (
-            <div className="page-actions">
+            <div className="page-actions billing-cancel-row">
               {subscription?.cancel_at_period_end ? (
                 <Button onClick={handleResume} disabled={!canManage || Boolean(busyAction)}>
                   {busyAction === "resume" ? "İşleniyor..." : "Aboneliği devam ettir"}
@@ -253,28 +388,47 @@ export function Billing({ checkoutStatus = "" }) {
         </Card>
 
         <Card title="Fatura Geçmişi" className="span-12" action={<span className="card-summary">{invoices.length} fatura</span>}>
-          <Table columns={["Tarih", "Numara", "Tutar", "Durum", "Bağlantı"]}>
-            {invoices.map((invoice) => (
-              <tr key={invoice.invoice_id}>
-                <td>{formatDate(invoice.created_at)}</td>
-                <td>{invoice.number || "-"}</td>
-                <td>{formatMoney(invoice.total, invoice.currency)}</td>
-                <td><StatusBadge status={invoiceStatusLabel(invoice)} /></td>
-                <td>
-                  {invoice.hosted_invoice_url ? (
-                    <a href={invoice.hosted_invoice_url} target="_blank" rel="noreferrer">
-                      Faturayı görüntüle
-                    </a>
-                  ) : (
-                    "-"
-                  )}
-                </td>
-              </tr>
-            ))}
-          </Table>
-          {!loading && !invoices.length ? <p className="catalog-empty">Henüz fatura bulunmuyor.</p> : null}
+          {invoices.length ? (
+            <Table columns={["Tarih", "Numara", "Tutar", "Durum", "Bağlantı"]}>
+              {invoices.map((invoice) => (
+                <tr key={invoice.invoice_id}>
+                  <td>{formatDate(invoice.created_at)}</td>
+                  <td>{invoice.number || "-"}</td>
+                  <td>{formatMoney(invoice.total, invoice.currency)}</td>
+                  <td>
+                    <StatusBadge status={invoiceStatusLabel(invoice)} />
+                  </td>
+                  <td>
+                    {invoice.hosted_invoice_url ? (
+                      <a href={invoice.hosted_invoice_url} target="_blank" rel="noreferrer">
+                        Faturayı görüntüle
+                      </a>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          ) : !loading ? (
+            <p className="catalog-empty">Henüz fatura bulunmuyor.</p>
+          ) : null}
         </Card>
       </section>
+
+      <PlanChangeModal
+        isOpen={Boolean(planChange)}
+        currentPlanLabel={PLAN_LABELS[currentPlanCode] || currentPlanCode}
+        targetPlanLabel={planChange ? PLAN_LABELS[planChange.targetPlanCode] || planChange.targetPlanCode : ""}
+        preview={planChange?.preview || null}
+        isLoadingPreview={Boolean(planChange?.isLoadingPreview)}
+        error={planChange?.error || ""}
+        isConfirming={Boolean(planChange?.isConfirming)}
+        onConfirm={confirmPlanChange}
+        onCancel={closePlanChangeModal}
+        formatMoney={formatMoney}
+        formatDate={formatDate}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(confirm)}
