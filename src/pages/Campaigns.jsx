@@ -268,7 +268,7 @@ export function Campaigns() {
                       <a className="table-action" href={`#/campaigns/${campaign.id}`}>
                         Detay
                       </a>
-                      <a className="table-action" href={`#/campaigns/${campaign.id}`}>
+                      <a className="table-action" href={`#/campaigns/${campaign.id}?view=preview`}>
                         <Icon name="eye" /> Önizleme
                       </a>
                       {canEditCampaigns ? (

@@ -70,7 +70,14 @@ function Page({ path, sessionVersion }) {
   if (pathname.startsWith("/campaigns/") && pathname.endsWith("/edit")) {
     return <NewCampaign editCampaignId={pathname.slice("/campaigns/".length, -"/edit".length)} />;
   }
-  if (pathname.startsWith("/campaigns/")) return <CampaignDetail campaignId={pathname.replace("/campaigns/", "")} />;
+  if (pathname.startsWith("/campaigns/")) {
+    return (
+      <CampaignDetail
+        campaignId={pathname.replace("/campaigns/", "")}
+        view={new URLSearchParams(search).get("view") || ""}
+      />
+    );
+  }
   if (pathname === "/products") return <MarketCatalog action={action} />;
   if (pathname === "/categories") return <Categories />;
   if (pathname === "/templates") return <Templates />;

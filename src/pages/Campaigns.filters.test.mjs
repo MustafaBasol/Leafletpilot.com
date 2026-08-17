@@ -50,8 +50,12 @@ test("backend query building maps camelCase filters onto the real API params, in
 });
 
 test("Önizleme and Yeniden Oluştur route to real workflows, not dead buttons", () => {
-  assert.match(page, /href=\{`#\/campaigns\/\$\{campaign\.id\}`\}[\s\S]*Önizleme/);
+  assert.match(page, /href=\{`#\/campaigns\/\$\{campaign\.id\}`\}[\s\S]*Detay/);
   assert.match(page, /onClick=\{\(\) => setRegenerateTarget\(campaign\)\}/);
   assert.match(page, /await regenerateCampaignPreview\(campaign\.id\)/);
   assert.match(page, /REGENERATE_BLOCKED_STATUSES = new Set\(\["draft", "parsing", "matching", "cancelled"\]\)/);
+});
+
+test("Önizleme explicitly requests preview mode instead of the generic detail route", () => {
+  assert.match(page, /href=\{`#\/campaigns\/\$\{campaign\.id\}\?view=preview`\}[\s\S]{0,80}Önizleme/);
 });
