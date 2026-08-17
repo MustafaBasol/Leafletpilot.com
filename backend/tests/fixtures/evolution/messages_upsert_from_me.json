@@ -1,0 +1,28 @@
+{
+  "event": "messages.upsert",
+  "instance": "leafletpilot",
+  "destination": "https://api.leafletpilot.com/api/webhooks/evolution/whatsapp",
+  "date_time": "2026-08-17T10:15:00.000Z",
+  "sender": "33612345678@s.whatsapp.net",
+  "server_url": "https://evo.example.com",
+  "apikey": "test-api-key-do-not-use",
+  "data": {
+    "key": {
+      "remoteJid": "33600000015@s.whatsapp.net",
+      "fromMe": true,
+      "id": "3EB0C767D26B8A3F1B26",
+      "participant": null,
+      "remoteJidAlt": null,
+      "senderPn": null
+    },
+    "pushName": "LeafletPilot",
+    "status": "PENDING",
+    "message": {
+      "conversation": "Merhaba! Dogrulama kodunuz: LP-Z5X4-C3V2"
+    },
+    "messageType": "conversation",
+    "messageTimestamp": 1786000900,
+    "instanceId": "b1f0b3d4-1234-4a5b-9c1d-abcdef123456",
+    "source": "unknown"
+  }
+}

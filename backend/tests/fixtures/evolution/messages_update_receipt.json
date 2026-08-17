@@ -1,0 +1,21 @@
+{
+  "event": "messages.update",
+  "instance": "leafletpilot",
+  "destination": "https://api.leafletpilot.com/api/webhooks/evolution/whatsapp",
+  "date_time": "2026-08-17T10:20:00.000Z",
+  "sender": "33612345678@s.whatsapp.net",
+  "server_url": "https://evo.example.com",
+  "apikey": "test-api-key-do-not-use",
+  "data": {
+    "key": {
+      "remoteJid": "33600000012@s.whatsapp.net",
+      "fromMe": true,
+      "id": "3EB0C767D26B8A3F1B23",
+      "participant": null,
+      "remoteJidAlt": null,
+      "senderPn": null
+    },
+    "status": "READ",
+    "instanceId": "b1f0b3d4-1234-4a5b-9c1d-abcdef123456"
+  }
+}

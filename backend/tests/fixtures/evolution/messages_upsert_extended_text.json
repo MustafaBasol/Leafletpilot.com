@@ -1,0 +1,34 @@
+{
+  "event": "messages.upsert",
+  "instance": "leafletpilot",
+  "destination": "https://api.leafletpilot.com/api/webhooks/evolution/whatsapp",
+  "date_time": "2026-08-17T10:10:00.000Z",
+  "sender": "33600000014@s.whatsapp.net",
+  "server_url": "https://evo.example.com",
+  "apikey": "test-api-key-do-not-use",
+  "data": {
+    "key": {
+      "remoteJid": "33600000014@s.whatsapp.net",
+      "fromMe": false,
+      "id": "3EB0C767D26B8A3F1B25",
+      "participant": null,
+      "remoteJidAlt": "33600000014@s.whatsapp.net",
+      "senderPn": "33600000014@s.whatsapp.net"
+    },
+    "pushName": "Mehmet",
+    "status": "DELIVERY_ACK",
+    "message": {
+      "extendedTextMessage": {
+        "text": "LP-Q9W8-E7R6",
+        "contextInfo": {
+          "stanzaId": "3EB0C767D26B8A3F1B20",
+          "participant": "33600000014@s.whatsapp.net"
+        }
+      }
+    },
+    "messageType": "extendedTextMessage",
+    "messageTimestamp": 1786000600,
+    "instanceId": "b1f0b3d4-1234-4a5b-9c1d-abcdef123456",
+    "source": "android"
+  }
+}
