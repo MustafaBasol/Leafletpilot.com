@@ -141,4 +141,8 @@ export const platformApi = {
   duplicateTemplate: (id) => request(`/platform/templates/${id}/duplicate`, { method: "POST" }),
   archiveTemplate: (id) => request(`/platform/templates/${id}/archive`, { method: "POST" }),
   restoreTemplate: (id) => request(`/platform/templates/${id}/restore`, { method: "POST" }),
+  getWhatsAppHealth: () => request("/platform/integrations/whatsapp/health"),
+  testWhatsAppConnection: () => request("/platform/integrations/whatsapp/connection-test", { method: "POST" }),
+  listWhatsAppIdentities: (params) => request("/platform/integrations/whatsapp/identities", { params }),
+  revokeWhatsAppIdentity: (id, body) => request(`/platform/integrations/whatsapp/identities/${id}/revoke`, { method: "POST", body }),
 };

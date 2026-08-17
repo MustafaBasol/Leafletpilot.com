@@ -5091,3 +5091,39 @@ tbody tr:hover {
   .catalog-quality-compare, .catalog-quality-preview dl { grid-template-columns: 1fr; }
   .catalog-quality-pagination { justify-content: space-between; }
 }
+
+/* Team page: WhatsApp member verification panel. */
+.whatsapp-verify-modal { width: min(560px, calc(100vw - 32px)); }
+.whatsapp-verify-panel { width: 100%; }
+.whatsapp-verify-subject { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.whatsapp-verify-subject small { color: var(--neutral-500); }
+.whatsapp-official-number { margin: 0; color: var(--neutral-700); }
+.whatsapp-code-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--primary-100);
+  border-radius: var(--radius-lg);
+  background: var(--primary-50);
+  padding: 14px 16px;
+}
+.whatsapp-code {
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--primary-700);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+.whatsapp-countdown-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  color: var(--neutral-700);
+}
+
+@media (max-width: 640px) {
+  .whatsapp-code-block { flex-direction: column; align-items: flex-start; }
+}

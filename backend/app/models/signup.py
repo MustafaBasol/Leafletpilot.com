@@ -11,6 +11,16 @@ from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 SIGNUP_REQUEST_STATUSES = ("pending", "reviewing", "approved", "rejected", "provisioned")
 
+# `signup_throttles` is the shared bucketed rate-limit table. It started life
+# serving public signup only ('ip', 'email'); the central WhatsApp channel
+# reuses the same proven counter rather than adding a second limiter, so its
+# key types live here too (see app/services/rate_limit.py and migration
+# 20260817_0029, which widens the CHECK constraint in the database).
+# This tuple is the single source of truth: the constraint below and the
+# migration must both be derived from it, or a schema built from the models
+# (every DB-backed test) will reject rows the migrated database accepts.
+SIGNUP_THROTTLE_KEY_TYPES = ("ip", "email", "whatsapp_ip", "whatsapp_user", "whatsapp_sender")
+
 
 class SignupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "signup_requests"
@@ -50,7 +60,10 @@ class SignupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class SignupThrottle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "signup_throttles"
     __table_args__ = (
-        CheckConstraint("key_type in ('ip', 'email')", name="ck_signup_throttles_key_type"),
+        CheckConstraint(
+            f"key_type in {SIGNUP_THROTTLE_KEY_TYPES}",
+            name="ck_signup_throttles_key_type",
+        ),
         UniqueConstraint("key_type", "key_hash", "window_bucket", name="uq_signup_throttles_type_key_bucket"),
         Index("ix_signup_throttles_bucket", "window_bucket"),
     )

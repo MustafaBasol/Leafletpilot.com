@@ -1,0 +1,16 @@
+{
+  "event": "presence.update",
+  "instance": "leafletpilot",
+  "destination": "https://api.leafletpilot.com/api/webhooks/evolution/whatsapp",
+  "date_time": "2026-08-17T10:30:00.000Z",
+  "server_url": "https://evo.example.com",
+  "apikey": "test-api-key-do-not-use",
+  "data": {
+    "id": "33600000012@s.whatsapp.net",
+    "presences": {
+      "33600000012@s.whatsapp.net": {
+        "lastKnownPresence": "composing"
+      }
+    }
+  }
+}

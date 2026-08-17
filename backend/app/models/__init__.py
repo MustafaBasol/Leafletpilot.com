@@ -22,6 +22,16 @@ from app.models.signup import SIGNUP_REQUEST_STATUSES, SignupRequest, SignupThro
 from app.models.template import Template
 from app.models.telegram import TelegramAccount, TelegramConversationState, TelegramUpdate
 from app.models.user import User
+from app.models.whatsapp import (
+    WHATSAPP_IDENTITY_STATUSES,
+    WHATSAPP_SESSION_STATES,
+    WHATSAPP_VERIFICATION_STATUSES,
+    UserWhatsAppIdentity,
+    WhatsAppIntegrationState,
+    WhatsAppSession,
+    WhatsAppVerification,
+    WhatsAppWebhookEvent,
+)
 
 __all__ = [
     "ActivityLog",
@@ -60,4 +70,12 @@ __all__ = [
     "TelegramConversationState",
     "TelegramUpdate",
     "User",
+    "UserWhatsAppIdentity",
+    "WHATSAPP_IDENTITY_STATUSES",
+    "WHATSAPP_SESSION_STATES",
+    "WHATSAPP_VERIFICATION_STATUSES",
+    "WhatsAppIntegrationState",
+    "WhatsAppSession",
+    "WhatsAppVerification",
+    "WhatsAppWebhookEvent",
 ]

@@ -10,6 +10,7 @@ import {
   updateMarketMember,
 } from "../api/teamApi.js";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, PageHeader, Table } from "../components/ui/index.js";
+import { WhatsAppTeamPanel } from "./WhatsAppTeamPanel.jsx";
 
 const roleLabels = {
   market_admin: "Yönetici",
@@ -302,6 +303,7 @@ export function Team() {
           </Table>
         ) : null}
       </Card>
+      <WhatsAppTeamPanel />
       <Card title="Davet Oluştur">
         <form className="inline-form field-stack" onSubmit={handleCreateInvitation}>
           <Input label="E-posta" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
