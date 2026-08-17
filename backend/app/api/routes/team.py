@@ -10,7 +10,8 @@ from app.api.deps import get_catalog_session, get_current_market_membership, req
 from app.core.config import settings
 from app.core.roles import MarketRole
 from app.core.security import generate_invitation_token, hash_invitation_token
-from app.models import MarketInvitation, MarketUser, User
+from app.models import Market, MarketInvitation, MarketUser, User
+from app.models.base import utc_now
 from app.schemas.team import (
     MarketInvitationCreate,
     MarketInvitationCreateResponse,
@@ -18,8 +19,19 @@ from app.schemas.team import (
     MarketMemberRead,
     MarketMemberUpdate,
 )
+from app.services.invitation_email import (
+    InvitationDeliveryDisabled,
+    InvitationEmailError,
+    OwnerInvitationEmail,
+    send_owner_invitation_email,
+)
 
 router = APIRouter(tags=["team"])
+
+# Invitation statuses that block creating a second invitation for the same email+market —
+# mirrors the partial unique DB index `uq_market_invitations_pending_market_email`.
+ACTIVE_INVITATION_STATUSES = ("pending", "sent", "manual_delivery_required", "failed")
+RESENDABLE_INVITATION_STATUSES = ("pending", "sent", "manual_delivery_required", "failed")
 
 
 @router.get("/market-members", response_model=list[MarketMemberRead])
@@ -74,15 +86,17 @@ async def create_market_invitation(
         select(MarketInvitation).where(
             MarketInvitation.market_id == membership.market_id,
             MarketInvitation.email == email,
-            MarketInvitation.status == "pending",
-            MarketInvitation.expires_at > datetime.now(UTC),
+            MarketInvitation.status.in_(ACTIVE_INVITATION_STATUSES),
         )
     )
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Bu e-posta için bekleyen bir davet zaten var.",
+            detail="Bu e-posta için zaten aktif bir davet var. Mevcut daveti yeniden gönderebilir veya iptal edebilirsiniz.",
         )
+    market = await session.get(Market, membership.market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market bulunamadı.")
     token = generate_invitation_token()
     invitation = MarketInvitation(
         market_id=membership.market_id,
@@ -92,11 +106,53 @@ async def create_market_invitation(
         status="pending",
         expires_at=datetime.now(UTC) + timedelta(days=settings.invitation_expire_days),
         created_by_user_id=membership.user_id,
+        send_count=0,
     )
     session.add(invitation)
+    await session.flush()
+    await _send_market_invitation(session, market, invitation, token)
     await session.commit()
     await session.refresh(invitation)
-    accept_url = f"{settings.frontend_base_url.rstrip('/')}/#/accept-invitation?token={token}"
+    accept_url = _accept_url(token)
+    return MarketInvitationCreateResponse(
+        **MarketInvitationRead.model_validate(invitation).model_dump(),
+        invite_token=token,
+        accept_url=accept_url,
+    )
+
+
+@router.post("/market-invitations/{invitation_id}/resend", response_model=MarketInvitationCreateResponse)
+async def resend_market_invitation(
+    invitation_id: UUID,
+    membership: MarketUser = Depends(require_market_admin),
+    session: AsyncSession = Depends(get_catalog_session),
+) -> MarketInvitationCreateResponse:
+    invitation = await session.scalar(
+        select(MarketInvitation).where(
+            MarketInvitation.id == invitation_id,
+            MarketInvitation.market_id == membership.market_id,
+        )
+    )
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Davet bulunamadı.")
+    if invitation.status not in RESENDABLE_INVITATION_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu davet yeniden gönderilemez.",
+        )
+    market = await session.get(Market, membership.market_id)
+    if market is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market bulunamadı.")
+    # Plaintext tokens are never persisted (only their hash), so resending mints a fresh
+    # token for the SAME invitation row rather than reusing an unrecoverable one — this also
+    # refreshes the expiry and invalidates any previously-shared (possibly stale) link.
+    token = generate_invitation_token()
+    invitation.token_hash = hash_invitation_token(token)
+    invitation.expires_at = datetime.now(UTC) + timedelta(days=settings.invitation_expire_days)
+    await _send_market_invitation(session, market, invitation, token)
+    await session.commit()
+    await session.refresh(invitation)
+    accept_url = _accept_url(token)
     return MarketInvitationCreateResponse(
         **MarketInvitationRead.model_validate(invitation).model_dump(),
         invite_token=token,
@@ -132,13 +188,54 @@ async def revoke_market_invitation(
     )
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Davet bulunamadı.")
-    if invitation.status != "pending":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Yalnızca bekleyen davet iptal edilebilir.")
+    if invitation.status not in ACTIVE_INVITATION_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Yalnızca aktif bir davet iptal edilebilir.")
     invitation.status = "revoked"
     invitation.revoked_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(invitation)
     return invitation
+
+
+def _accept_url(token: str) -> str:
+    return f"{settings.frontend_base_url.rstrip('/')}/#/accept-invitation?token={token}"
+
+
+async def _send_market_invitation(
+    session: AsyncSession,
+    market: Market,
+    invitation: MarketInvitation,
+    token: str,
+) -> None:
+    """Attempt delivery and persist the outcome on the (already-flushed) invitation row.
+
+    Mirrors platform.py's _send_owner_invitation status-transition pattern. A send failure
+    never loses the invitation record — it's flushed/committed regardless of outcome, just
+    with status set to reflect what actually happened, so it stays visible and resendable.
+    """
+    try:
+        delivery_result = await send_owner_invitation_email(
+            OwnerInvitationEmail(
+                to_email=invitation.email,
+                market_name=market.name,
+                role=invitation.role,
+                accept_url=_accept_url(token),
+                expires_at=invitation.expires_at,
+                language=market.language,
+            )
+        )
+    except InvitationEmailError as exc:
+        invitation.status = "failed"
+        invitation.last_send_error = str(exc)
+        return
+    if isinstance(delivery_result, InvitationDeliveryDisabled):
+        invitation.status = "manual_delivery_required"
+        invitation.last_send_error = None
+        return
+    invitation.status = "sent"
+    invitation.last_sent_at = utc_now()
+    invitation.send_count = (invitation.send_count or 0) + 1
+    invitation.last_send_error = None
 
 
 async def _ensure_not_last_admin(session: AsyncSession, market_id: UUID, target_id: UUID) -> None:
@@ -158,10 +255,13 @@ async def _ensure_not_last_admin(session: AsyncSession, market_id: UUID, target_
 
 
 async def _expire_pending_invitations(session: AsyncSession, market_id: UUID) -> None:
+    # Covers every status the create/resend duplicate-check treats as "active" — otherwise an
+    # unresent "sent"/"manual_delivery_required"/"failed" invitation whose token lapses would
+    # permanently block re-inviting that email (the DB unique index blocks it too).
     result = await session.scalars(
         select(MarketInvitation).where(
             MarketInvitation.market_id == market_id,
-            MarketInvitation.status == "pending",
+            MarketInvitation.status.in_(ACTIVE_INVITATION_STATUSES),
             MarketInvitation.expires_at <= datetime.now(UTC),
         )
     )

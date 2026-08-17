@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { createMarketInvitation, listMarketInvitations, listMarketMembers, revokeMarketInvitation, updateMarketMember } from "../api/teamApi.js";
+import {
+  createMarketInvitation,
+  listMarketInvitations,
+  listMarketMembers,
+  resendMarketInvitation,
+  revokeMarketInvitation,
+  updateMarketMember,
+} from "../api/teamApi.js";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, PageHeader, Table } from "../components/ui/index.js";
 
 const roleLabels = {
@@ -8,19 +15,31 @@ const roleLabels = {
   viewer: "Görüntüleyici",
 };
 
+// Never render the raw backend enum value — every status the backend can return must map here.
 const statusLabels = {
-  pending: "Bekliyor",
-  accepted: "Kabul Edildi",
-  revoked: "İptal Edildi",
-  expired: "Süresi Doldu",
+  pending: "Beklemede",
+  sent: "Gönderildi",
+  manual_delivery_required: "E-posta gönderilemedi",
+  accepted: "Kabul edildi",
+  revoked: "İptal edildi",
+  expired: "Süresi doldu",
+  failed: "E-posta gönderilemedi",
 };
 
 const statusTones = {
   pending: "warning",
+  sent: "success",
+  manual_delivery_required: "warning",
   accepted: "success",
   revoked: "danger",
   expired: "neutral",
+  failed: "danger",
 };
+
+// Statuses where the invite link is still worth surfacing as a manual-share fallback.
+const MANUAL_SHARE_STATUSES = new Set(["manual_delivery_required", "failed"]);
+// Statuses the "Yeniden Gönder" / "İptal Et" row actions remain available for.
+const ACTIVE_INVITATION_STATUSES = new Set(["pending", "sent", "manual_delivery_required", "failed"]);
 
 const memberColumns = [
   { label: "Kullanıcı" },
@@ -43,6 +62,7 @@ export function Team() {
   const [isRoleChanging, setRoleChanging] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [isRevoking, setRevoking] = useState(false);
+  const [resendingId, setResendingId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -97,6 +117,11 @@ export function Team() {
       await load();
     } catch (err) {
       setError(err.message);
+      if (err.status === 409) {
+        // A duplicate-active-invitation conflict — refresh so the existing invitation
+        // (with its own Yeniden Gönder / İptal Et actions) is visible below.
+        await load();
+      }
     }
   }
 
@@ -133,10 +158,25 @@ export function Team() {
     }
   }
 
-  // TODO(Phase 7b): wire to a real resend endpoint once invitation email sending is implemented.
-  function handleResendInvitation(invitation) {
+  async function handleResendInvitation(invitation) {
+    if (resendingId) return;
     setError("");
-    setNotice(`${invitation.email} için yeniden gönderme özelliği yakında eklenecek.`);
+    setNotice("");
+    setResendingId(invitation.id);
+    try {
+      const resent = await resendMarketInvitation(invitation.id);
+      setCreatedInvite(resent);
+      setNotice(
+        MANUAL_SHARE_STATUSES.has(resent.status)
+          ? `${resent.email} için davet e-postası gönderilemedi. Bağlantıyı elle paylaşabilirsiniz.`
+          : `${resent.email} için davet yeniden gönderildi.`,
+      );
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResendingId(null);
+    }
   }
 
   // TODO(Phase 7c): wire to the admin-triggered password-reset endpoint once implemented.
@@ -196,12 +236,16 @@ export function Team() {
         </form>
         {createdInvite && (
           <div className="invite-result field-stack">
-            <strong>Davet bağlantısı</strong>
+            <strong>{createdInvite.status === "sent" ? "Davet e-postası gönderildi" : "Davet bağlantısı"}</strong>
             <Input label="Bağlantı" readOnly value={createdInvite.accept_url} />
             <Button onClick={handleCopyInvite}>{copyMessage ? "Kopyalandı" : "Kopyala"}</Button>
             {copyMessage ? <p className="inline-result" role="status">{copyMessage}</p> : null}
             {copyError ? <p className="inline-result inline-result-warning" role="alert">{copyError}</p> : null}
-            <p className="table-hint">E-posta gönderimi henüz otomatik değildir. Bu bağlantıyı kullanıcıyla güvenli şekilde paylaşın.</p>
+            {MANUAL_SHARE_STATUSES.has(createdInvite.status) ? (
+              <p className="table-hint">Davet e-postası gönderilemedi. Bu bağlantıyı kullanıcıyla güvenli şekilde paylaşın.</p>
+            ) : (
+              <p className="table-hint">Davet e-postası {createdInvite.email} adresine gönderildi. Sorun olursa bağlantıyı elle de paylaşabilirsiniz.</p>
+            )}
           </div>
         )}
       </Card>
@@ -217,9 +261,11 @@ export function Team() {
                 <td><Badge tone={statusTones[invitation.status] || "neutral"}>{statusLabels[invitation.status] || invitation.status}</Badge></td>
                 <td>{new Date(invitation.expires_at).toLocaleString("tr-TR")}</td>
                 <td className="table-actions">
-                  {invitation.status === "pending" && (
+                  {ACTIVE_INVITATION_STATUSES.has(invitation.status) && (
                     <>
-                      <Button onClick={() => handleResendInvitation(invitation)}>Yeniden Gönder</Button>
+                      <Button onClick={() => handleResendInvitation(invitation)} disabled={resendingId === invitation.id}>
+                        {resendingId === invitation.id ? "Gönderiliyor..." : "Yeniden Gönder"}
+                      </Button>
                       <Button variant="danger" onClick={() => requestRevoke(invitation)}>İptal Et</Button>
                     </>
                   )}
