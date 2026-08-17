@@ -94,31 +94,35 @@ Stripe TEST hesapları, Dashboard'da "Get started" kurulumu tamamlanmamış olsa
   3. `invoice.lines.data[0].parent.subscription_item_details.subscription` (satır seviyesi son çare)
 
   Ekstra Stripe API çağrısı gerekmez (salt veri-şekli okuma) ve ek restricted-key izni gerektirmez.
-- **Kalıcı hatalar** (eşlenmeyen Price, bulunamayan market): event `failed` olarak işaretlenir (terminal), hata **hem** `stripe_webhook_events.error` **hem** `market_subscriptions.sync_error` alanına yazılır (Platform Admin market listesi/detayında görünür), Stripe'a 200 dönülür (retry fırtınası önlenir). Platform Admin resync, hatayı yalnızca başarılı bir otoriter senkronizasyondan sonra temizler.
-- **Geçici hatalar kurtarılabilir**: Kalıcı olmayan bir hata (Stripe API blip, DB hatası, veya düzeltilmeden önceki `.get()` hatası gibi bir kod hatası) event satırını terminal olmayan `received` durumunda bırakır — sonraki bir Stripe retry teslimatı satırı yeniden talep edip işleyebilir. Yalnızca `processed` / `ignored` / `ignored_stale` / `failed` terminaldir.
+- **Kalıcı hatalar** (eşlenmeyen Price, bulunamayan market/abonelik): event `failed` olarak işaretlenir, hata **hem** `stripe_webhook_events.error` **hem** `market_subscriptions.sync_error` alanına yazılır (Platform Admin market listesi/detayında görünür), Stripe'a 200 dönülür (retry fırtınası önlenir). Platform Admin resync, hatayı yalnızca başarılı bir otoriter senkronizasyondan sonra temizler.
+- **`failed` terminal DEĞİLDİR — yeniden denenebilir** (PR #69 hotfix): `failed` görünüşte kalıcı olsa da (yanlış eşleme, eksik yerel satır...) kök neden düzeldiğinde (kod deploy'u, eksik satırın senkronize olması, ...) aynı event'in yeniden teslimi tekrar işlenmelidir. `TERMINAL_WEBHOOK_STATUSES = {processed, ignored, ignored_stale}` — yalnızca bu üçü no-op'tur; `received` ve `failed` yeniden talep edilebilir (`RETRYABLE_WEBHOOK_STATUSES`). `_claim_event_row`, `failed` bir satırı aynı `SELECT ... FOR UPDATE` kilidiyle yeniden talep eder, eski hatayı temizler ve dispatch'i yeniden çalıştırır — yeni satır eklenmez, eşzamanlılık koruması (tek aktif işleyici) korunur.
+- **Geçici hatalar da kurtarılabilir**: Kalıcı olmayan bir hata (Stripe API blip, DB hatası) event satırını `received` durumunda bırakır — davranışı `failed`'dan farksız, ikisi de retryable.
 
 ## Webhook kurtarma / yeniden gönderme prosedürü
 
-Bir event `failed` (kalıcı) durumuna düşerse ve kök neden bir kod hatasıysa (örn. bu PR'ın düzelttiği SDK uyumsuzluğu):
+Bir event `failed` durumuna düşerse:
 
-1. Kod düzeltmesini deploy et.
+1. Kök neden bir kod hatasıysa, düzeltmeyi deploy et; kök neden eksik/gecikmiş bir yerel kayıtsa (örn. `invoice.paid` ilgili `customer.subscription.created`'dan önce geldiyse), o kaydın oluşmasını bekle.
 2. Stripe Dashboard → Developers → Webhooks → ilgili endpoint → Event'i bul → **Resend**. Bu, aynı `stripe_event_id` ile yeni bir teslimat tetikler.
-3. `_claim_event_row`, satırın `failed` (terminal) olduğunu görüp no-op döner — **`failed` olarak işaretlenmiş bir event otomatik olarak yeniden denenmez**, açıkça resend edilmelidir.
-4. Alternatif: Platform Admin resync (`POST /platform/markets/{id}/billing/resync`) etkilenen market için Stripe'tan doğrudan otoriter durumu çeker; bu, `stripe_webhook_events` satırının durumunu değiştirmez ama `market_subscriptions.sync_error`'ı başarılı senkronizasyon sonrası temizler.
-5. Terminal olmayan (`received`) bir event için ekstra işlem gerekmez — sıradaki Stripe retry teslimatı otomatik olarak yeniden işler.
+3. `_claim_event_row`, `failed` satırı yeniden talep eder (terminal değildir) ve dispatch'i baştan çalıştırır — **Stripe Dashboard'da görünen 200 yanıtı, yalnızca yerel `stripe_webhook_events` satırı da `failed`'dan çıkıp `processed`/`ignored`/`ignored_stale`'e geçtiğinde anlamlıdır**; 200, HTTP seviyesinde her zaman dönülür (bkz. yukarı), event'in gerçekten kurtarıldığının kanıtı değildir — DB'den doğrula.
+4. Kurtarma başarısız olursa (kök neden hâlâ geçerliyse) satır yine `failed`'a döner, ama artık en güncel/sanitize edilmiş hata mesajıyla; eski hata mesajı korunmaz.
+5. Alternatif: Platform Admin resync (`POST /platform/markets/{id}/billing/resync`) etkilenen market için Stripe'tan doğrudan otoriter durumu çeker; bu, `stripe_webhook_events` satırının durumunu değiştirmez ama `market_subscriptions.sync_error`'ı başarılı senkronizasyon sonrası temizler.
 
 **Bu PR'ın kapattığı iki spesifik production olayı için resend sırası**:
 
 1. Deploy sonrası migration `20260817_0026`'nın uygulandığını doğrula (`alembic current` → `20260817_0026`).
 2. Stripe Dashboard → Developers → Webhooks → prod endpoint → **`customer.subscription.deleted`** event'ini bul (constraint hatasıyla `failed` olan) → **Resend**. Beklenen sonuç: `MarketSubscription.status="canceled"`, `cancel_at_period_end=false`, `canceled_at` dolu, `Market.subscription_plan="unassigned"`, webhook satırı `processed`.
 3. Aynı Dashboard'da **`invoice.paid`** olarak `failed` işaretli event'leri bul (hem ilk abonelik faturası hem yükseltme/proration faturaları) → her birini **Resend** et. Beklenen sonuç: ilgili `MarketSubscription.last_payment_status="paid"`, `latest_invoice_id` güncellenir, webhook satırı `processed`.
-4. Platform Admin → Faturalandırma panelinde (`/#/platform/billing`) "Webhook Sağlığı" ve "Son Faturalandırma Hataları" bölümlerinden `failed` sayacının düştüğünü doğrula.
+4. Her resend sonrası DB'yi doğrula (Dashboard'daki 200 tek başına yeterli kanıt değildir): `SELECT status, processed_at, error FROM stripe_webhook_events WHERE stripe_event_id = '...'` → `status='processed'`, `processed_at` dolu, `error` NULL olmalı.
+5. Platform Admin → Faturalandırma panelinde (`/#/platform/billing`) "Webhook Sağlığı" ve "Son Faturalandırma Hataları" bölümlerinden `failed` sayacının düştüğünü doğrula.
 
 ## Testler
 
 `cd backend && pytest tests/test_billing.py` — plan mapping, checkout RBAC, checkout body içeriği (customer_creation gönderilmez, managed_payments/automatic_tax açık gönderilir, email fallback sırası), durum bazlı hak politikası, sıra dışı event koruması, idempotency, pending-update ödeme güvenliği, sync-error görünürlüğü/resync, pending plan görünürlüğü (müşteri + Platform Admin), gerçek Stripe SDK nesnesi gibi davranan (`.get()` desteklemeyen) fixture'larla webhook/sync uyumluluğu. Gerçek Stripe ağ çağrısı yapılmaz (SDK çağrıları `monkeypatch` ile stub'lanır).
 
 Bu PR ayrıca ekliyor: `ck_markets_subscription_plan`'ın `unassigned`'ı kabul ettiğini ve geçersiz değerleri hâlâ reddettiğini doğrulayan constraint testleri; gerçek production regresyonunu birebir üreten terminal iptal testi (`test_subscription_deleted_writes_unassigned_plan_without_constraint_violation_...`) ve iptal-sonrası-sıra-dışı-event regresyon testi; modern (`invoice.parent.subscription_details.subscription`), legacy (üst seviye `invoice.subscription`) ve satır-seviyesi fallback şekillerinin tümünü kapsayan `_subscription_id_from_invoice` testleri (`.get()` desteklemeyen `_FakeStripeObject` dahil); ilk abonelik/yükseltme-proration/ilgisiz/yinelenen/sıra-dışı `invoice.paid` senaryoları; `GET /platform/billing/health` için DB-backed aggregation + sır sızdırmama testleri (`backend/tests/test_platform_billing.py`).
+
+**PR #69 hotfix'i ekliyor** (`failed` webhook retry): `failed` bir event'in resend ile yeniden işlenip kurtarılabildiğini kanıtlayan `test_failed_webhook_event_is_retryable_on_resend_...`; `processed`/`ignored`/`ignored_stale`'in hâlâ terminal kaldığını (resend'in dispatch'i tekrar tetiklemediğini) kanıtlayan `test_processed_webhook_event_remains_idempotent_on_resend_...` ve `test_ignored_and_ignored_stale_webhook_events_remain_terminal_on_resend_...`; aynı `failed` event'in eşzamanlı iki resend'inde tek aktif işleyici garantisinin korunduğunu kanıtlayan `test_concurrent_retries_of_failed_webhook_event_serialize_single_active_processor_...`; başarısız bir retry'ın eski hata mesajını değil en güncel hatayı sakladığını kanıtlayan `test_repeated_failed_retry_replaces_the_stale_error_...` (tümü `backend/tests/test_billing.py`).
 
 Frontend: `npm run test:platform` (`src/pages/platform/PlatformBilling.test.mjs`, `src/api/platformApi.test.mjs`) — sağlık kartlarının, TEST/LIVE rozetinin, webhook uyarı tonunun, plan eşleştirme tablosunun ve son hatalar bölümünün var olduğunu, hiçbir Stripe secret alanının kaynak koduna sızmadığını doğrular (bu harness gerçek DOM render'ı değil, kaynak/metin tabanlı assertion kullanır — bkz. `src/components/ui/PlanChangeModal.test.mjs` ile aynı desen).
 

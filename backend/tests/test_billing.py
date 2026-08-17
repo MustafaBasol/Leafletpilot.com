@@ -1327,6 +1327,286 @@ async def test_transient_rollback_does_not_overwrite_concurrently_committed_term
 
 
 # ---------------------------------------------------------------------------
+# Failed webhook retry — "failed" is retryable, not terminal (PR #69 hotfix).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failed_webhook_event_is_retryable_on_resend_when_test_database_url_is_configured() -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            market_id = market.id
+
+            # invoice.paid arrives before the subscription-created event ever
+            # synced a local MarketSubscription row for this Stripe subscription
+            # id — mirrors the production incident where a historical
+            # invoice.paid event permanently failed with "Invoice event has no
+            # associated subscription."/"No local subscription found ...".
+            invoice = {
+                "id": "in_retry",
+                "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_retry"}},
+            }
+            event = _event("evt_retry_recover", "invoice.paid", invoice, created_ts=1_700_000_100)
+
+            await process_event(session, event)
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_retry_recover")
+            )
+            assert webhook_row.status == "failed"
+            assert "No local subscription found" in webhook_row.error
+
+            # The local subscription now exists (e.g. a later
+            # customer.subscription.created event synced it) — the same
+            # invoice.paid event id is redelivered, exactly as a Stripe
+            # Dashboard "Resend" does.
+            await sync_subscription_from_stripe_object(
+                session,
+                _subscription(market_id=market_id, plan_code="starter", status="active", sub_id="sub_retry"),
+                event_created_at=_dt(1_700_000_050),
+            )
+            await session.commit()
+
+            await process_event(session, event)
+
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_retry_recover")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+            assert rows[0].processed_at is not None
+            assert rows[0].error is None
+
+            subscription_row = await session.scalar(
+                select(MarketSubscription).where(MarketSubscription.market_id == market_id)
+            )
+            assert subscription_row.last_payment_status == "paid"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_processed_webhook_event_remains_idempotent_on_resend_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            market_id = market.id
+
+            sub = _subscription(market_id=market_id, plan_code="pro", status="active", sub_id="sub_processed_dup")
+            event = _event("evt_processed_dup", "customer.subscription.created", sub, created_ts=1_700_000_100)
+            _stub_subscription_retrieve(monkeypatch, sub)
+
+            original_sync = billing_service.sync_subscription_from_stripe_object
+            call_count = {"n": 0}
+
+            async def counting_sync(session, stripe_subscription, *, event_created_at, market_id_hint=None):
+                call_count["n"] += 1
+                return await original_sync(
+                    session, stripe_subscription, event_created_at=event_created_at, market_id_hint=market_id_hint
+                )
+
+            monkeypatch.setattr("app.services.billing.webhook.sync_subscription_from_stripe_object", counting_sync)
+
+            await process_event(session, event)
+            assert call_count["n"] == 1
+
+            # Resend of an already-processed event must not re-dispatch.
+            await process_event(session, event)
+            assert call_count["n"] == 1
+
+            webhook_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_processed_dup")
+            )
+            assert webhook_row.status == "processed"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ignored_and_ignored_stale_webhook_events_remain_terminal_on_resend_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            market = await _create_market(session)
+            await session.commit()
+            market_id = market.id
+
+            call_count = {"n": 0}
+            import app.services.billing.webhook as webhook_module
+
+            original_dispatch = webhook_module._dispatch
+
+            async def counting_dispatch(session, event, *, event_created_at):
+                call_count["n"] += 1
+                return await original_dispatch(session, event, event_created_at=event_created_at)
+
+            monkeypatch.setattr(webhook_module, "_dispatch", counting_dispatch)
+
+            # "ignored" — an event type _dispatch doesn't handle at all.
+            unhandled_event = _event(
+                "evt_ignored", "customer.subscription.trial_will_end", {"id": "sub_unhandled"}, created_ts=1_700_000_100
+            )
+            await process_event(session, unhandled_event)
+            assert call_count["n"] == 1
+            row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_ignored")
+            )
+            assert row.status == "ignored"
+
+            await process_event(session, unhandled_event)
+            assert call_count["n"] == 1  # resend of "ignored" must not re-dispatch
+            await session.refresh(row)
+            assert row.status == "ignored"
+
+            # "ignored_stale" — a subscription-state event older than the
+            # already-applied cursor.
+            active_sub = _subscription(market_id=market_id, plan_code="starter", status="active", sub_id="sub_stale_dup")
+            _stub_subscription_retrieve(monkeypatch, active_sub)
+            await process_event(
+                session, _event("evt_stale_baseline", "customer.subscription.created", active_sub, created_ts=1_700_000_500)
+            )
+
+            stale_event = _event(
+                "evt_ignored_stale", "customer.subscription.updated", active_sub, created_ts=1_700_000_100
+            )
+            call_count["n"] = 0
+            await process_event(session, stale_event)
+            assert call_count["n"] == 1
+            stale_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_ignored_stale")
+            )
+            assert stale_row.status == "ignored_stale"
+
+            await process_event(session, stale_event)
+            assert call_count["n"] == 1  # resend of "ignored_stale" must not re-dispatch
+            await session.refresh(stale_row)
+            assert stale_row.status == "ignored_stale"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retries_of_failed_webhook_event_serialize_single_active_processor_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as setup_session:
+            market = await _create_market(setup_session)
+            await setup_session.commit()
+            market_id = market.id
+
+        invoice = {
+            "id": "in_conc_retry",
+            "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_conc_retry"}},
+        }
+        event = _event("evt_conc_retry", "invoice.paid", invoice, created_ts=1_700_000_100)
+
+        async with session_factory() as session:
+            # First delivery fails permanently — no local subscription yet.
+            await process_event(session, event)
+            failed_row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_conc_retry")
+            )
+            assert failed_row.status == "failed"
+
+            # Now the referenced subscription exists, so a retry can succeed.
+            await sync_subscription_from_stripe_object(
+                session,
+                _subscription(market_id=market_id, plan_code="pro", status="active", sub_id="sub_conc_retry"),
+                event_created_at=_dt(1_700_000_050),
+            )
+            await session.commit()
+
+        original_apply = billing_service.apply_invoice_event
+        call_count = {"n": 0}
+
+        async def slow_apply(session, invoice, *, event_created_at, kind):
+            call_count["n"] += 1
+            await asyncio.sleep(0.3)
+            return await original_apply(session, invoice, event_created_at=event_created_at, kind=kind)
+
+        monkeypatch.setattr("app.services.billing.webhook.apply_invoice_event", slow_apply)
+
+        async def deliver():
+            async with session_factory() as session:
+                await process_event(session, event)
+
+        await asyncio.gather(deliver(), deliver())
+
+        async with session_factory() as session:
+            rows = (
+                await session.scalars(
+                    select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_conc_retry")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].status == "processed"
+            assert rows[0].processed_at is not None
+            assert rows[0].error is None
+
+        # Only one of the two concurrent retries ever reached dispatch — the
+        # other blocked on the row's SELECT ... FOR UPDATE lock until the
+        # winner committed, then saw a terminal "processed" status and
+        # returned without reprocessing.
+        assert call_count["n"] == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_repeated_failed_retry_replaces_the_stale_error_when_test_database_url_is_configured(
+    monkeypatch,
+) -> None:
+    engine, session_factory = await _setup_engine()
+    try:
+        async with session_factory() as session:
+            await _create_market(session)
+            await session.commit()
+
+            invoice = {"id": "in_flaky_retry", "parent": {"type": "subscription_details", "subscription_details": {}}}
+            event = _event("evt_flaky_retry", "invoice.paid", invoice, created_ts=1_700_000_100)
+
+            call_count = {"n": 0}
+
+            async def flaky_apply(session, invoice, *, event_created_at, kind):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise PermanentSyncError("first failure reason")
+                raise PermanentSyncError("second, different failure reason")
+
+            monkeypatch.setattr("app.services.billing.webhook.apply_invoice_event", flaky_apply)
+
+            await process_event(session, event)
+            row = await session.scalar(
+                select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == "evt_flaky_retry")
+            )
+            assert row.status == "failed"
+            assert "first failure reason" in row.error
+
+            # Resend — dispatch is re-entered and fails again, with a
+            # different error. The stale first-attempt error must not linger.
+            await process_event(session, event)
+            await session.refresh(row)
+            assert row.status == "failed"
+            assert "second, different failure reason" in row.error
+            assert "first failure reason" not in row.error
+            assert call_count["n"] == 2
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
 # Webhook ordering hardening — separate cursors per event kind, strict '<'.
 # ---------------------------------------------------------------------------
 

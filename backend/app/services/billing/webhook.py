@@ -46,11 +46,15 @@ INVOICE_EVENT_KINDS = {
 }
 
 # Terminal outcomes — a duplicate delivery of an event already in one of
-# these states is a safe no-op (200, nothing re-applied). "received" is the
-# only non-terminal status: it covers a brand-new event, one whose previous
-# processing attempt crashed mid-flight, or one that failed transiently and
-# was explicitly reset so a Stripe retry can reclaim it (see process_event).
-TERMINAL_WEBHOOK_STATUSES = {"processed", "ignored", "ignored_stale", "failed"}
+# these states is a safe no-op (200, nothing re-applied). "failed" is
+# deliberately NOT terminal: a permanent-looking sync error (bad mapping,
+# missing local row, ...) can become processable later — the mapping gets
+# fixed, the referenced row gets created — so a Stripe Dashboard resend (or
+# automatic retry) of a "failed" event must re-enter dispatch rather than be
+# treated as an already-handled duplicate. "received" is the other
+# non-terminal status: it covers a brand-new event or one whose previous
+# processing attempt crashed mid-flight before recording an outcome.
+TERMINAL_WEBHOOK_STATUSES = {"processed", "ignored", "ignored_stale"}
 
 
 def construct_event(payload: bytes, sig_header: str | None) -> "stripe.Event":
@@ -76,6 +80,13 @@ async def _claim_event_row(session: AsyncSession, event: "stripe.Event") -> Stri
     so a later Stripe retry can still reclaim a row stuck at "received" —
     unlike a plain unique-constraint check, which would have permanently
     treated that retry as an already-handled duplicate.
+
+    A row found at "failed" is reclaimed the same way: it's returned locked,
+    with its stale error cleared, so the caller re-enters dispatch exactly as
+    it would for a fresh "received" row. Clearing eagerly (rather than
+    waiting for a terminal outcome) means a crash mid-redispatch still leaves
+    a clean slate for the next retry instead of surfacing a stale message
+    from the attempt before it.
     """
     stripe_event_id = event["id"]
     webhook_row = StripeWebhookEvent(
@@ -99,6 +110,9 @@ async def _claim_event_row(session: AsyncSession, event: "stripe.Event") -> Stri
     if webhook_row.status in TERMINAL_WEBHOOK_STATUSES:
         await session.commit()  # release the lock; nothing to do
         return None
+    if webhook_row.status == "failed":
+        webhook_row.error = None
+        await session.flush()
     return webhook_row
 
 
