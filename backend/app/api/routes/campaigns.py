@@ -57,6 +57,15 @@ from app.services.campaign_parser import parse_campaign_text
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 
+async def require_campaign_approval_scope(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> None:
+    """Establish tenant-scoped campaign access before approval-body validation."""
+    await campaign_service.get_campaign(session, campaign_id, market_id)
+
+
 @router.get("/builder/options", response_model=CampaignBuilderOptions)
 async def campaign_builder_options(
     market_id: UUID = Depends(get_required_market_id),
@@ -268,6 +277,7 @@ async def finalize_campaign(
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
+    _: None = Depends(require_campaign_approval_scope),
 ) -> CampaignFinalizeResponse:
     return await campaign_service.finalize_campaign(
         session,
@@ -285,6 +295,7 @@ async def approve_campaign(
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
+    _: None = Depends(require_campaign_approval_scope),
 ) -> CampaignFinalizeResponse:
     return await campaign_service.finalize_campaign(
         session,

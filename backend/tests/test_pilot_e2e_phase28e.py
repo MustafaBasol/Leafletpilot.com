@@ -658,7 +658,17 @@ async def test_pilot_customer_full_journey_when_test_database_url_is_configured(
         assert "�" not in html, "preview HTML must not contain unicode replacement characters (mojibake)"
         assert "€" in html
 
-        # --- Stage 13/14: PDF + PNG export -----------------------------------------------------
+        # --- Stage 13/14: approve frozen snapshot, then PDF + PNG export ----------------------
+        approval_candidate = await client.get(f"/api/campaigns/{telegram_campaign_id}", headers=owner_headers)
+        assert approval_candidate.status_code == 200, approval_candidate.text
+        approval = await client.post(
+            f"/api/campaigns/{telegram_campaign_id}/finalize",
+            headers=owner_headers,
+            json={"expected_revision": approval_candidate.json()["draft_revision"]},
+        )
+        assert approval.status_code == 200, approval.text
+        assert approval.json()["campaign"]["frozen_at"] is not None
+
         export_response = await client.post(
             f"/api/campaigns/{telegram_campaign_id}/export-jobs",
             headers=owner_headers,
@@ -892,15 +902,47 @@ async def test_pilot_cross_tenant_export_and_telegram_binding_isolation_when_tes
             TelegramAccount(user_id=user_a_id, telegram_user_id=telegram_user_a, is_active=True),
             TelegramAccount(user_id=user_b_id, telegram_user_id=telegram_user_b, is_active=True),
         ])
+        template_a = Template(
+            market_id=market_a_id,
+            name=f"{prefix} Export Template",
+            slug=f"{prefix}-export-template",
+            template_type="market",
+            is_global=False,
+            status="published",
+            visibility="private",
+        )
+        session.add(template_a)
         await session.commit()
 
     headers_a = {"Authorization": f"Bearer {create_access_token(str(user_a_id))}", "X-Market-Id": str(market_a_id)}
     headers_b = {"Authorization": f"Bearer {create_access_token(str(user_b_id))}", "X-Market-Id": str(market_b_id)}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        create_campaign = await client.post("/api/campaigns", headers=headers_a, json={"title": f"{prefix} A Campaign"})
+        create_campaign = await client.post(
+            "/api/campaigns",
+            headers=headers_a,
+            json={
+                "title": f"{prefix} A Campaign",
+                "template_id": str(template_a.id),
+                "items": [
+                    {
+                        "raw_line": "Tenant A Apples - 1.00 EUR",
+                        "incoming_name": "Tenant A Apples",
+                        "display_name": "Tenant A Apples",
+                        "price": "1.00",
+                    }
+                ],
+            },
+        )
         assert create_campaign.status_code == 201
-        campaign_id = create_campaign.json()["id"]
+        campaign_body = create_campaign.json()
+        campaign_id = campaign_body["id"]
+        approval = await client.post(
+            f"/api/campaigns/{campaign_id}/finalize",
+            headers=headers_a,
+            json={"expected_revision": campaign_body["draft_revision"]},
+        )
+        assert approval.status_code == 200, approval.text
 
         export = await client.post(
             f"/api/campaigns/{campaign_id}/export-jobs", headers=headers_a, json={"job_type": "final_export", "requested_formats": ["pdf"]}

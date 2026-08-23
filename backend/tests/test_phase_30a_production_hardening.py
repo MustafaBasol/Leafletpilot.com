@@ -232,6 +232,13 @@ async def test_cross_market_isolation_across_resources_when_test_database_url_is
             assert create_campaign.status_code == 201, create_campaign.text
             campaign_id = create_campaign.json()["id"]
 
+            # Own resources retain normal approval-body validation, but a
+            # foreign or nonexistent campaign must be non-disclosing first.
+            own_missing_revision = await async_client.post(
+                f"/api/campaigns/{campaign_id}/finalize", headers=headers_a, json={}
+            )
+            assert own_missing_revision.status_code == 422
+
             for method, path, body in [
                 ("GET", f"/api/campaigns/{campaign_id}", None),
                 ("PATCH", f"/api/campaigns/{campaign_id}", {"title": "Hijacked"}),
@@ -242,6 +249,17 @@ async def test_cross_market_isolation_across_resources_when_test_database_url_is
             ]:
                 response = await async_client.request(method, path, headers=headers_b_own, json=body)
                 assert response.status_code == 404, f"{method} {path} leaked cross-tenant: {response.status_code}"
+
+            malformed_cross_finalize = await async_client.post(
+                f"/api/campaigns/{campaign_id}/finalize",
+                headers=headers_b_own,
+                json={"expected_revision": "not-an-integer"},
+            )
+            assert malformed_cross_finalize.status_code == 404
+            nonexistent_finalize = await async_client.post(
+                f"/api/campaigns/{uuid4()}/finalize", headers=headers_b_own, json={}
+            )
+            assert nonexistent_finalize.status_code == 404
 
             # B cannot use A's market_id at all - membership check fails first.
             leaked = await async_client.get(f"/api/campaigns/{campaign_id}", headers=headers_b_as_a)

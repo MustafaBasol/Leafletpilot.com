@@ -1016,6 +1016,7 @@ async def finalize_campaign(
     *,
     expected_revision: int,
     actor_id: UUID | None = None,
+    commit: bool = True,
 ) -> CampaignFinalizeResponse:
     locked_campaign_id = await session.scalar(
         select(Campaign.id)
@@ -1071,7 +1072,7 @@ async def finalize_campaign(
             metadata_={"campaign_id": str(campaign.id), "revision": campaign.draft_revision},
         )
     )
-    await _persist(session, campaign)
+    await _persist(session, campaign, commit=commit)
     return CampaignFinalizeResponse(campaign=await get_campaign(session, campaign.id, market_id), frozen_at=now, snapshot=campaign.snapshot_json)
 
 async def validate_visible_template(session: AsyncSession, template_id: UUID, market_id: UUID) -> Template:

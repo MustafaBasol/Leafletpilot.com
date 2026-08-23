@@ -41,7 +41,7 @@ from app.models import (
     Template,
     User,
 )
-from app.services.campaign import create_export_job
+from app.services.campaign import create_export_job, finalize_campaign
 from app.services.catalog import normalize_alias
 from app.services.rendering import storage_path_for_key, validate_rendered_file
 from app.schemas.export import ExportJobCreate
@@ -287,7 +287,7 @@ async def seed_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[str
         session.add(template)
         templates.append(template)
     await session.flush()
-    campaign = Campaign(id=stable_id("campaign", DEMO_CAMPAIGN_SLUG), market_id=market.id, created_by_user_id=owner.id, title=DEMO_CAMPAIGN_TITLE, slug=DEMO_CAMPAIGN_SLUG, status="approved", channel="panel", source_type="manual", raw_input_text="Deterministic demo campaign", template_id=templates[0].id, campaign_start_date=date(2026, 7, 13), campaign_end_date=date(2026, 7, 19), currency="EUR", language="tr")
+    campaign = Campaign(id=stable_id("campaign", DEMO_CAMPAIGN_SLUG), market_id=market.id, created_by_user_id=owner.id, title=DEMO_CAMPAIGN_TITLE, slug=DEMO_CAMPAIGN_SLUG, status="draft", channel="panel", source_type="manual", raw_input_text="Deterministic demo campaign", template_id=templates[0].id, campaign_start_date=date(2026, 7, 13), campaign_end_date=date(2026, 7, 19), currency="EUR", language="tr")
     for index, product in enumerate(products[:10]):
         _, name, category_name, unit, _, price, old_price = DEMO_PRODUCTS[index]
         campaign.items.append(CampaignItem(id=stable_id("item", str(index)), market_id=market.id, product_id=product.id, raw_line=f"{name} - {price} EUR", incoming_name=name, display_name=name, price=Decimal(price), old_price=Decimal(old_price), currency="EUR", unit_label=unit, category_hint=category_name, sort_order=index, is_hero=index == 0, match_status="manual_selected", match_confidence=Decimal("100"), parsed_payload={"source": "demo_seed", "deterministic": True}))
@@ -300,10 +300,18 @@ async def seed_demo(session: AsyncSession, *, dry_run: bool = False) -> dict[str
 
 
 async def generate_exports(session: AsyncSession) -> dict[str, int | str]:
-    market, _ = await load_target(session)
+    market, owner = await load_target(session)
     campaign = await session.scalar(select(Campaign).where(Campaign.market_id == market.id, Campaign.slug == DEMO_CAMPAIGN_SLUG))
     if campaign is None:
         raise DemoOperationError("Golden demo campaign is missing; run seed first.")
+    if campaign.frozen_at is None:
+        await finalize_campaign(
+            session,
+            campaign.id,
+            market.id,
+            expected_revision=campaign.draft_revision,
+            actor_id=owner.id,
+        )
     existing = await session.scalar(select(ExportJob).where(ExportJob.market_id == market.id, ExportJob.campaign_id == campaign.id, ExportJob.status == "completed"))
     if existing is not None:
         return {"export_job_id": str(existing.id), "status": "completed", "files": len(existing.result_file_ids or [])}

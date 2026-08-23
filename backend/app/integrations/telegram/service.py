@@ -791,8 +791,14 @@ async def _generate_exports(
     if state.campaign_id is None:
         await client.send_message(chat_id, "Export icin kampanya bulunamadi.")
         return
-    campaign = await session.get(Campaign, state.campaign_id)
-    if campaign is None or campaign.market_id != membership.market_id:
+    try:
+        campaign = await campaign_service.get_campaign(
+            session,
+            state.campaign_id,
+            membership.market_id,
+            for_update=True,
+        )
+    except HTTPException:
         await client.send_message(chat_id, "Export icin kampanya bu markete ait degil.")
         return
     job = await _get_reusable_export_job(session, state, membership.market_id)
@@ -812,6 +818,17 @@ async def _generate_exports(
             state.export_job_id = created_job.id
 
         try:
+            # Confirmation approves the current locked draft before final export.
+            # Keeping this transaction uncommitted preserves the conversation-row
+            # lock across approval, job creation, and delivery bookkeeping.
+            await campaign_service.finalize_campaign(
+                session,
+                campaign.id,
+                membership.market_id,
+                expected_revision=campaign.draft_revision,
+                actor_id=state.user_id,
+                commit=False,
+            )
             job = await campaign_service.create_export_job(
                 session,
                 state.campaign_id,
