@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from app.main import app
 from app.models import (
     Campaign,
     CampaignFile,
+    CampaignItem,
     ExportJob,
     Market,
     MarketUser,
@@ -923,8 +925,12 @@ async def test_telegram_concurrent_export_confirms_create_one_job_and_one_delive
                     select(TelegramUpdate).where(TelegramUpdate.update_id.in_([1010, 1011]))
                 )
             ).all()
+            approved_campaign = await session.get(Campaign, campaign_id)
 
         assert job_count == 1
+        assert approved_campaign is not None
+        assert approved_campaign.frozen_at is not None
+        assert approved_campaign.approved_revision == approved_campaign.draft_revision
         assert len(fake.documents) == 1
         assert len(fake.photos) == 1
         assert state.state == "completed"
@@ -1042,7 +1048,34 @@ async def _seed_linked_user(session_factory, *, role: str, lifecycle_status: str
 async def _prepare_campaign_ready_for_export(session_factory, telegram_user_id, market_id):
     async with session_factory() as session:
         account = await session.scalar(select(TelegramAccount).where(TelegramAccount.telegram_user_id == telegram_user_id))
-        campaign = Campaign(market_id=market_id, title="Weekly Deals", channel="telegram", source_type="text")
+        template = Template(
+            market_id=market_id,
+            name="Telegram Export Template",
+            slug=f"telegram-export-{market_id}",
+            template_type="market",
+            is_global=False,
+            status="published",
+            visibility="private",
+        )
+        campaign = Campaign(
+            market_id=market_id,
+            title="Weekly Deals",
+            channel="telegram",
+            source_type="text",
+            template=template,
+        )
+        campaign.items.append(
+            CampaignItem(
+                market_id=market_id,
+                raw_line="Weekly Apples - 1.29 EUR",
+                incoming_name="Weekly Apples",
+                display_name="Weekly Apples",
+                price=Decimal("1.29"),
+                currency="EUR",
+                sort_order=0,
+                match_status="not_found",
+            )
+        )
         session.add(campaign)
         await session.flush()
         state = TelegramConversationState(

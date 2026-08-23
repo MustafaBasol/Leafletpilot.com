@@ -578,11 +578,14 @@ async def test_generate_exports_quota_exceeded_returns_to_confirmation_state(mon
     client = MessageClient()
     session = SimpleNamespace()
     membership = SimpleNamespace(market_id=state.selected_market_id, market=SimpleNamespace(), role="market_staff")
-    campaign = SimpleNamespace(id=campaign_id, market_id=state.selected_market_id)
+    campaign = SimpleNamespace(id=campaign_id, market_id=state.selected_market_id, draft_revision=7)
+    finalize_campaign = AsyncMock()
     session.get = AsyncMock(return_value=campaign)
     monkeypatch.setattr(service, "_selected_membership", AsyncMock(return_value=membership))
     monkeypatch.setattr(service, "market_allows_mutations", lambda market: True)
     monkeypatch.setattr(service, "_get_reusable_export_job", AsyncMock(return_value=None))
+    monkeypatch.setattr(service.campaign_service, "get_campaign", AsyncMock(return_value=campaign))
+    monkeypatch.setattr(service.campaign_service, "finalize_campaign", finalize_campaign)
     monkeypatch.setattr(
         service.campaign_service,
         "create_export_job",
@@ -591,6 +594,14 @@ async def test_generate_exports_quota_exceeded_returns_to_confirmation_state(mon
 
     await service._generate_exports(session, state, client)
 
+    finalize_campaign.assert_awaited_once_with(
+        session,
+        campaign_id,
+        membership.market_id,
+        expected_revision=campaign.draft_revision,
+        actor_id=state.user_id,
+        commit=False,
+    )
     assert state.state == "awaiting_confirmation"
     assert state.export_delivery_started_at is None
     assert "kotanız doldu" in client.messages[-1]

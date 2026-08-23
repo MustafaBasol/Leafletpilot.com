@@ -207,7 +207,8 @@ async def test_empty_campaign_analysis_is_persisted_without_content_mutation(mon
 async def test_apply_requires_a_saved_analysis(monkeypatch) -> None:
     campaign = Campaign(id=uuid4(), market_id=uuid4(), title="Not analyzed")
 
-    async def fake_get_campaign(session, campaign_id, market_id):
+    async def fake_get_campaign(session, campaign_id, market_id, *, for_update=False):
+        assert for_update is True
         return campaign
 
     monkeypatch.setattr(campaign_service, "get_campaign", fake_get_campaign)

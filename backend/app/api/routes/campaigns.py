@@ -5,8 +5,14 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_campaign_session, get_required_market_id, require_market_role
+from app.api.deps import (
+    get_campaign_session,
+    get_current_user,
+    get_required_market_id,
+    require_market_role,
+)
 from app.core.roles import MARKET_MUTATION_ROLES
+from app.models import User
 from app.schemas.campaign import (
     CampaignBuilderOptions,
     CampaignCreate,
@@ -35,11 +41,29 @@ from app.schemas.campaign import (
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
+from app.schemas.revision import (
+    CampaignApprovalRequest,
+    CampaignItemImageOptionRead,
+    CampaignRevisionRead,
+    PanelRevisionCommand,
+    PanelUndoRevisionRequest,
+    RevisionResult,
+)
 from app.services import campaign as campaign_service
 from app.services import product_matching
+from app.services import revision as revision_service
 from app.services.campaign_parser import parse_campaign_text
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+
+
+async def require_campaign_approval_scope(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> None:
+    """Establish tenant-scoped campaign access before approval-body validation."""
+    await campaign_service.get_campaign(session, campaign_id, market_id)
 
 
 @router.get("/builder/options", response_model=CampaignBuilderOptions)
@@ -133,6 +157,70 @@ async def get_campaign(
     return await campaign_service.get_campaign(session, campaign_id, market_id)
 
 
+
+
+@router.get("/{campaign_id}/revisions", response_model=list[CampaignRevisionRead])
+async def get_campaign_revisions(
+    campaign_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> list[CampaignRevisionRead]:
+    return await revision_service.list_revisions(session, campaign_id, market_id)
+
+
+@router.post("/{campaign_id}/revisions", response_model=RevisionResult)
+async def create_campaign_revision(
+    campaign_id: UUID,
+    payload: PanelRevisionCommand,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> RevisionResult:
+    result = await revision_service.apply_revision(
+        session, campaign_id, payload.trusted_command(), market_id, actor_id=actor.id
+    )
+    return RevisionResult(
+        revision=CampaignRevisionRead.model_validate(result.revision),
+        draft_revision=result.draft_revision,
+        idempotent=result.idempotent,
+    )
+
+
+@router.post("/{campaign_id}/revisions/undo", response_model=RevisionResult)
+async def undo_campaign_revision(
+    campaign_id: UUID,
+    payload: PanelUndoRevisionRequest,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> RevisionResult:
+    result = await revision_service.undo_latest_revision(
+        session, campaign_id, payload.trusted_request(), market_id, actor_id=actor.id
+    )
+    return RevisionResult(
+        revision=CampaignRevisionRead.model_validate(result.revision),
+        draft_revision=result.draft_revision,
+        idempotent=result.idempotent,
+    )
+
+
+@router.get("/{campaign_id}/items/{item_id}/image-options", response_model=list[CampaignItemImageOptionRead])
+async def campaign_item_image_options(
+    campaign_id: UUID,
+    item_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> list[CampaignItemImageOptionRead]:
+    item, images = await revision_service.list_item_image_options(session, campaign_id, item_id, market_id)
+    return [
+        CampaignItemImageOptionRead(
+            id=image.id,
+            label=f"Katalog görseli {index + 1}",
+            is_primary=image.is_primary,
+            is_selected=image.id == item.image_override_product_image_id,
+        )
+        for index, image in enumerate(images)
+    ]
 @router.get("/{campaign_id}/intelligence", response_model=CampaignIntelligenceEnvelope)
 async def get_campaign_intelligence(
     campaign_id: UUID,
@@ -155,9 +243,10 @@ async def analyze_campaign_intelligence(
 async def apply_campaign_intelligence(
     campaign_id: UUID,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignIntelligenceEnvelope:
-    return await campaign_service.apply_campaign_intelligence(session, campaign_id, market_id)
+    return await campaign_service.apply_campaign_intelligence(session, campaign_id, market_id, actor_id=actor.id)
 
 
 @router.get("/{campaign_id}/preview-html", response_model=CampaignPreviewHtml)
@@ -175,18 +264,46 @@ async def update_campaign(
     campaign_id: UUID,
     payload: CampaignUpdate,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
-    return await campaign_service.update_campaign(session, campaign_id, payload, market_id)
+    return await campaign_service.update_campaign(session, campaign_id, payload, market_id, actor_id=actor.id)
 
 
 @router.post("/{campaign_id}/finalize", response_model=CampaignFinalizeResponse)
 async def finalize_campaign(
     campaign_id: UUID,
+    payload: CampaignApprovalRequest,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
+    _: None = Depends(require_campaign_approval_scope),
 ) -> CampaignFinalizeResponse:
-    return await campaign_service.finalize_campaign(session, campaign_id, market_id)
+    return await campaign_service.finalize_campaign(
+        session,
+        campaign_id,
+        market_id,
+        expected_revision=payload.expected_revision,
+        actor_id=actor.id,
+    )
+
+
+@router.post("/{campaign_id}/approve", response_model=CampaignFinalizeResponse)
+async def approve_campaign(
+    campaign_id: UUID,
+    payload: CampaignApprovalRequest,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+    _: None = Depends(require_campaign_approval_scope),
+) -> CampaignFinalizeResponse:
+    return await campaign_service.finalize_campaign(
+        session,
+        campaign_id,
+        market_id,
+        expected_revision=payload.expected_revision,
+        actor_id=actor.id,
+    )
 
 
 @router.delete("/{campaign_id}", response_model=CampaignDetail)
@@ -203,9 +320,10 @@ async def add_campaign_item(
     campaign_id: UUID,
     payload: CampaignItemCreate,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
-    return await campaign_service.add_campaign_item(session, campaign_id, payload, market_id)
+    return await campaign_service.add_campaign_item(session, campaign_id, payload, market_id, actor_id=actor.id)
 
 
 @router.patch("/{campaign_id}/items/order", response_model=CampaignDetail)
@@ -213,9 +331,10 @@ async def reorder_campaign_items_before_item_route(
     campaign_id: UUID,
     payload: CampaignItemOrderUpdate,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
-    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id)
+    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id, actor_id=actor.id)
 
 
 @router.patch("/{campaign_id}/items/{item_id}", response_model=CampaignItemRead)
@@ -224,9 +343,10 @@ async def update_campaign_item(
     item_id: UUID,
     payload: CampaignItemUpdate,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignItemRead:
-    return await campaign_service.update_campaign_item(session, campaign_id, item_id, payload, market_id)
+    return await campaign_service.update_campaign_item(session, campaign_id, item_id, payload, market_id, actor_id=actor.id)
 
 
 @router.patch("/{campaign_id}/items/order", response_model=CampaignDetail)
@@ -234,9 +354,10 @@ async def reorder_campaign_items(
     campaign_id: UUID,
     payload: CampaignItemOrderUpdate,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignDetail:
-    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id)
+    return await campaign_service.reorder_campaign_items(session, campaign_id, payload.item_ids, market_id, actor_id=actor.id)
 
 
 @router.post("/{campaign_id}/items/{item_id}/resolve-match", response_model=CampaignItemRead)
@@ -246,6 +367,7 @@ async def resolve_campaign_item_match(
     payload: CampaignItemResolveMatch,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
     session: AsyncSession = Depends(get_campaign_session),
+    actor: User = Depends(get_current_user),
 ) -> CampaignItemRead:
     return await campaign_service.resolve_campaign_item_match(
         session,
@@ -253,6 +375,7 @@ async def resolve_campaign_item_match(
         item_id,
         payload,
         market_id,
+        actor_id=actor.id,
     )
 
 

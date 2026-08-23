@@ -33,8 +33,8 @@ export function getCampaignBuilderOptions(marketId) {
   return apiClient.get("/campaigns/builder/options", { marketId });
 }
 
-export function finalizeCampaign(campaignId, marketId) {
-  return apiClient.post(`/campaigns/${campaignId}/finalize`, {}, { marketId });
+export function finalizeCampaign(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/finalize`, payload, { marketId });
 }
 
 export function reorderCampaignItems(campaignId, itemIds, marketId) {
@@ -95,4 +95,20 @@ export async function fetchCampaignFile(campaignId, fileId, marketId) {
   }
 
   return response.blob();
+}
+
+export function applyCampaignRevision(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/revisions`, payload, { marketId });
+}
+
+export function undoCampaignRevision(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/revisions/undo`, payload, { marketId });
+}
+
+export function approveCampaign(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/approve`, payload, { marketId });
+}
+
+export function getCampaignItemImageOptions(campaignId, itemId, marketId) {
+  return apiClient.get(`/campaigns/${campaignId}/items/${itemId}/image-options`, { marketId });
 }

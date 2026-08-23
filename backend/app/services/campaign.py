@@ -1,9 +1,11 @@
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, and_, func, or_, select
@@ -12,9 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import (
+    ActivityLog,
     Campaign,
     CampaignFile,
     CampaignItem,
+    CampaignRevision,
     ExportJob,
     Market,
     MarketProduct,
@@ -42,7 +46,12 @@ from app.services.campaign_intelligence import CampaignIntelligenceEngine
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.campaign_rendering import campaign_render_load_options
 from app.services.catalog import list_my_market_products, resolved_market_product
-from app.services.entitlements import has_capacity, require_export_format, resolve_capabilities, resolve_plan_code
+from app.services.entitlements import (
+    has_capacity,
+    require_export_format,
+    resolve_capabilities,
+    resolve_plan_code,
+)
 from app.services.plans import plan_rank
 from app.services.preview_renderer import (
     DEFAULT_TEMPLATE_NAME,
@@ -102,7 +111,7 @@ async def _enforce_monthly_campaign_quota(session: AsyncSession, market: Market 
 def recalculate_campaign_counts(campaign: Campaign) -> Campaign:
     """Counts all non-excluded items as products shown in campaign workflow totals."""
     items = list(campaign.items)
-    active_items = [item for item in items if item.match_status != "excluded"]
+    active_items = [item for item in items if item.match_status != "excluded" and not item.is_hidden]
     campaign.product_count = len(active_items)
     campaign.matched_count = sum(1 for item in active_items if item.match_status in MATCHED_STATUSES)
     campaign.missing_count = sum(1 for item in active_items if item.match_status in MISSING_STATUSES)
@@ -118,6 +127,132 @@ def _clear_applied_intelligence(campaign: Campaign) -> None:
         config.pop("campaign_intelligence", None)
         campaign.builder_config_json = config
 
+
+def canonical_request_fingerprint(*, source: str, expected_revision: int, actions: list[dict[str, Any]]) -> str:
+    """Hash canonical request semantics, not mutable transport formatting."""
+    canonical = json.dumps(
+        {"source": source, "expected_revision": expected_revision, "actions": actions},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def capture_campaign_draft_state(campaign: Campaign) -> dict[str, Any]:
+    """Capture the live brochure inputs for ledger audit before/after snapshots."""
+    return {
+        "title": campaign.title,
+        "template_id": str(campaign.template_id) if campaign.template_id else None,
+        "status": campaign.status,
+        "builder_config": json.loads(json.dumps(campaign.builder_config_json or {})),
+        "items": [
+            {
+                "id": str(item.id),
+                "product_id": str(item.product_id) if item.product_id else None,
+                "market_product_id": str(item.market_product_id) if item.market_product_id else None,
+                "incoming_name": item.incoming_name,
+                "display_name": item.display_name,
+                "price": str(item.price) if item.price is not None else None,
+                "old_price": str(item.old_price) if item.old_price is not None else None,
+                "currency": item.currency,
+                "unit_label": item.unit_label,
+                "quantity_label": item.quantity_label,
+                "category_hint": item.category_hint,
+                "sort_order": item.sort_order,
+                "is_hidden": item.is_hidden,
+                "is_hero": item.is_hero,
+                "emphasis": item.emphasis,
+                "image_override_product_image_id": str(item.image_override_product_image_id)
+                if item.image_override_product_image_id
+                else None,
+                "match_status": item.match_status,
+                "match_confidence": str(item.match_confidence) if item.match_confidence is not None else None,
+                "matching_notes": item.matching_notes,
+            }
+            for item in sorted(campaign.items, key=lambda row: (row.sort_order, str(row.id)))
+        ],
+    }
+
+
+def advance_draft_revision(
+    session: AsyncSession,
+    campaign: Campaign,
+    *,
+    actor_id: UUID | None,
+    source: str,
+    request_id: str,
+    request_fingerprint: str,
+    actions: list[dict[str, Any]],
+    before_snapshot: dict[str, Any],
+    after_snapshot: dict[str, Any],
+    status_value: str = "applied",
+    reverts_revision_id: UUID | None = None,
+) -> CampaignRevision:
+    """Advance the single draft version and stage its ledger and activity rows.
+
+    The caller owns the transaction and must have locked the campaign row.
+    """
+    campaign.draft_revision += 1
+    revision = CampaignRevision(
+        campaign_id=campaign.id,
+        market_id=campaign.market_id,
+        created_by_user_id=actor_id,
+        source=source,
+        request_id=request_id,
+        request_fingerprint=request_fingerprint,
+        sequence=campaign.draft_revision,
+        status=status_value,
+        actions_json=actions,
+        before_snapshot_json=before_snapshot,
+        after_snapshot_json=after_snapshot,
+        reverts_revision_id=reverts_revision_id,
+    )
+    session.add(revision)
+    session.add(
+        ActivityLog(
+            market_id=campaign.market_id,
+            user_id=actor_id,
+            entity_type="campaign",
+            entity_id=campaign.id,
+            action="campaign_revision_undone" if status_value == "undone" else "campaign_revision_applied",
+            metadata_={
+                "campaign_id": str(campaign.id),
+                "revision": revision.sequence,
+                "action_count": len(actions),
+                "source": source,
+            },
+        )
+    )
+    return revision
+
+
+def advance_workflow_draft_revision(
+    session: AsyncSession,
+    campaign: Campaign,
+    *,
+    actor_id: UUID | None,
+    operation: str,
+    before_snapshot: dict[str, Any],
+) -> CampaignRevision:
+    """Record an external workflow mutation with a server-owned source."""
+    actions = [{"type": "workflow_mutation", "operation": operation}]
+    request_id = f"workflow-{uuid4()}"
+    return advance_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        source="system",
+        request_id=request_id,
+        request_fingerprint=canonical_request_fingerprint(
+            source="system",
+            expected_revision=campaign.draft_revision,
+            actions=actions,
+        ),
+        actions=actions,
+        before_snapshot=before_snapshot,
+        after_snapshot=capture_campaign_draft_state(campaign),
+    )
 
 async def list_campaigns(
     session: AsyncSession,
@@ -246,7 +381,13 @@ async def create_campaign_from_text(
     )
 
 
-async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID | None) -> Campaign:
+async def get_campaign(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID | None,
+    *,
+    for_update: bool = False,
+) -> Campaign:
     scoped_market_id = require_market_id(market_id)
     statement = (
         select(Campaign)
@@ -259,6 +400,8 @@ async def get_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID
         )
         .where(Campaign.id == campaign_id, Campaign.market_id == scoped_market_id)
     )
+    if for_update:
+        statement = statement.with_for_update()
     campaign = await session.scalar(statement)
     if campaign is None:
         raise _not_found("Campaign")
@@ -361,18 +504,28 @@ async def apply_campaign_intelligence(
     session: AsyncSession,
     campaign_id: UUID,
     market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
 ) -> CampaignIntelligenceEnvelope:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
     if not campaign.intelligence_json or not campaign.intelligence_analyzed_at:
         raise HTTPException(status_code=409, detail="Analyze campaign intelligence before applying it.")
+    before = capture_campaign_draft_state(campaign)
     result = CampaignIntelligenceResult.model_validate(campaign.intelligence_json)
     campaign.builder_config_json = {
         **(campaign.builder_config_json or {}),
         "smart_composition": True,
         "campaign_intelligence": result.model_dump(mode="json"),
     }
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="apply_campaign_intelligence",
+        before_snapshot=before,
+    )
     await _persist(session, campaign)
     return CampaignIntelligenceEnvelope(
         result=result,
@@ -386,12 +539,18 @@ async def update_campaign(
     campaign_id: UUID,
     payload: CampaignUpdate,
     market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
 ) -> Campaign:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
     updates = payload.model_dump(exclude_unset=True)
     item_payloads = updates.pop("items", None)
+    if "status" in updates:
+        raise HTTPException(status_code=422, detail="Campaign lifecycle status cannot be changed through update_campaign.")
+    before = capture_campaign_draft_state(campaign)
+
     if "builder_config" in updates:
         updates["builder_config_json"] = updates.pop("builder_config") or {}
     if updates.get("template_id") is not None:
@@ -411,14 +570,14 @@ async def update_campaign(
         ]
         recalculate_campaign_counts(campaign)
         _clear_applied_intelligence(campaign)
-    if "status" in updates:
-        now = datetime.now(UTC)
-        if campaign.status == "approved" and campaign.approved_at is None:
-            campaign.approved_at = now
-        elif campaign.status == "completed" and campaign.completed_at is None:
-            campaign.completed_at = now
-        elif campaign.status == "failed" and campaign.failed_at is None:
-            campaign.failed_at = now
+    _clear_applied_intelligence(campaign)
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="update_campaign",
+        before_snapshot=before,
+    )
     return await _persist(session, campaign)
 
 
@@ -429,7 +588,9 @@ async def cancel_campaign(
     *,
     commit: bool = True,
 ) -> Campaign:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns cannot be cancelled.")
     campaign.status = "cancelled"
     return await _persist(session, campaign, commit=commit)
 
@@ -439,8 +600,13 @@ async def add_campaign_item(
     campaign_id: UUID,
     payload: CampaignItemCreate,
     market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
 ) -> CampaignItem:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    before = capture_campaign_draft_state(campaign)
     item = await _build_campaign_item(
         session,
         payload,
@@ -451,6 +617,13 @@ async def add_campaign_item(
     campaign.items.append(item)
     recalculate_campaign_counts(campaign)
     _clear_applied_intelligence(campaign)
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="add_campaign_item",
+        before_snapshot=before,
+    )
     await _persist(session, campaign)
     return item
 
@@ -461,10 +634,13 @@ async def update_campaign_item(
     item_id: UUID,
     payload: CampaignItemUpdate,
     market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
 ) -> CampaignItem:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    before = capture_campaign_draft_state(campaign)
     item = _find_item(campaign, item_id)
     updates = payload.model_dump(exclude_unset=True)
     product_id = updates.get("product_id")
@@ -476,14 +652,29 @@ async def update_campaign_item(
         setattr(item, key, value)
     recalculate_campaign_counts(campaign)
     _clear_applied_intelligence(campaign)
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="update_campaign_item",
+        before_snapshot=before,
+    )
     await _persist(session, campaign)
     return item
 
 
-async def reorder_campaign_items(session: AsyncSession, campaign_id: UUID, item_ids: list[UUID], market_id: UUID | None) -> Campaign:
-    campaign = await get_campaign(session, campaign_id, market_id)
+async def reorder_campaign_items(
+    session: AsyncSession,
+    campaign_id: UUID,
+    item_ids: list[UUID],
+    market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
+) -> Campaign:
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
     if campaign.frozen_at is not None or campaign.finalized_at is not None:
         raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    before = capture_campaign_draft_state(campaign)
     current = {str(item.id): item for item in campaign.items}
     requested_ids = [str(item_id) for item_id in item_ids]
     if set(current) != set(requested_ids) or len(requested_ids) != len(current):
@@ -498,6 +689,13 @@ async def reorder_campaign_items(session: AsyncSession, campaign_id: UUID, item_
     for index, item_id in enumerate(requested_ids):
         current[item_id].sort_order = index
     _clear_applied_intelligence(campaign)
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="reorder_campaign_items",
+        before_snapshot=before,
+    )
     await _persist(session, campaign)
     return await get_campaign(session, campaign.id, campaign.market_id)
 
@@ -507,8 +705,13 @@ async def resolve_campaign_item_match(
     item_id: UUID,
     payload: CampaignItemResolveMatch,
     market_id: UUID | None,
+    *,
+    actor_id: UUID | None = None,
 ) -> CampaignItem:
-    campaign = await get_campaign(session, campaign_id, market_id)
+    campaign = await get_campaign(session, campaign_id, market_id, for_update=True)
+    if campaign.frozen_at is not None or campaign.finalized_at is not None:
+        raise HTTPException(status_code=409, detail="Finalized campaigns are immutable; duplicate to create a new revision.")
+    before = capture_campaign_draft_state(campaign)
     item = _find_item(campaign, item_id)
     if payload.resolution == "manual_selected":
         if payload.product_id is None:
@@ -530,6 +733,13 @@ async def resolve_campaign_item_match(
         item.matching_notes = payload.notes
     recalculate_campaign_counts(campaign)
     _clear_applied_intelligence(campaign)
+    advance_workflow_draft_revision(
+        session,
+        campaign,
+        actor_id=actor_id,
+        operation="resolve_campaign_item_match",
+        before_snapshot=before,
+    )
     await _persist(session, campaign)
     return item
 
@@ -611,13 +821,7 @@ async def create_export_job(
     campaign = await get_campaign(session, campaign_id, market_id)
     formats = normalize_requested_formats(payload.requested_formats)
     if payload.job_type == "final_export" and campaign.frozen_at is None:
-        # Legacy Telegram campaigns may not have a template reference. Keep
-        # those exports renderable while still freezing every campaign that
-        # has an eligible template (explicit or default).
-        template = campaign.template or await _get_default_template(session, campaign.market_id)
-        if template is not None:
-            await finalize_campaign(session, campaign.id, campaign.market_id)
-            campaign = await get_campaign(session, campaign_id, market_id)
+        raise HTTPException(status_code=409, detail="Approve the current draft revision before creating a final export.")
     existing = None
     if payload.job_type == "final_export":
         existing = await session.scalar(
@@ -805,27 +1009,71 @@ async def get_builder_options(session: AsyncSession, market_id: UUID) -> Campaig
     )
 
 
-async def finalize_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID) -> CampaignFinalizeResponse:
+async def finalize_campaign(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID,
+    *,
+    expected_revision: int,
+    actor_id: UUID | None = None,
+    commit: bool = True,
+) -> CampaignFinalizeResponse:
+    locked_campaign_id = await session.scalar(
+        select(Campaign.id)
+        .where(Campaign.id == campaign_id, Campaign.market_id == market_id)
+        .with_for_update()
+    )
+    if locked_campaign_id is None:
+        raise _not_found("Campaign")
     campaign = await get_campaign(session, campaign_id, market_id)
+    if campaign.draft_revision != expected_revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Draft revision is stale.", "current_revision": campaign.draft_revision},
+        )
     if campaign.frozen_at is not None:
         return CampaignFinalizeResponse(campaign=campaign, frozen_at=campaign.frozen_at, snapshot=campaign.snapshot_json or {})
+
     template = campaign.template or await _get_default_template(session, campaign.market_id)
+    if campaign.status in {"cancelled", "failed", "completed", "generating_files"}:
+        raise HTTPException(status_code=409, detail="Campaign is not in an approvable state.")
+    visible_items = [item for item in campaign.items if item.match_status != "excluded" and not item.is_hidden]
+    if not visible_items:
+        raise HTTPException(status_code=422, detail="At least one visible product is required for approval.")
+    if any(not (item.display_name or item.incoming_name) or item.price is None for item in visible_items):
+        raise HTTPException(status_code=422, detail="Visible products require a display name and price before approval.")
     if template is None:
         raise HTTPException(status_code=422, detail="A published template is required before finalization.")
-    _validate_template_slots(template, len([item for item in campaign.items if item.match_status != "excluded"]))
+    _validate_template_slots(template, len(visible_items))
     for item in campaign.items:
         if item.market_product_id is not None:
-            await _refresh_catalog_item(session, item, campaign.market_id, campaign.currency)
+            await _validate_catalog_reference_for_approval(session, item, campaign.market_id)
     from app.services.campaign_rendering import build_campaign_render_payload
     now = datetime.now(UTC).replace(microsecond=0)
-    campaign.snapshot_json = build_campaign_render_payload(campaign, template)
+    snapshot = dict(build_campaign_render_payload(campaign, template))
+    snapshot.update({
+        "approved_revision": campaign.draft_revision,
+        "approved_at": now.isoformat(),
+        "approval": {"campaign_id": str(campaign.id), "market_id": str(campaign.market_id)},
+    })
+    campaign.snapshot_json = snapshot
     campaign.frozen_at = now
     campaign.finalized_at = now
     campaign.status = "approved"
     campaign.approved_at = campaign.approved_at or now
-    await _persist(session, campaign)
+    campaign.approved_revision = campaign.draft_revision
+    session.add(
+        ActivityLog(
+            market_id=campaign.market_id,
+            user_id=actor_id,
+            entity_type="campaign",
+            entity_id=campaign.id,
+            action="campaign_draft_approved",
+            metadata_={"campaign_id": str(campaign.id), "revision": campaign.draft_revision},
+        )
+    )
+    await _persist(session, campaign, commit=commit)
     return CampaignFinalizeResponse(campaign=await get_campaign(session, campaign.id, market_id), frozen_at=now, snapshot=campaign.snapshot_json)
-
 
 async def validate_visible_template(session: AsyncSession, template_id: UUID, market_id: UUID) -> Template:
     template = await session.scalar(
@@ -937,22 +1185,8 @@ async def _build_campaign_item(
     )
 
 
-async def _refresh_catalog_item(session: AsyncSession, item: CampaignItem, market_id: UUID, default_currency: str) -> None:
-    market_product = await validate_visible_market_product(session, item.market_product_id, market_id)
-    effective = resolved_market_product(market_product)
-    item.market_product = market_product
-    item.product = market_product.product
-    item.product_id = effective.get("product_id")
-    item.incoming_name = effective.get("name") or item.incoming_name
-    item.display_name = effective.get("name") or item.display_name
-    item.price = effective.get("promo_price") or effective.get("regular_price")
-    item.old_price = effective.get("regular_price")
-    item.currency = effective.get("currency") or default_currency
-    item.unit_label = effective.get("package_type") or item.unit_label
-    item.quantity_label = effective.get("package_size") or item.quantity_label
-    item.parsed_payload = {**(item.parsed_payload or {}), "catalog_source": "market_product", "effective_image_url": effective.get("image_url")}
-    item.match_status = "matched"
-    item.match_confidence = 100
+async def _validate_catalog_reference_for_approval(session: AsyncSession, item: CampaignItem, market_id: UUID) -> None:
+    await validate_visible_market_product(session, item.market_product_id, market_id)
 
 
 def _campaign_item_create_from_parsed(item: ParsedCampaignLine) -> CampaignItemCreate:
