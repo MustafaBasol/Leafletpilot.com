@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import (
+    ActivityLog,
     Campaign,
     CampaignFile,
     CampaignItem,
@@ -42,7 +43,12 @@ from app.services.campaign_intelligence import CampaignIntelligenceEngine
 from app.services.campaign_parser import ParsedCampaignLine, parse_campaign_text
 from app.services.campaign_rendering import campaign_render_load_options
 from app.services.catalog import list_my_market_products, resolved_market_product
-from app.services.entitlements import has_capacity, require_export_format, resolve_capabilities, resolve_plan_code
+from app.services.entitlements import (
+    has_capacity,
+    require_export_format,
+    resolve_capabilities,
+    resolve_plan_code,
+)
 from app.services.plans import plan_rank
 from app.services.preview_renderer import (
     DEFAULT_TEMPLATE_NAME,
@@ -102,7 +108,7 @@ async def _enforce_monthly_campaign_quota(session: AsyncSession, market: Market 
 def recalculate_campaign_counts(campaign: Campaign) -> Campaign:
     """Counts all non-excluded items as products shown in campaign workflow totals."""
     items = list(campaign.items)
-    active_items = [item for item in items if item.match_status != "excluded"]
+    active_items = [item for item in items if item.match_status != "excluded" and not item.is_hidden]
     campaign.product_count = len(active_items)
     campaign.matched_count = sum(1 for item in active_items if item.match_status in MATCHED_STATUSES)
     campaign.missing_count = sum(1 for item in active_items if item.match_status in MISSING_STATUSES)
@@ -805,27 +811,63 @@ async def get_builder_options(session: AsyncSession, market_id: UUID) -> Campaig
     )
 
 
-async def finalize_campaign(session: AsyncSession, campaign_id: UUID, market_id: UUID) -> CampaignFinalizeResponse:
+async def finalize_campaign(
+    session: AsyncSession,
+    campaign_id: UUID,
+    market_id: UUID,
+    *,
+    actor_id: UUID | None = None,
+) -> CampaignFinalizeResponse:
+    locked_campaign_id = await session.scalar(
+        select(Campaign.id)
+        .where(Campaign.id == campaign_id, Campaign.market_id == market_id)
+        .with_for_update()
+    )
+    if locked_campaign_id is None:
+        raise _not_found("Campaign")
     campaign = await get_campaign(session, campaign_id, market_id)
     if campaign.frozen_at is not None:
         return CampaignFinalizeResponse(campaign=campaign, frozen_at=campaign.frozen_at, snapshot=campaign.snapshot_json or {})
     template = campaign.template or await _get_default_template(session, campaign.market_id)
+    if campaign.status in {"cancelled", "failed", "completed", "generating_files"}:
+        raise HTTPException(status_code=409, detail="Campaign is not in an approvable state.")
+    visible_items = [item for item in campaign.items if item.match_status != "excluded" and not item.is_hidden]
+    if not visible_items:
+        raise HTTPException(status_code=422, detail="At least one visible product is required for approval.")
+    if any(not (item.display_name or item.incoming_name) or item.price is None for item in visible_items):
+        raise HTTPException(status_code=422, detail="Visible products require a display name and price before approval.")
     if template is None:
         raise HTTPException(status_code=422, detail="A published template is required before finalization.")
-    _validate_template_slots(template, len([item for item in campaign.items if item.match_status != "excluded"]))
+    _validate_template_slots(template, len(visible_items))
     for item in campaign.items:
         if item.market_product_id is not None:
             await _refresh_catalog_item(session, item, campaign.market_id, campaign.currency)
     from app.services.campaign_rendering import build_campaign_render_payload
     now = datetime.now(UTC).replace(microsecond=0)
-    campaign.snapshot_json = build_campaign_render_payload(campaign, template)
+    snapshot = dict(build_campaign_render_payload(campaign, template))
+    snapshot.update({
+        "approved_revision": campaign.draft_revision,
+        "approved_at": now.isoformat(),
+        "approval": {"campaign_id": str(campaign.id), "market_id": str(campaign.market_id)},
+    })
+    campaign.snapshot_json = snapshot
     campaign.frozen_at = now
     campaign.finalized_at = now
     campaign.status = "approved"
     campaign.approved_at = campaign.approved_at or now
+    campaign.approved_revision = campaign.draft_revision
+    session.add(
+        ActivityLog(
+            market_id=campaign.market_id,
+            user_id=actor_id,
+            entity_type="campaign",
+            entity_id=campaign.id,
+            action="campaign_draft_approved",
+            metadata_={"campaign_id": str(campaign.id), "revision": campaign.draft_revision},
+        )
+    )
     await _persist(session, campaign)
     return CampaignFinalizeResponse(campaign=await get_campaign(session, campaign.id, market_id), frozen_at=now, snapshot=campaign.snapshot_json)
-
 
 async def validate_visible_template(session: AsyncSession, template_id: UUID, market_id: UUID) -> Template:
     template = await session.scalar(

@@ -259,26 +259,28 @@ def _live_payload(
     header["promo_title"] = builder_config.get("subtitle") or header.get("promo_title")
     header["footer_note"] = builder_config.get("footer") or header.get("footer_note")
     configured_layout = config.get("layout") or getattr(template, "slug", None) or "promo-4"
-    item_count = len([item for item in campaign.items if item.match_status != "excluded"])
+    visible_items = [item for item in campaign.items if item.match_status != "excluded" and not item.is_hidden]
+    item_count = len(visible_items)
     layout_family = configured_layout if configured_layout in {"premium-market", "compact-weekly"} else None
     if configured_layout not in LAYOUTS and configured_layout not in LAYOUT_ALIASES and configured_layout not in SUPERMARKET_LAYOUTS:
         configured_layout = "promo-9" if item_count <= 9 else "promo-16"
     result = {"contract_version": 2, "template_id": str(template.id) if template else None, "template_version": getattr(template, "version", None), "template_name": getattr(template, "name", None), "template_slug": configured_layout, "layout_family": layout_family, "template_config": config, "campaign_id": str(campaign.id), "market_id": str(campaign.market_id), "title": builder_config.get("headline") or campaign.title, "language": campaign.language, "currency": campaign.currency, "market_name": getattr(market, "name", None), "header": header, "builder_config": builder_config, "items": []}
-    for item in sorted((x for x in campaign.items if x.match_status != "excluded"), key=lambda x: (x.sort_order, str(x.id))):
+    for item in sorted(visible_items, key=lambda x: (x.sort_order, str(x.id))):
         mp = getattr(item, "_market_product", None) or item.market_product; product = item.product; effective = resolve_effective_product(product, mp)
         global_image = next((i for i in (getattr(product, "images", []) or []) if i.is_primary and getattr(i, "quality_status", None) != "missing"), None)
+        override_image = item.image_override
         market_image = getattr(mp, "image_storage_key", None)
-        image = market_image or getattr(global_image, "storage_key", None)
+        image = getattr(override_image, "storage_key", None) or market_image or getattr(global_image, "storage_key", None)
         image_has_alpha = (
-            stored_flyer_image_has_alpha(market_image)
-            if market_image
-            else getattr(global_image, "has_transparent_background", None)
+            getattr(override_image, "has_transparent_background", None)
+            if override_image is not None
+            else (stored_flyer_image_has_alpha(market_image) if market_image else getattr(global_image, "has_transparent_background", None))
         )
-        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
+        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(override_image, "mime_type", None) or getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
         result["items"][-1].update(
             category=item.category_hint or (str(effective.category_id) if effective.category_id else None),
             is_hero=bool(item.is_hero),
-            emphasis="featured" if item.is_hero else None,
+            emphasis=item.emphasis if item.emphasis in {"normal", "large", "hero"} else "normal",
         )
     applied = _apply_campaign_intelligence(result["items"], builder_config) if include_applied_intelligence else None
     if applied is not None:
@@ -293,7 +295,8 @@ def _card(item: dict[str, Any], config: dict[str, Any], dense: bool, compact: bo
     stock = f'<p class="product-stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(item["stock_note"])}</p>' if item.get("stock_note") else ""
     brand_text, unit_text = _text(item.get("brand")), _text(unit)
     legacy = f'<!-- class="product-brand">{brand_text} --><!-- class="product-unit">{unit_text} -->'
-    variant = "compact-card" if compact else "editorial-card"
+    emphasis = "featured" if item.get("emphasis") in {"large", "hero"} or item.get("is_hero") else "normal"
+    variant = f'{"compact-card" if compact else "editorial-card"}" data-emphasis="{emphasis}'
     return f'<article class="product-card" data-card-variant="{variant}"><div class="product-stage">{_image(item)}</div>{legacy}<p class="product-brand" data-clamp-enabled="true" data-clamp-lines="1">{brand_text}</p><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2><p class="product-unit" data-clamp-enabled="true" data-clamp-lines="2">{unit_text}</p>{stock}<div class="price-row"><span class="price">{_text(_money(item.get("price") or item.get("promo_price"), item.get("currency")))}</span><span class="price-secondary">{old}{badge}</span></div></article>'
 
 
@@ -516,7 +519,8 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
         role = {"hero": "featured", "featured": "secondary", "support": "compact"}.get(role, role)
     else:
         smart_role = None
-    emphasis = "featured" if role == "featured" else "normal"
+    item_emphasis = item.get("emphasis")
+    emphasis = "featured" if role == "featured" or item_emphasis in {"large", "hero"} else "normal"
     rhythm = ("a", "b", "c")[index % 3]
     price_align = ("start", "end", "start", "center")[index % 4]
     if density["name"] == "editorial":

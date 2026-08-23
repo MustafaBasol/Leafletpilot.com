@@ -15,6 +15,10 @@ import {
   fetchCampaignFile,
   resolveCampaignItem,
   reorderCampaignItems,
+  applyCampaignRevision,
+  approveCampaign,
+  getCampaignItemImageOptions,
+  undoCampaignRevision,
   updateCampaignDetail,
 } from "../data/dataSource.js";
 import {
@@ -175,6 +179,37 @@ function CampaignEditModal({ campaign, isSaving, error, onClose, onSave }) {
   );
 }
 
+function CampaignItemRevisionModal({ product, imageOptions, isSaving, error, onClose, onSave }) {
+  const [form, setForm] = useState(() => ({
+    displayName: product.displayName || product.incomingName || "",
+    price: String(product.rawPrice ?? ""),
+    oldPrice: product.rawOldPrice === null || product.rawOldPrice === undefined ? "" : String(product.rawOldPrice),
+    emphasis: product.emphasis || "normal",
+    imageId: product.imageOverrideProductImageId || "",
+  }));
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  return (
+    <Modal
+      title="Broşür ürününü düzenle"
+      description="Bu değişiklikler yalnızca bu broşür taslağına uygulanır; katalog ürünü değişmez."
+      onClose={onClose}
+      footer={<><Button onClick={onClose}>Vazgeç</Button><Button variant="primary" type="submit" form="campaign-item-revision-form" disabled={isSaving}>{isSaving ? "Kaydediliyor..." : "Taslağa uygula"}</Button></>}
+    >
+      <form id="campaign-item-revision-form" className="form-grid" onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+        <label className="field field-full"><span>Broşürde görünen ad</span><input value={form.displayName} onChange={(event) => update("displayName", event.target.value)} required /></label>
+        <label className="field"><span>Fiyat</span><input inputMode="decimal" value={form.price} onChange={(event) => update("price", event.target.value)} placeholder="4.99" /></label>
+        <label className="field"><span>Eski fiyat</span><input inputMode="decimal" value={form.oldPrice} onChange={(event) => update("oldPrice", event.target.value)} placeholder="İsteğe bağlı" /></label>
+        <label className="field"><span>Vurgu</span><select value={form.emphasis} onChange={(event) => update("emphasis", event.target.value)}><option value="normal">Normal</option><option value="large">Büyük</option><option value="hero">Ana ürün</option></select></label>
+        <label className="field"><span>Katalog görseli</span><select value={form.imageId} onChange={(event) => update("imageId", event.target.value)}><option value="">Mevcut görseli koru</option>{imageOptions.map((image) => <option key={image.id} value={image.id}>{image.label}{image.is_primary ? " · Ana görsel" : ""}</option>)}</select></label>
+        {error ? <p className="form-error field-full">{error}</p> : null}
+      </form>
+    </Modal>
+  );
+}
 export function CampaignDetail({ campaignId, view = "" }) {
   const mockCampaign = findCampaignById(campaignId);
   const [campaign, setCampaign] = useState(() => (isRealApiEnabled ? emptyCampaign(campaignId) : mockCampaign));
@@ -198,6 +233,9 @@ export function CampaignDetail({ campaignId, view = "" }) {
   const [isEditing, setEditing] = useState(false);
   const [editError, setEditError] = useState("");
   const [isSavingEdit, setSavingEdit] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [imageOptions, setImageOptions] = useState([]);
+  const [isSavingItem, setSavingItem] = useState(false);
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
   const canMutateCurrentCampaign = canEditCampaigns && !campaign.frozenAt;
@@ -301,6 +339,113 @@ export function CampaignDetail({ campaignId, view = "" }) {
     }
   }
 
+  function revisionRequestId(prefix) {
+    const value = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `${prefix}-${value}`;
+  }
+
+  async function runDraftRevision(key, actions, successMessage) {
+    if (!actions.length || campaign.frozenAt) return;
+    if (!isRealApiEnabled) {
+      setNotice(successMessage);
+      return;
+    }
+    try {
+      setActionLoading(key);
+      setApiError("");
+      await applyCampaignRevision(campaignId, {
+        client_request_id: revisionRequestId(key),
+        source: "panel",
+        expected_revision: campaign.draftRevision || 0,
+        actions,
+      });
+      await loadCampaign();
+      await loadPreview();
+      setNotice(successMessage);
+    } catch (error) {
+      if (error.status === 409) {
+        await loadCampaign();
+        await loadPreview();
+        setApiError("Taslak başka bir işlemle güncellendi. Güncel sürüm yüklendi; lütfen değişikliğinizi tekrar deneyin.");
+      } else {
+        setApiError(error.message || "Taslak değişikliği uygulanamadı.");
+      }
+      throw error;
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function undoLatestRevision() {
+    if (!isRealApiEnabled || campaign.frozenAt) return;
+    try {
+      setActionLoading("undo-revision");
+      setApiError("");
+      await undoCampaignRevision(campaignId, {
+        client_request_id: revisionRequestId("undo"),
+        source: "panel",
+        expected_revision: campaign.draftRevision || 0,
+      });
+      await loadCampaign();
+      await loadPreview();
+      setNotice("Son taslak değişikliği geri alındı.");
+    } catch (error) {
+      if (error.status === 409) {
+        await loadCampaign();
+        await loadPreview();
+        setApiError("Taslak başka bir işlemle güncellendi. Güncel sürüm yüklendi.");
+      } else {
+        setApiError(error.message || "Geri alma işlemi tamamlanamadı.");
+      }
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function openItemEditor(product) {
+    try {
+      setApiError("");
+      setActionLoading(`edit-${product.id}`);
+      const options = isRealApiEnabled ? await getCampaignItemImageOptions(campaignId, product.id) : [];
+      setImageOptions(options);
+      setEditingItem(product);
+    } catch (error) {
+      setApiError(error.message || "Katalog görselleri yüklenemedi.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function saveItemRevision(form) {
+    if (!editingItem) return;
+    const actions = [];
+    const displayName = form.displayName.trim();
+    if (displayName && displayName !== editingItem.displayName) {
+      actions.push({ type: "update_display_name", item_id: editingItem.id, display_name: displayName });
+    }
+    if (form.price.trim() && (form.price.trim() !== String(editingItem.rawPrice ?? "") || form.oldPrice.trim() !== String(editingItem.rawOldPrice ?? ""))) {
+      actions.push({ type: "update_price", item_id: editingItem.id, price: form.price.trim(), old_price: form.oldPrice.trim() || null });
+    }
+    if (form.emphasis !== editingItem.emphasis) {
+      actions.push({ type: "set_item_emphasis", item_id: editingItem.id, emphasis: form.emphasis });
+    }
+    if (form.imageId && form.imageId !== editingItem.imageOverrideProductImageId) {
+      actions.push({ type: "replace_image", item_id: editingItem.id, image_id: form.imageId });
+    }
+    if (!actions.length) {
+      setEditingItem(null);
+      return;
+    }
+    try {
+      setSavingItem(true);
+      await runDraftRevision(`edit-${editingItem.id}`, actions, "Broşür ürünü güncellendi.");
+      setEditingItem(null);
+    } catch {
+      // runDraftRevision already presents a safe API error and refreshes conflicts.
+    } finally {
+      setSavingItem(false);
+    }
+  }
   async function resolveProduct(status, suggestion) {
     if (!isRealApiEnabled) {
       setRows((currentRows) =>
@@ -330,25 +475,40 @@ export function CampaignDetail({ campaignId, view = "" }) {
   }
 
   async function finalizeCurrentCampaign() {
-    await runRealAction("finalize", () => finalizeCampaign(campaignId), "Kampanya donduruldu ve sürümü sabitlendi.");
-  }
-
-  async function moveRow(index, direction) {
-    if (!isRealApiEnabled || campaign.frozenAt || index + direction < 0 || index + direction >= rows.length) return;
-    const next = [...rows];
-    [next[index], next[index + direction]] = [next[index + direction], next[index]];
-    setRows(next);
+    if (!isRealApiEnabled) {
+      setNotice("Kampanya onay için hazırlandı.");
+      return;
+    }
     try {
-      const updated = await reorderCampaignItems(campaignId, next);
-      setCampaign(updated);
-      setRows(updated.items || next);
-      setNotice("Ürün sırası kaydedildi.");
+      setActionLoading("approve");
+      setApiError("");
+      const approved = await approveCampaign(campaignId);
+      setCampaign(approved);
+      setRows(approved.items || []);
+      await loadPreview();
+      setNotice("Taslak onaylandı ve bu sürüm donduruldu.");
     } catch (error) {
-      setApiError(error.message || "Ürün sırası kaydedilemedi.");
-      await loadCampaign();
+      setApiError(error.message || "Taslak onaylanamadı.");
+    } finally {
+      setActionLoading("");
     }
   }
-
+  async function moveRow(index, direction) {
+    if (campaign.frozenAt || index + direction < 0 || index + direction >= rows.length) return;
+    if (!isRealApiEnabled) {
+      const next = [...rows];
+      [next[index], next[index + direction]] = [next[index + direction], next[index]];
+      setRows(next);
+      setNotice("Ürün sırası taslakta güncellendi.");
+      return;
+    }
+    const item = rows[index];
+    await runDraftRevision(
+      `move-${item.id}`,
+      [{ type: "move_item", item_id: item.id, target_position: index + direction + 1 }],
+      "Ürün sırası taslakta güncellendi.",
+    ).catch(() => {});
+  }
   async function downloadFile(file) {
     if (!isRealApiEnabled) {
       setNotice("Mock modda indirme simüle edildi.");
@@ -401,13 +561,36 @@ export function CampaignDetail({ campaignId, view = "" }) {
     }
   }
 
-  function removeMockCampaignItem(product) {
+  async function removeCampaignItem(product) {
     if (!product) return;
-    setRows((currentRows) => currentRows.filter((row) => row.id !== product.id));
     setConfirmRemoveProduct(null);
-    setNotice("Ürün kampanyadan çıkarıldı.");
+    if (!isRealApiEnabled) {
+      setRows((currentRows) => currentRows.map((row) => (row.id === product.id ? { ...row, isHidden: true } : row)));
+      setNotice("Ürün broşür taslağından kaldırıldı.");
+      return;
+    }
+    await runDraftRevision(
+      `remove-${product.id}`,
+      [{ type: "remove_item", item_id: product.id }],
+      "Ürün broşür taslağından kaldırıldı.",
+    ).catch(() => {});
   }
 
+  async function restoreCampaignItem(product) {
+    await runDraftRevision(
+      `restore-${product.id}`,
+      [{ type: "restore_item", item_id: product.id }],
+      "Ürün yeniden broşür taslağına eklendi.",
+    ).catch(() => {});
+  }
+
+  async function toggleHero(product) {
+    await runDraftRevision(
+      `hero-${product.id}`,
+      [{ type: "set_hero", item_id: product.id, is_hero: product.emphasis !== "hero" }],
+      product.emphasis === "hero" ? "Ana ürün vurgusu kaldırıldı." : "Ana ürün vurgusu uygulandı.",
+    ).catch(() => {});
+  }
   async function analyzeIntelligence() {
     await runRealAction(
       "campaign-intelligence-analyze",
@@ -443,7 +626,7 @@ export function CampaignDetail({ campaignId, view = "" }) {
     if (product.recommendedBadge === "best_value") return "\u00d6nerilen rozet: Avantajl\u0131";
     return "";
   };
-  const missingRows = rows.filter((row) => needsAttention(row.status));
+  const missingRows = rows.filter((row) => !row.isHidden && needsAttention(row.status));
   const files = isRealApiEnabled ? (campaign.files || []).map(mapFileForPanel) : generatedFiles;
   const exportJobs = campaign.exportJobs || [];
 
@@ -475,10 +658,15 @@ export function CampaignDetail({ campaignId, view = "" }) {
                 </Button> : null}
               </>
             ) : null}
-            {canMutateCurrentCampaign && isRealApiEnabled ? (
-              <Button variant="primary" disabled={isLoading || actionLoading === "finalize"} onClick={finalizeCurrentCampaign}>
-                {actionLoading === "finalize" ? "Donduruluyor..." : "Kampanyayı Dondur"}
-              </Button>
+            {canMutateCurrentCampaign ? (
+              <>
+                <Button disabled={isLoading || actionLoading === "undo-revision" || (campaign.draftRevision || 0) < 1} onClick={undoLatestRevision}>
+                  {actionLoading === "undo-revision" ? "Geri alınıyor..." : "Son değişikliği geri al"}
+                </Button>
+                <Button variant="primary" disabled={isLoading || actionLoading === "approve"} onClick={finalizeCurrentCampaign}>
+                  {actionLoading === "approve" ? "Onaylanıyor..." : "Taslağı Onayla"}
+                </Button>
+              </>
             ) : null}
             {canGenerateExports ? (
               <Button
@@ -518,6 +706,7 @@ export function CampaignDetail({ campaignId, view = "" }) {
           <div><dt>Eksik</dt><dd>{campaign.missingCount ?? "-"}</dd></div>
           <div><dt>Düşük Güven</dt><dd>{campaign.lowConfidenceCount ?? "-"}</dd></div>
           <div><dt>Güncelleme</dt><dd>{campaign.updatedAtFull || campaign.updatedAt}</dd></div>
+          <div><dt>Taslak sürümü</dt><dd>{campaign.draftRevision || 0}</dd></div>
         </dl>
       </section>
 
@@ -662,12 +851,12 @@ export function CampaignDetail({ campaignId, view = "" }) {
                 <td>{product.oldPrice}</td>
                 <td>{product.category}</td>
                 <td><Badge tone={scoreTone(product.score)}>{product.score ? `%${product.score}` : "-"}</Badge></td>
-                <td><StatusBadge status={product.status} /></td>
+                <td>{product.isHidden ? <Badge tone="neutral">Broşürden kaldırıldı</Badge> : <StatusBadge status={product.status} />}</td>
                 {canMutateCurrentCampaign ? (
                   <>
                     <td>
-                      <Button disabled={Boolean(campaign.frozenAt) || index === 0} onClick={() => moveRow(index, -1)}>↑</Button>
-                      <Button disabled={Boolean(campaign.frozenAt) || index === rows.length - 1} onClick={() => moveRow(index, 1)}>↓</Button>
+                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || index === 0} onClick={() => moveRow(index, -1)}>↑</Button>
+                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || index === rows.length - 1} onClick={() => moveRow(index, 1)}>↓</Button>
                     </td>
                     <td>
                       {(product.suggestions || []).slice(0, 2).map((suggestion) => (
@@ -690,9 +879,12 @@ export function CampaignDetail({ campaignId, view = "" }) {
                       {isRealApiEnabled && !(product.suggestions || []).length ? <small>Öneri yok</small> : null}
                     </td>
                     <td>
-                      <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>
-                        Eşleştir
-                      </button>
+                      <div className="row-actions">
+                        <Button disabled={actionLoading === `edit-${product.id}`} onClick={() => openItemEditor(product)}>Düzenle</Button>
+                        <Button onClick={() => toggleHero(product)}>{product.emphasis === "hero" ? "Ana ürünü kaldır" : "Ana ürün yap"}</Button>
+                        {product.isHidden ? <Button variant="primary" onClick={() => restoreCampaignItem(product)}>Geri getir</Button> : <Button onClick={() => setConfirmRemoveProduct(product)}>Kaldır</Button>}
+                        {!product.isHidden ? <button className="table-action" type="button" onClick={() => setSelectedMissing(product)}>Eşleştir</button> : null}
+                      </div>
                     </td>
                   </>
                 ) : null}
@@ -751,6 +943,16 @@ export function CampaignDetail({ campaignId, view = "" }) {
           onSave={saveCampaignEdit}
         />
       ) : null}
+      {canMutateCurrentCampaign && editingItem ? (
+        <CampaignItemRevisionModal
+          product={editingItem}
+          imageOptions={imageOptions}
+          isSaving={isSavingItem}
+          error={apiError}
+          onClose={() => setEditingItem(null)}
+          onSave={saveItemRevision}
+        />
+      ) : null}
       <ConfirmDialog
         isOpen={Boolean(confirmRemoveProduct)}
         title="Ürünü kampanyadan çıkar"
@@ -761,7 +963,7 @@ export function CampaignDetail({ campaignId, view = "" }) {
         }
         confirmLabel="Kampanyadan çıkar"
         onCancel={() => setConfirmRemoveProduct(null)}
-        onConfirm={() => removeMockCampaignItem(confirmRemoveProduct)}
+        onConfirm={() => removeCampaignItem(confirmRemoveProduct)}
       />
     </>
   );

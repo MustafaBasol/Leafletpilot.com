@@ -307,3 +307,51 @@ Allowed transitions:
 - Do not hide low-confidence matches.
 - Do not discard raw incoming text.
 - Do not generate final files while missing products remain unresolved unless each missing item is explicitly excluded or allowed without image.
+
+## AI-1 Structured Draft Revisions
+
+AI-1 adds a durable, deterministic revision ledger without connecting any AI
+provider. All panel, messaging, system, and future AI-originated changes use a
+validated `RevisionCommand` and the same revision service.
+
+```text
+UI or future AI intent parser
+        -> structured RevisionCommand
+        -> deterministic revision service
+        -> CampaignItem and builder metadata
+        -> deterministic preview / export
+```
+
+AI parses intent in a later phase; it must not directly mutate campaign rows,
+product catalog data, CSS, or brochure geometry. The current allowed action
+set is `move_item`, `remove_item`, `restore_item`, `update_price`,
+`update_display_name`, `set_hero`, `set_item_emphasis`, and `replace_image`.
+Price input is Decimal validated. Image replacement accepts only an existing,
+safe catalog image belonging to the current item's catalog product.
+
+Each successful command requires a client request ID and expected draft
+revision. `campaign_revisions` stores the requested actions, before/after
+campaign-only state, source, actor, tenant, and monotonic sequence. The
+`(campaign_id, request_id)` and `(campaign_id, sequence)` uniqueness
+constraints make delivery retries idempotent and prevent silent version
+collisions. An undo is a new revision event that restores the immediately
+preceding revision's before-state; it never deletes history.
+
+A revision changes campaign-only presentation fields only: product ordering,
+hidden state, display name, price, emphasis/hero state, and a selected catalog
+image reference. It never overwrites canonical `Product` or `MarketProduct`
+data. Hidden products are excluded from the deterministic render payload.
+
+### Approval freeze
+
+Approval validates that the campaign is active, has at least one visible item,
+that every visible item has a display name and Decimal price, and that template
+slot capacity is respected. It records `approved_revision` and saves the exact
+render payload in `snapshot_json`, augmented with approval timestamp and
+market/campaign identity. That payload includes the resolved ordering, display
+text, prices, template/version, builder configuration, image keys, semantic
+emphasis, currency, and language.
+
+Once `frozen_at` / `finalized_at` is set, draft mutation and revision endpoints
+return a conflict. Preview and export render from the immutable snapshot, so a
+later catalog change cannot change an approved brochure.

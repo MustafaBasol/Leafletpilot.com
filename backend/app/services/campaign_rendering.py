@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Campaign, CampaignItem, MarketProduct, Product
-from app.services.catalog import resolve_effective_product
 
 
 def campaign_render_load_options():
@@ -22,6 +21,7 @@ def campaign_render_load_options():
         .selectinload(CampaignItem.product)
         .selectinload(Product.images),
         selectinload(Campaign.items).selectinload(CampaignItem.market_product),
+        selectinload(Campaign.items).selectinload(CampaignItem.image_override),
     )
 
 
@@ -63,7 +63,6 @@ def build_campaign_render_payload(campaign: Campaign, template) -> dict:
     """Single preview/export input contract; frozen campaigns use this exact data."""
     if campaign.snapshot_json:
         return campaign.snapshot_json
-    items = sorted((item for item in campaign.items if item.match_status != "excluded"), key=lambda item: (item.sort_order, str(item.id)))
     from app.services.preview_renderer import _live_payload
     return _live_payload(campaign, template)
 

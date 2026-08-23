@@ -106,6 +106,9 @@ class CampaignItemRead(BaseModel):
     sort_order: int
     is_hero: bool
     match_status: str
+    is_hidden: bool = False
+    emphasis: str = "normal"
+    image_override_product_image_id: UUID | None = None
     match_confidence: Decimal | None
     matching_notes: str | None
     parsed_payload: dict[str, Any] | None
@@ -263,6 +266,8 @@ class CampaignListItem(BaseModel):
     currency: str
     language: str
     frozen_at: datetime | None = None
+    draft_revision: int = 0
+    approved_revision: int | None = None
     finalized_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

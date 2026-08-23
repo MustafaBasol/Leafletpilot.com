@@ -357,3 +357,13 @@ def test_missing_image_uses_honest_price_led_fallback() -> None:
     assert html.count('class="image-placeholder"') == 6
     assert '<img class="product-image' not in html
     assert "Gorsel mevcut degil" in html
+
+
+def test_preview_renderer_honors_controlled_large_emphasis() -> None:
+    html = render_render_payload_html(
+        {"template_slug": "premium-market", "items": [{"name": "Large", "price": "4.99", "emphasis": "large"}]},
+        generated_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+
+    assert 'data-emphasis="featured"' in html

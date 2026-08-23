@@ -142,6 +142,8 @@ function mapCampaign(campaign) {
     template: campaign.template_name || (campaign.template_id ? "Şablon adı yok" : "Şablon yok"),
     frozenAt: campaign.frozen_at || null,
     finalizedAt: campaign.finalized_at || null,
+    draftRevision: campaign.draft_revision ?? 0,
+    approvedRevision: campaign.approved_revision ?? null,
     campaignStartDate: campaign.campaign_start_date || "",
     campaignEndDate: campaign.campaign_end_date || "",
     createdAt: formatDate(campaign.created_at),
@@ -163,6 +165,12 @@ function mapCampaignItem(item, suggestions = []) {
     matchedProduct: item.display_name || "Eşleşme yok",
     price: formatMoney(item.price, item.currency),
     oldPrice: formatMoney(item.old_price, item.currency),
+    rawPrice: item.price ?? "",
+    rawOldPrice: item.old_price ?? "",
+    displayName: item.display_name || item.incoming_name,
+    isHidden: Boolean(item.is_hidden),
+    emphasis: item.emphasis || "normal",
+    imageOverrideProductImageId: item.image_override_product_image_id || "",
     currency: item.currency,
     category: item.category_hint || "-",
     score,
@@ -765,3 +773,23 @@ export const dataSourceInfo = {
   isRealApiEnabled,
   demoMarketId,
 };
+
+export async function applyCampaignRevision(campaignId, payload) {
+  if (!isRealApiEnabled) return { draft_revision: payload.expected_revision + 1 };
+  return campaignApi.applyCampaignRevision(campaignId, payload, requireSelectedMarketId());
+}
+
+export async function undoCampaignRevision(campaignId, payload) {
+  if (!isRealApiEnabled) return { draft_revision: payload.expected_revision + 1 };
+  return campaignApi.undoCampaignRevision(campaignId, payload, requireSelectedMarketId());
+}
+
+export async function approveCampaign(campaignId) {
+  if (!isRealApiEnabled) return null;
+  return mapCampaignDetail((await campaignApi.approveCampaign(campaignId, requireSelectedMarketId())).campaign);
+}
+
+export async function getCampaignItemImageOptions(campaignId, itemId) {
+  if (!isRealApiEnabled) return [];
+  return campaignApi.getCampaignItemImageOptions(campaignId, itemId, requireSelectedMarketId());
+}

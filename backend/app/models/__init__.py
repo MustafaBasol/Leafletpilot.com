@@ -1,6 +1,6 @@
 from app.models.activity import ActivityLog
 from app.models.billing import MarketSubscription, StripeWebhookEvent
-from app.models.campaign import Campaign, CampaignItem, MatchingSuggestion
+from app.models.campaign import Campaign, CampaignItem, CampaignRevision, MatchingSuggestion
 from app.models.catalog import (
     Brand,
     BrandAlias,
@@ -19,8 +19,8 @@ from app.models.messaging import Conversation, IncomingMessage
 from app.models.password_reset import PasswordResetToken
 from app.models.platform import MarketCatalogImport, PlatformAdmin, PlatformAuditLog
 from app.models.signup import SIGNUP_REQUEST_STATUSES, SignupRequest, SignupThrottle
-from app.models.template import Template
 from app.models.telegram import TelegramAccount, TelegramConversationState, TelegramUpdate
+from app.models.template import Template
 from app.models.user import User
 from app.models.whatsapp import (
     WHATSAPP_IDENTITY_STATUSES,
@@ -40,6 +40,7 @@ __all__ = [
     "Campaign",
     "CampaignFile",
     "CampaignItem",
+    "CampaignRevision",
     "CatalogQualityDecision",
     "Category",
     "Conversation",

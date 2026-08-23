@@ -5,8 +5,14 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_campaign_session, get_required_market_id, require_market_role
+from app.api.deps import (
+    get_campaign_session,
+    get_current_user,
+    get_required_market_id,
+    require_market_role,
+)
 from app.core.roles import MARKET_MUTATION_ROLES
+from app.models import User
 from app.schemas.campaign import (
     CampaignBuilderOptions,
     CampaignCreate,
@@ -35,8 +41,16 @@ from app.schemas.campaign import (
 )
 from app.schemas.common import ListResponse
 from app.schemas.export import CampaignFileCreate, CampaignFileRead, ExportJobCreate, ExportJobRead
+from app.schemas.revision import (
+    CampaignItemImageOptionRead,
+    CampaignRevisionRead,
+    RevisionCommand,
+    RevisionResult,
+    UndoRevisionRequest,
+)
 from app.services import campaign as campaign_service
 from app.services import product_matching
+from app.services import revision as revision_service
 from app.services.campaign_parser import parse_campaign_text
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -133,6 +147,70 @@ async def get_campaign(
     return await campaign_service.get_campaign(session, campaign_id, market_id)
 
 
+
+
+@router.get("/{campaign_id}/revisions", response_model=list[CampaignRevisionRead])
+async def get_campaign_revisions(
+    campaign_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> list[CampaignRevisionRead]:
+    return await revision_service.list_revisions(session, campaign_id, market_id)
+
+
+@router.post("/{campaign_id}/revisions", response_model=RevisionResult)
+async def create_campaign_revision(
+    campaign_id: UUID,
+    payload: RevisionCommand,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> RevisionResult:
+    result = await revision_service.apply_revision(
+        session, campaign_id, payload, market_id, actor_id=actor.id
+    )
+    return RevisionResult(
+        revision=CampaignRevisionRead.model_validate(result.revision),
+        draft_revision=result.draft_revision,
+        idempotent=result.idempotent,
+    )
+
+
+@router.post("/{campaign_id}/revisions/undo", response_model=RevisionResult)
+async def undo_campaign_revision(
+    campaign_id: UUID,
+    payload: UndoRevisionRequest,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> RevisionResult:
+    result = await revision_service.undo_latest_revision(
+        session, campaign_id, payload, market_id, actor_id=actor.id
+    )
+    return RevisionResult(
+        revision=CampaignRevisionRead.model_validate(result.revision),
+        draft_revision=result.draft_revision,
+        idempotent=result.idempotent,
+    )
+
+
+@router.get("/{campaign_id}/items/{item_id}/image-options", response_model=list[CampaignItemImageOptionRead])
+async def campaign_item_image_options(
+    campaign_id: UUID,
+    item_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> list[CampaignItemImageOptionRead]:
+    item, images = await revision_service.list_item_image_options(session, campaign_id, item_id, market_id)
+    return [
+        CampaignItemImageOptionRead(
+            id=image.id,
+            label=f"Katalog görseli {index + 1}",
+            is_primary=image.is_primary,
+            is_selected=image.id == item.image_override_product_image_id,
+        )
+        for index, image in enumerate(images)
+    ]
 @router.get("/{campaign_id}/intelligence", response_model=CampaignIntelligenceEnvelope)
 async def get_campaign_intelligence(
     campaign_id: UUID,
@@ -184,9 +262,20 @@ async def update_campaign(
 async def finalize_campaign(
     campaign_id: UUID,
     market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
 ) -> CampaignFinalizeResponse:
-    return await campaign_service.finalize_campaign(session, campaign_id, market_id)
+    return await campaign_service.finalize_campaign(session, campaign_id, market_id, actor_id=actor.id)
+
+
+@router.post("/{campaign_id}/approve", response_model=CampaignFinalizeResponse)
+async def approve_campaign(
+    campaign_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+) -> CampaignFinalizeResponse:
+    return await campaign_service.finalize_campaign(session, campaign_id, market_id, actor_id=actor.id)
 
 
 @router.delete("/{campaign_id}", response_model=CampaignDetail)
