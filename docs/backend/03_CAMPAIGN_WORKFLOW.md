@@ -1,3 +1,4 @@
+
 # Campaign Workflow
 
 ## Status Lifecycle
@@ -355,3 +356,20 @@ emphasis, currency, and language.
 Once `frozen_at` / `finalized_at` is set, draft mutation and revision endpoints
 return a conflict. Preview and export render from the immutable snapshot, so a
 later catalog change cannot change an approved brochure.
+
+### AI-1 hardening contract
+
+- Approval and legacy finalization require the displayed expected draft revision;
+  the locked campaign returns 409 and its current revision when stale.
+- Public panel revision and undo payloads forbid source. The server creates a
+  trusted panel source while internal trusted callers retain their source.
+- A duplicate request ID succeeds only when source, expected revision, and
+  normalized actions have the same canonical fingerprint; otherwise it is 409.
+- Retained render-affecting legacy workflows lock the campaign and advance the
+  shared draft version and durable server-authored ledger event.
+- Final export requires an already-frozen campaign and never auto-finalizes.
+- Approval-time catalog refresh validates references only. It writes no
+  CampaignItem presentation field, preserving campaign display, prices,
+  visibility, hero/emphasis, image override, and ordering in the snapshot.
+- Undo restores one normal structured mutation. A latest undo or server
+  workflow event returns 409 instead of acting as undocumented redo.

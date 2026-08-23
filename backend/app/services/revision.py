@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import ActivityLog, Campaign, CampaignItem, CampaignRevision, ProductImage
+from app.models import Campaign, CampaignItem, CampaignRevision, ProductImage
 from app.schemas.revision import (
     MoveItemAction,
     RemoveItemAction,
@@ -33,7 +33,13 @@ from app.schemas.revision import (
     UpdateDisplayNameAction,
     UpdatePriceAction,
 )
-from app.services.campaign import _clear_applied_intelligence, recalculate_campaign_counts
+from app.services.campaign import (
+    _clear_applied_intelligence,
+    advance_draft_revision,
+    canonical_request_fingerprint,
+    capture_campaign_draft_state,
+    recalculate_campaign_counts,
+)
 
 
 @dataclass(frozen=True)
@@ -53,14 +59,25 @@ async def apply_revision(
 ) -> RevisionApplication:
     """Apply all requested actions and their audit event in one transaction."""
     try:
+        actions_json = [action.model_dump(mode="json") for action in command.actions]
+        fingerprint = canonical_request_fingerprint(
+            source=command.source,
+            expected_revision=command.expected_revision,
+            actions=actions_json,
+        )
         campaign = await _get_locked_campaign(session, campaign_id, market_id)
         existing = await _find_by_request_id(session, campaign.id, campaign.market_id, command.client_request_id)
         if existing is not None:
+            if existing.request_fingerprint != fingerprint:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="client_request_id was already used for a different revision request.",
+                )
             return RevisionApplication(existing, campaign.draft_revision, idempotent=True)
         _assert_mutable(campaign)
         _assert_expected_revision(campaign, command.expected_revision)
 
-        before = _draft_state(campaign)
+        before = capture_campaign_draft_state(campaign)
         for action in command.actions:
             await _apply_action(session, campaign, action)
         _normalize_sort_order(campaign.items)
@@ -68,22 +85,18 @@ async def apply_revision(
         _clear_applied_intelligence(campaign)
         if campaign.status in {"preview_ready", "waiting_approval", "revision_requested"}:
             campaign.status = "waiting_approval"
-        campaign.draft_revision += 1
-        after = _draft_state(campaign)
-        revision = CampaignRevision(
-            campaign_id=campaign.id,
-            market_id=campaign.market_id,
-            created_by_user_id=actor_id,
+        after = capture_campaign_draft_state(campaign)
+        revision = advance_draft_revision(
+            session,
+            campaign,
+            actor_id=actor_id,
             source=command.source,
             request_id=command.client_request_id,
-            sequence=campaign.draft_revision,
-            status="applied",
-            actions_json=[action.model_dump(mode="json") for action in command.actions],
-            before_snapshot_json=before,
-            after_snapshot_json=after,
+            request_fingerprint=fingerprint,
+            actions=actions_json,
+            before_snapshot=before,
+            after_snapshot=after,
         )
-        session.add(revision)
-        _add_activity(session, campaign, actor_id, "campaign_revision_applied", revision)
         await session.commit()
         await session.refresh(revision)
         return RevisionApplication(revision, campaign.draft_revision)
@@ -111,8 +124,19 @@ async def undo_latest_revision(
     """Restore the immediately preceding mutation and record the undo itself."""
     try:
         campaign = await _get_locked_campaign(session, campaign_id, market_id)
+        undo_actions = [{"type": "undo"}]
+        fingerprint = canonical_request_fingerprint(
+            source=request.source,
+            expected_revision=request.expected_revision,
+            actions=undo_actions,
+        )
         existing = await _find_by_request_id(session, campaign.id, campaign.market_id, request.client_request_id)
         if existing is not None:
+            if existing.request_fingerprint != fingerprint:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="client_request_id was already used for a different undo request.",
+                )
             return RevisionApplication(existing, campaign.draft_revision, idempotent=True)
         _assert_mutable(campaign)
         _assert_expected_revision(campaign, request.expected_revision)
@@ -125,28 +149,31 @@ async def undo_latest_revision(
         )
         if latest is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="There is no revision to undo.")
+        if latest.status == "undone" or latest.source == "system":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The latest effective draft mutation cannot be undone again.",
+            )
 
-        before = _draft_state(campaign)
+        before = capture_campaign_draft_state(campaign)
         _restore_draft_state(campaign, latest.before_snapshot_json)
         recalculate_campaign_counts(campaign)
         _clear_applied_intelligence(campaign)
-        campaign.draft_revision += 1
-        after = _draft_state(campaign)
-        revision = CampaignRevision(
-            campaign_id=campaign.id,
-            market_id=campaign.market_id,
-            created_by_user_id=actor_id,
+        after = capture_campaign_draft_state(campaign)
+        applied_undo_actions = [{"type": "undo", "target_revision_id": str(latest.id)}]
+        revision = advance_draft_revision(
+            session,
+            campaign,
+            actor_id=actor_id,
             source=request.source,
             request_id=request.client_request_id,
-            sequence=campaign.draft_revision,
-            status="undone",
-            actions_json=[{"type": "undo", "target_revision_id": str(latest.id)}],
-            before_snapshot_json=before,
-            after_snapshot_json=after,
+            request_fingerprint=fingerprint,
+            actions=applied_undo_actions,
+            before_snapshot=before,
+            after_snapshot=after,
+            status_value="undone",
             reverts_revision_id=latest.id,
         )
-        session.add(revision)
-        _add_activity(session, campaign, actor_id, "campaign_revision_undone", revision)
         await session.commit()
         await session.refresh(revision)
         return RevisionApplication(revision, campaign.draft_revision)
@@ -347,28 +374,6 @@ def _restore_draft_state(campaign: Campaign, state: dict) -> None:
     _normalize_sort_order(campaign.items)
 
 
-def _add_activity(
-    session: AsyncSession,
-    campaign: Campaign,
-    actor_id: UUID | None,
-    action: str,
-    revision: CampaignRevision,
-) -> None:
-    session.add(
-        ActivityLog(
-            market_id=campaign.market_id,
-            user_id=actor_id,
-            entity_type="campaign",
-            entity_id=campaign.id,
-            action=action,
-            metadata_={
-                "campaign_id": str(campaign.id),
-                "revision": revision.sequence,
-                "action_count": len(revision.actions_json),
-                "source": revision.source,
-            },
-        )
-    )
 
 
 async def list_item_image_options(

@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("source", sa.String(length=32), nullable=False),
         sa.Column("request_id", sa.String(length=128), nullable=False),
+        sa.Column("request_fingerprint", sa.String(length=64), nullable=False),
         sa.Column("sequence", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="applied"),
         sa.Column("actions_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),

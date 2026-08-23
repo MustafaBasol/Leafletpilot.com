@@ -110,3 +110,20 @@ test("Campaign Detail exposes deterministic draft controls without catalog mutat
   assert.match(page, /type: "replace_image"/);
   assert.match(page, /yalnızca bu broşür taslağına uygulanır; katalog ürünü değişmez/);
 });
+
+
+test("approval sends the displayed revision and refreshes a stale approval without retrying", () => {
+  assert.match(page, /approveCampaign\(campaignId, campaign\.draftRevision \?\? 0\)/);
+  assert.match(api, /approveCampaign\(campaignId, payload, marketId\)/);
+  assert.match(dataSource, /expected_revision: expectedRevision/);
+  assert.match(page, /Güncel sürümü inceleyip yeniden onaylayın/);
+  assert.doesNotMatch(page, /source: "panel"/);
+});
+
+test("visible-only reordering skips hidden rows and uses backend visible positions", () => {
+  assert.match(page, /const visibleItems = rows\.filter\(\(row\) => !row\.isHidden\)/);
+  assert.match(page, /const targetPosition = visibleIndex \+ direction \+ 1/);
+  assert.match(page, /target_position: targetPosition/);
+  assert.match(page, /visibleRows\.findIndex/);
+  assert.doesNotMatch(page, /target_position: index \+ direction \+ 1/);
+});

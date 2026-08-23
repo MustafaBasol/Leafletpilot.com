@@ -261,6 +261,7 @@ class CampaignRevision(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     created_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="applied", nullable=False)
     actions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)

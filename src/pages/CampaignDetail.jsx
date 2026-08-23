@@ -355,7 +355,6 @@ export function CampaignDetail({ campaignId, view = "" }) {
       setApiError("");
       await applyCampaignRevision(campaignId, {
         client_request_id: revisionRequestId(key),
-        source: "panel",
         expected_revision: campaign.draftRevision || 0,
         actions,
       });
@@ -383,7 +382,6 @@ export function CampaignDetail({ campaignId, view = "" }) {
       setApiError("");
       await undoCampaignRevision(campaignId, {
         client_request_id: revisionRequestId("undo"),
-        source: "panel",
         expected_revision: campaign.draftRevision || 0,
       });
       await loadCampaign();
@@ -482,30 +480,43 @@ export function CampaignDetail({ campaignId, view = "" }) {
     try {
       setActionLoading("approve");
       setApiError("");
-      const approved = await approveCampaign(campaignId);
+      const approved = await approveCampaign(campaignId, campaign.draftRevision ?? 0);
       setCampaign(approved);
       setRows(approved.items || []);
       await loadPreview();
       setNotice("Taslak onaylandı ve bu sürüm donduruldu.");
     } catch (error) {
-      setApiError(error.message || "Taslak onaylanamadı.");
+      if (error.status === 409) {
+        await loadCampaign();
+        await loadPreview();
+        setApiError("Taslak başka bir işlemle güncellendi. Güncel sürümü inceleyip yeniden onaylayın.");
+      } else {
+        setApiError(error.message || "Taslak onaylanamadı.");
+      }
     } finally {
       setActionLoading("");
     }
   }
   async function moveRow(index, direction) {
-    if (campaign.frozenAt || index + direction < 0 || index + direction >= rows.length) return;
+    if (campaign.frozenAt) return;
+    const item = rows[index];
+    if (!item || item.isHidden) return;
+    const visibleItems = rows.filter((row) => !row.isHidden);
+    const visibleIndex = visibleItems.findIndex((row) => row.id === item.id);
+    const targetPosition = visibleIndex + direction + 1;
+    if (visibleIndex < 0 || targetPosition < 1 || targetPosition > visibleItems.length) return;
+    const targetItem = visibleItems[visibleIndex + direction];
     if (!isRealApiEnabled) {
       const next = [...rows];
-      [next[index], next[index + direction]] = [next[index + direction], next[index]];
+      const targetIndex = next.findIndex((row) => row.id === targetItem.id);
+      [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
       setRows(next);
       setNotice("Ürün sırası taslakta güncellendi.");
       return;
     }
-    const item = rows[index];
     await runDraftRevision(
       `move-${item.id}`,
-      [{ type: "move_item", item_id: item.id, target_position: index + direction + 1 }],
+      [{ type: "move_item", item_id: item.id, target_position: targetPosition }],
       "Ürün sırası taslakta güncellendi.",
     ).catch(() => {});
   }
@@ -627,6 +638,7 @@ export function CampaignDetail({ campaignId, view = "" }) {
     return "";
   };
   const missingRows = rows.filter((row) => !row.isHidden && needsAttention(row.status));
+  const visibleRows = rows.filter((row) => !row.isHidden);
   const files = isRealApiEnabled ? (campaign.files || []).map(mapFileForPanel) : generatedFiles;
   const exportJobs = campaign.exportJobs || [];
 
@@ -855,8 +867,8 @@ export function CampaignDetail({ campaignId, view = "" }) {
                 {canMutateCurrentCampaign ? (
                   <>
                     <td>
-                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || index === 0} onClick={() => moveRow(index, -1)}>↑</Button>
-                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || index === rows.length - 1} onClick={() => moveRow(index, 1)}>↓</Button>
+                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || visibleRows.findIndex((row) => row.id === product.id) === 0} onClick={() => moveRow(index, -1)}>↑</Button>
+                      <Button disabled={Boolean(campaign.frozenAt) || product.isHidden || visibleRows.findIndex((row) => row.id === product.id) === visibleRows.length - 1} onClick={() => moveRow(index, 1)}>↓</Button>
                     </td>
                     <td>
                       {(product.suggestions || []).slice(0, 2).map((suggestion) => (

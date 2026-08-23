@@ -362,10 +362,10 @@ export async function applyCampaignIntelligence(campaignId) {
   return campaignApi.applyCampaignIntelligence(campaignId, requireSelectedMarketId());
 }
 
-export async function finalizeCampaign(id) {
+export async function finalizeCampaign(id, expectedRevision) {
   if (!isRealApiEnabled) return null;
   const marketId = requireSelectedMarketId();
-  return mapCampaignDetail((await campaignApi.finalizeCampaign(id, marketId)).campaign);
+  return mapCampaignDetail((await campaignApi.finalizeCampaign(id, { expected_revision: expectedRevision }, marketId)).campaign);
 }
 
 export async function reorderCampaignItems(id, items) {
@@ -784,9 +784,9 @@ export async function undoCampaignRevision(campaignId, payload) {
   return campaignApi.undoCampaignRevision(campaignId, payload, requireSelectedMarketId());
 }
 
-export async function approveCampaign(campaignId) {
+export async function approveCampaign(campaignId, expectedRevision) {
   if (!isRealApiEnabled) return null;
-  return mapCampaignDetail((await campaignApi.approveCampaign(campaignId, requireSelectedMarketId())).campaign);
+  return mapCampaignDetail((await campaignApi.approveCampaign(campaignId, { expected_revision: expectedRevision }, requireSelectedMarketId())).campaign);
 }
 
 export async function getCampaignItemImageOptions(campaignId, itemId) {

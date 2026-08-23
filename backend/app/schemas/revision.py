@@ -79,10 +79,52 @@ class RevisionCommand(BaseModel):
     actions: list[RevisionAction] = Field(min_length=1, max_length=100)
 
 
+class PanelRevisionCommand(BaseModel):
+    """Public panel contract. The API, not the browser, owns the source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    expected_revision: int = Field(ge=0)
+    actions: list[RevisionAction] = Field(min_length=1, max_length=100)
+
+    def trusted_command(self) -> RevisionCommand:
+        return RevisionCommand(
+            client_request_id=self.client_request_id,
+            source="panel",
+            expected_revision=self.expected_revision,
+            actions=self.actions,
+        )
+
+
 class UndoRevisionRequest(BaseModel):
     client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     expected_revision: int = Field(ge=0)
     source: RevisionSource = "panel"
+
+
+class PanelUndoRevisionRequest(BaseModel):
+    """Public panel undo contract. The source is always server-owned panel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    expected_revision: int = Field(ge=0)
+
+    def trusted_request(self) -> UndoRevisionRequest:
+        return UndoRevisionRequest(
+            client_request_id=self.client_request_id,
+            expected_revision=self.expected_revision,
+            source="panel",
+        )
+
+
+class CampaignApprovalRequest(BaseModel):
+    """Approval is an optimistic-concurrency operation, never a blind freeze."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0)
 
 
 class CampaignRevisionRead(BaseModel):
@@ -94,6 +136,7 @@ class CampaignRevisionRead(BaseModel):
     created_by_user_id: UUID | None
     source: RevisionSource
     request_id: str
+    request_fingerprint: str
     sequence: int
     status: RevisionStatus
     actions_json: list[dict]
