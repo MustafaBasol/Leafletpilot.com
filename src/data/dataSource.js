@@ -784,6 +784,26 @@ export async function undoCampaignRevision(campaignId, payload) {
   return campaignApi.undoCampaignRevision(campaignId, payload, requireSelectedMarketId());
 }
 
+export async function createAIRevisionProposal(campaignId, payload) {
+  if (!isRealApiEnabled) {
+    return {
+      id: `mock-ai-${Date.now()}`,
+      campaign_id: campaignId,
+      status: "unsupported",
+      expected_revision: payload.expected_revision,
+      actions: [],
+      summary: [],
+      unsupported_reason: "AI revizyonu yalnızca gerçek API modunda kullanılabilir.",
+    };
+  }
+  return campaignApi.createAIRevisionProposal(campaignId, payload, requireSelectedMarketId());
+}
+
+export async function applyAIRevisionProposal(campaignId, proposalId) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.applyAIRevisionProposal(campaignId, proposalId, requireSelectedMarketId());
+}
+
 export async function approveCampaign(campaignId, expectedRevision) {
   if (!isRealApiEnabled) return null;
   return mapCampaignDetail((await campaignApi.approveCampaign(campaignId, { expected_revision: expectedRevision }, requireSelectedMarketId())).campaign);

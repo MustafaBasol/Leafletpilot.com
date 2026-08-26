@@ -127,3 +127,34 @@ test("visible-only reordering skips hidden rows and uses backend visible positio
   assert.match(page, /visibleRows\.findIndex/);
   assert.doesNotMatch(page, /target_position: index \+ direction \+ 1/);
 });
+
+test("AI revision is an explicit proposal and confirmation flow", () => {
+  assert.match(api, /createAIRevisionProposal/);
+  assert.match(api, /applyAIRevisionProposal/);
+  assert.match(dataSource, /createAIRevisionProposal/);
+  assert.match(dataSource, /applyAIRevisionProposal/);
+  assert.match(page, /Ne değiştirmek istiyorsunuz\?/);
+  assert.match(page, /onSubmit=\{prepareAIRevision\}/);
+  assert.match(page, /Öneriyi Hazırla/);
+  assert.match(page, /aiProposal\.status === "ready"/);
+  assert.match(page, /aiProposal\.status === "clarification_required"/);
+  assert.match(page, /aiProposal\.status === "unsupported"/);
+  assert.match(page, /applyAIRevisionProposal\(campaignId, aiProposal\.id\)/);
+  assert.match(page, /setAiProposal\(null\)/);
+  assert.match(styles, /\.ai-revision-proposal/);
+});
+
+test("AI is not called on keystrokes, page load, preview refresh, or manual revisions", () => {
+  assert.match(page, /onChange=\{\(event\) => setAiInstruction\(event\.target\.value\)\}/);
+  assert.doesNotMatch(page, /onChange=\{[^}]*createAIRevisionProposal/);
+  assert.doesNotMatch(page, /useEffect\([^)]*createAIRevisionProposal/);
+  assert.doesNotMatch(page, /loadPreview[\s\S]{0,200}createAIRevisionProposal/);
+  assert.doesNotMatch(page, /runDraftRevision[\s\S]{0,300}createAIRevisionProposal/);
+});
+
+test("AI proposal conflicts refresh authoritative campaign and preview state", () => {
+  assert.match(page, /if \(error\.status === 409\)/);
+  assert.match(page, /setAiProposal\(null\);[\s\S]*await loadCampaign\(\);[\s\S]*await loadPreview\(\)/);
+  assert.match(page, /proposal_expired/);
+  assert.match(page, /stale_revision/);
+});

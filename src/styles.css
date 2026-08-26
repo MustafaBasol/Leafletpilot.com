@@ -4858,6 +4858,34 @@ tbody tr:hover {
   font-size: 2rem;
   font-weight: 800;
 }
+
+.ai-revision-panel,
+.ai-revision-form {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-revision-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.ai-revision-proposal {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.ai-revision-proposal ul {
+  margin: 10px 0 14px;
+  padding-left: 22px;
+}
+
+.ai-revision-proposal p {
+  margin: 8px 0 14px;
+}
+
 .intelligence-panel {
   display: grid;
   gap: 18px;

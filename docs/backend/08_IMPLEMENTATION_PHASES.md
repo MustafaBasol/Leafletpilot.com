@@ -585,3 +585,27 @@ Telegram: unchanged. No Telegram implementation file, route, model, or record
 is touched by this phase; Telegram shutdown remains a separate future task.
 
 Setup and operations: `docs/backend/10_WHATSAPP_EVOLUTION_SETUP.md`.
+
+## Phase 33: AI-2 Natural-Language Draft Revisions
+
+Implemented scope:
+
+- Provider-neutral structured-output interface, registry, capability router,
+  conservative retry/fallback behavior, and a deterministic mock provider.
+- Explicit panel proposal/confirmation flow for natural-language draft
+  revisions; no provider call on page load, keystroke, preview, or manual edit.
+- Tenant/user-scoped, expiring, idempotent proposal persistence and prompt-free
+  provider usage telemetry.
+- Strict schema and semantic validation, foreign-item rejection, protected
+  commercial-fact checks, runtime kill switches, bounded instruction/action
+  sizes, and shared fixed-window user throttling.
+- Atomic apply through the existing deterministic AI-1 revision service with
+  `actor=user`, `source=ai`, and exact `expected_revision` enforcement.
+
+Excluded work:
+
+- AI-3 image/design professionalization and multimodal final polish.
+- AI-4 billing, subscription quota charging, and invoice integration.
+- Broad Telegram/WhatsApp free-text AI integration.
+
+Architecture and operations: `docs/backend/11_AI2_REVISION_ORCHESTRATION.md`.

@@ -105,6 +105,18 @@ export function undoCampaignRevision(campaignId, payload, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/revisions/undo`, payload, { marketId });
 }
 
+export function createAIRevisionProposal(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/revision-intent`, payload, { marketId });
+}
+
+export function applyAIRevisionProposal(campaignId, proposalId, marketId) {
+  return apiClient.post(
+    `/campaigns/${campaignId}/revision-intent/${proposalId}/apply`,
+    undefined,
+    { marketId },
+  );
+}
+
 export function approveCampaign(campaignId, payload, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/approve`, payload, { marketId });
 }

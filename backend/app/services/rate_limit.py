@@ -29,6 +29,7 @@ from app.models.base import utc_now
 WHATSAPP_IP_KEY = "whatsapp_ip"
 WHATSAPP_USER_KEY = "whatsapp_user"
 WHATSAPP_SENDER_KEY = "whatsapp_sender"
+AI_USER_KEY = "ai_user"
 
 # Buckets older than this many windows are pruned opportunistically, matching
 # the public-signup cleanup policy.
@@ -105,5 +106,16 @@ async def prune_expired_rate_limits(session: AsyncSession, *, window_minutes: in
         delete(SignupThrottle).where(
             SignupThrottle.key_type.in_((WHATSAPP_IP_KEY, WHATSAPP_USER_KEY, WHATSAPP_SENDER_KEY)),
             SignupThrottle.window_bucket < cutoff_bucket,
+        )
+    )
+
+
+async def prune_expired_ai_rate_limits(session: AsyncSession) -> None:
+    """Prune only old one-minute AI-user buckets without touching other limiters."""
+    current_bucket = int(utc_now().timestamp()) // 60
+    await session.execute(
+        delete(SignupThrottle).where(
+            SignupThrottle.key_type == AI_USER_KEY,
+            SignupThrottle.window_bucket < current_bucket - _RETAINED_WINDOWS,
         )
     )

@@ -8,7 +8,6 @@ from uuid import UUID
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-
 EXAMPLE_JWT_SECRETS = {
     "change-this-development-secret",
     "secret",
@@ -107,6 +106,29 @@ class Settings(BaseSettings):
     telegram_webhook_base_url: str = Field(default="", alias="TELEGRAM_WEBHOOK_BASE_URL")
     telegram_http_timeout_seconds: int = Field(default=20, alias="TELEGRAM_HTTP_TIMEOUT_SECONDS")
     telegram_http_max_attempts: int = Field(default=1, alias="TELEGRAM_HTTP_MAX_ATTEMPTS")
+    # Provider-neutral AI revision parsing. Provider credentials are runtime-only.
+    ai_enabled: bool = Field(default=False, alias="AI_ENABLED")
+    ai_revision_enabled: bool = Field(default=False, alias="AI_REVISION_ENABLED")
+    ai_revision_provider: str = Field(default="openai_compatible", alias="AI_REVISION_PROVIDER")
+    ai_revision_model: str = Field(default="", alias="AI_REVISION_MODEL")
+    ai_complex_revision_provider: str = Field(default="", alias="AI_COMPLEX_REVISION_PROVIDER")
+    ai_complex_revision_model: str = Field(default="", alias="AI_COMPLEX_REVISION_MODEL")
+    ai_fallback_provider: str = Field(default="", alias="AI_FALLBACK_PROVIDER")
+    ai_fallback_model: str = Field(default="", alias="AI_FALLBACK_MODEL")
+    ai_openai_compatible_api_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        alias="AI_OPENAI_COMPATIBLE_API_BASE_URL",
+    )
+    ai_openai_compatible_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="AI_OPENAI_COMPATIBLE_API_KEY",
+    )
+    ai_http_timeout_seconds: int = Field(default=15, alias="AI_HTTP_TIMEOUT_SECONDS")
+    ai_http_max_attempts: int = Field(default=2, alias="AI_HTTP_MAX_ATTEMPTS")
+    ai_max_instruction_length: int = Field(default=2000, alias="AI_MAX_INSTRUCTION_LENGTH")
+    ai_max_actions_per_request: int = Field(default=20, alias="AI_MAX_ACTIONS_PER_REQUEST")
+    ai_proposal_expire_minutes: int = Field(default=15, alias="AI_PROPOSAL_EXPIRE_MINUTES")
+    ai_revision_rate_limit_per_minute: int = Field(default=5, alias="AI_REVISION_RATE_LIMIT_PER_MINUTE")
     # --- Central LeafletPilot WhatsApp channel (Evolution API) -------------
     # ONE platform-owned WhatsApp number, ONE Evolution instance, MANY markets.
     # Credentials are runtime environment configuration only: they are never
@@ -240,6 +262,20 @@ class Settings(BaseSettings):
             raise ValueError("WHATSAPP_VERIFICATION_MAX_ATTEMPTS must be at least 1.")
         if self.whatsapp_rate_limit_window_minutes < 1:
             raise ValueError("WHATSAPP_RATE_LIMIT_WINDOW_MINUTES must be at least 1.")
+        if self.ai_http_timeout_seconds < 1 or self.ai_http_timeout_seconds > 60:
+            raise ValueError("AI_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
+        if self.ai_http_max_attempts < 1 or self.ai_http_max_attempts > 2:
+            raise ValueError("AI_HTTP_MAX_ATTEMPTS must be 1 or 2.")
+        if self.ai_max_instruction_length < 1 or self.ai_max_instruction_length > 2000:
+            raise ValueError("AI_MAX_INSTRUCTION_LENGTH must be between 1 and 2000.")
+        if self.ai_max_actions_per_request < 1 or self.ai_max_actions_per_request > 100:
+            raise ValueError("AI_MAX_ACTIONS_PER_REQUEST must be between 1 and 100.")
+        if self.ai_proposal_expire_minutes < 1 or self.ai_proposal_expire_minutes > 60:
+            raise ValueError("AI_PROPOSAL_EXPIRE_MINUTES must be between 1 and 60.")
+        if self.ai_revision_rate_limit_per_minute < 1:
+            raise ValueError("AI_REVISION_RATE_LIMIT_PER_MINUTE must be at least 1.")
+        if self.ai_enabled:
+            self._validate_enabled_ai_settings()
         for limit_name, limit_value in (
             ("WHATSAPP_VERIFICATION_REQUEST_LIMIT", self.whatsapp_verification_request_limit),
             ("WHATSAPP_INBOUND_MESSAGE_LIMIT", self.whatsapp_inbound_message_limit),
@@ -320,6 +356,18 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_BOT_ENABLED=true.")
         if self.is_production and urlparse(self.telegram_webhook_base_url).scheme != "https":
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
+
+    def _validate_enabled_ai_settings(self) -> None:
+        if not self.ai_revision_model.strip():
+            raise ValueError("AI_REVISION_MODEL is required when AI_ENABLED=true.")
+        if self.ai_revision_provider == "openai_compatible":
+            if not self.ai_openai_compatible_api_key.get_secret_value().strip():
+                raise ValueError("AI_OPENAI_COMPATIBLE_API_KEY is required when AI_ENABLED=true.")
+            parsed = urlparse(self.ai_openai_compatible_api_base_url.strip())
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("AI_OPENAI_COMPATIBLE_API_BASE_URL must be an absolute http(s) URL.")
+            if self.is_production and parsed.scheme != "https":
+                raise ValueError("AI_OPENAI_COMPATIBLE_API_BASE_URL must use HTTPS in production.")
 
     def _validate_enabled_evolution_settings(self) -> None:
         if not self.evolution_api_base_url.strip():

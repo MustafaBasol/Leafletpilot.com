@@ -56,6 +56,7 @@ async def apply_revision(
     market_id: UUID,
     *,
     actor_id: UUID | None,
+    commit: bool = True,
 ) -> RevisionApplication:
     """Apply all requested actions and their audit event in one transaction."""
     try:
@@ -97,7 +98,10 @@ async def apply_revision(
             before_snapshot=before,
             after_snapshot=after,
         )
-        await session.commit()
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
         await session.refresh(revision)
         return RevisionApplication(revision, campaign.draft_revision)
     except IntegrityError as exc:

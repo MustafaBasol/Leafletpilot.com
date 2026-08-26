@@ -16,7 +16,9 @@ import {
   resolveCampaignItem,
   reorderCampaignItems,
   applyCampaignRevision,
+  applyAIRevisionProposal,
   approveCampaign,
+  createAIRevisionProposal,
   getCampaignItemImageOptions,
   undoCampaignRevision,
   updateCampaignDetail,
@@ -81,6 +83,22 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function aiFailureMessage(error) {
+  const code = error?.body?.detail?.code;
+  const messages = {
+    ai_revision_disabled: "AI revizyonu şu anda kullanıma kapalı.",
+    ai_rate_limited: "Çok fazla AI isteği gönderildi. Lütfen kısa süre sonra tekrar deneyin.",
+    provider_timeout: "AI yanıt vermedi. Lütfen tekrar deneyin.",
+    provider_unavailable: "AI hizmeti geçici olarak kullanılamıyor.",
+    schema_invalid: "AI güvenli bir revizyon önerisi üretemedi. Talebi daha açık yazın.",
+    proposal_expired: "Önerinin süresi doldu. Lütfen yeni bir öneri hazırlayın.",
+    stale_revision: "Taslak değişti. Güncel sürüm için yeni bir öneri hazırlayın.",
+    campaign_frozen: "Onaylanmış kampanyalar AI ile değiştirilemez.",
+    instruction_too_long: "Revizyon talebi çok uzun.",
+  };
+  return messages[code] || error?.message || "AI revizyon işlemi tamamlanamadı.";
 }
 
 function mapFileForPanel(file) {
@@ -236,6 +254,10 @@ export function CampaignDetail({ campaignId, view = "" }) {
   const [editingItem, setEditingItem] = useState(null);
   const [imageOptions, setImageOptions] = useState([]);
   const [isSavingItem, setSavingItem] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiProposal, setAiProposal] = useState(null);
+  const [aiError, setAiError] = useState("");
+  const [aiLoading, setAiLoading] = useState("");
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
   const canMutateCurrentCampaign = canEditCampaigns && !campaign.frozenAt;
@@ -342,6 +364,55 @@ export function CampaignDetail({ campaignId, view = "" }) {
   function revisionRequestId(prefix) {
     const value = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return `${prefix}-${value}`;
+  }
+
+  async function prepareAIRevision(event) {
+    event.preventDefault();
+    const instruction = aiInstruction.trim();
+    if (!instruction || campaign.frozenAt || !isRealApiEnabled) return;
+    try {
+      setAiLoading("prepare");
+      setAiError("");
+      setAiProposal(null);
+      const proposal = await createAIRevisionProposal(campaignId, {
+        instruction,
+        expected_revision: campaign.draftRevision || 0,
+        client_request_id: revisionRequestId("ai-proposal"),
+      });
+      setAiProposal(proposal);
+    } catch (error) {
+      setAiError(aiFailureMessage(error));
+    } finally {
+      setAiLoading("");
+    }
+  }
+
+  async function applyPreparedAIRevision() {
+    if (!aiProposal || aiProposal.status !== "ready") return;
+    try {
+      setAiLoading("apply");
+      setAiError("");
+      await applyAIRevisionProposal(campaignId, aiProposal.id);
+      setAiProposal(null);
+      setAiInstruction("");
+      await loadCampaign();
+      await loadPreview();
+      setNotice("AI revizyon önerisi taslağa uygulandı.");
+    } catch (error) {
+      if (error.status === 409) {
+        setAiProposal(null);
+        await loadCampaign();
+        await loadPreview();
+      }
+      setAiError(aiFailureMessage(error));
+    } finally {
+      setAiLoading("");
+    }
+  }
+
+  function cancelAIRevision() {
+    setAiProposal(null);
+    setAiError("");
   }
 
   async function runDraftRevision(key, actions, successMessage) {
@@ -723,6 +794,70 @@ export function CampaignDetail({ campaignId, view = "" }) {
       </section>
 
       <section className="dashboard-grid">
+        {canMutateCurrentCampaign && isRealApiEnabled ? (
+          <Card title="AI ile Revizyon" className="span-12">
+            <div className="ai-revision-panel">
+              <form className="ai-revision-form" onSubmit={prepareAIRevision}>
+                <label className="field field-full">
+                  <span>Ne değiştirmek istiyorsunuz?</span>
+                  <textarea
+                    value={aiInstruction}
+                    maxLength={2000}
+                    rows={3}
+                    placeholder="Örn. Nutella'yı ilk sıraya al ve daha büyük göster"
+                    onChange={(event) => setAiInstruction(event.target.value)}
+                  />
+                </label>
+                <div className="page-actions">
+                  <Button
+                    variant="primary"
+                    type="submit"
+                    disabled={!aiInstruction.trim() || Boolean(aiLoading)}
+                  >
+                    {aiLoading === "prepare" ? "Öneri hazırlanıyor..." : "Öneriyi Hazırla"}
+                  </Button>
+                </div>
+              </form>
+              {aiError ? <p className="inline-result inline-result-warning">{aiError}</p> : null}
+              {aiProposal ? (
+                <div className="ai-revision-proposal" aria-live="polite">
+                  {aiProposal.status === "ready" ? (
+                    <>
+                      <strong>Uygulanacak değişiklikler</strong>
+                      <ul>
+                        {(aiProposal.summary || []).map((summary) => <li key={summary}>{summary}</li>)}
+                      </ul>
+                      <div className="page-actions">
+                        <Button onClick={cancelAIRevision} disabled={Boolean(aiLoading)}>İptal</Button>
+                        <Button
+                          variant="primary"
+                          onClick={applyPreparedAIRevision}
+                          disabled={Boolean(aiLoading)}
+                        >
+                          {aiLoading === "apply" ? "Uygulanıyor..." : "Uygula"}
+                        </Button>
+                      </div>
+                    </>
+                  ) : null}
+                  {aiProposal.status === "clarification_required" ? (
+                    <>
+                      <strong>Bir ayrıntı gerekli</strong>
+                      <p>{aiProposal.clarification_question}</p>
+                      <Button onClick={cancelAIRevision}>Talebi Düzenle</Button>
+                    </>
+                  ) : null}
+                  {aiProposal.status === "unsupported" ? (
+                    <>
+                      <strong>Bu işlem desteklenmiyor</strong>
+                      <p>{aiProposal.unsupported_reason}</p>
+                      <Button onClick={cancelAIRevision}>Kapat</Button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </Card>
+        ) : null}
         <Card title={"Kampanya Zek\u00e2s\u0131"} className="span-12">
           <div className="intelligence-panel">
             <div className="intelligence-toolbar">
