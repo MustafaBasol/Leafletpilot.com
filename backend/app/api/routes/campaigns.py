@@ -13,6 +13,7 @@ from app.api.deps import (
 )
 from app.core.roles import MARKET_MUTATION_ROLES
 from app.models import User
+from app.schemas.ai import AIRevisionApplyResult, AIRevisionProposalRead, RevisionIntentRequest
 from app.schemas.campaign import (
     CampaignBuilderOptions,
     CampaignCreate,
@@ -52,6 +53,8 @@ from app.schemas.revision import (
 from app.services import campaign as campaign_service
 from app.services import product_matching
 from app.services import revision as revision_service
+from app.services.ai.dependencies import get_ai_revision_service
+from app.services.ai.revision_parser import AIRevisionService
 from app.services.campaign_parser import parse_campaign_text
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -201,6 +204,47 @@ async def undo_campaign_revision(
         revision=CampaignRevisionRead.model_validate(result.revision),
         draft_revision=result.draft_revision,
         idempotent=result.idempotent,
+    )
+
+
+@router.post("/{campaign_id}/revision-intent", response_model=AIRevisionProposalRead)
+async def create_revision_intent_proposal(
+    campaign_id: UUID,
+    payload: RevisionIntentRequest,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+    ai_service: AIRevisionService = Depends(get_ai_revision_service),
+) -> AIRevisionProposalRead:
+    """Parse natural language into a stored proposal; never mutate the campaign."""
+    return await ai_service.create_proposal(
+        session,
+        campaign_id=campaign_id,
+        market_id=market_id,
+        user_id=actor.id,
+        request=payload,
+    )
+
+
+@router.post(
+    "/{campaign_id}/revision-intent/{proposal_id}/apply",
+    response_model=AIRevisionApplyResult,
+)
+async def apply_revision_intent_proposal(
+    campaign_id: UUID,
+    proposal_id: UUID,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+    ai_service: AIRevisionService = Depends(get_ai_revision_service),
+) -> AIRevisionApplyResult:
+    """Apply server-stored actions through the deterministic AI-1 service."""
+    return await ai_service.apply_proposal(
+        session,
+        campaign_id=campaign_id,
+        proposal_id=proposal_id,
+        market_id=market_id,
+        user_id=actor.id,
     )
 
 

@@ -1,4 +1,5 @@
 from app.models.activity import ActivityLog
+from app.models.ai import AIRevisionProposal, AIUsageEvent
 from app.models.billing import MarketSubscription, StripeWebhookEvent
 from app.models.campaign import Campaign, CampaignItem, CampaignRevision, MatchingSuggestion
 from app.models.catalog import (
@@ -35,6 +36,8 @@ from app.models.whatsapp import (
 
 __all__ = [
     "ActivityLog",
+    "AIRevisionProposal",
+    "AIUsageEvent",
     "Brand",
     "BrandAlias",
     "Campaign",

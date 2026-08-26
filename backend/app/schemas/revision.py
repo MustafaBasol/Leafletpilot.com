@@ -12,48 +12,52 @@ RevisionStatus = Literal["applied", "undone"]
 ItemEmphasis = Literal["normal", "large", "hero"]
 
 
-class MoveItemAction(BaseModel):
+class StrictRevisionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MoveItemAction(StrictRevisionModel):
     type: Literal["move_item"]
     item_id: UUID
     target_position: int = Field(ge=1)
 
 
-class RemoveItemAction(BaseModel):
+class RemoveItemAction(StrictRevisionModel):
     type: Literal["remove_item"]
     item_id: UUID
 
 
-class RestoreItemAction(BaseModel):
+class RestoreItemAction(StrictRevisionModel):
     type: Literal["restore_item"]
     item_id: UUID
 
 
-class UpdatePriceAction(BaseModel):
+class UpdatePriceAction(StrictRevisionModel):
     type: Literal["update_price"]
     item_id: UUID
     price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     old_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
 
 
-class UpdateDisplayNameAction(BaseModel):
+class UpdateDisplayNameAction(StrictRevisionModel):
     type: Literal["update_display_name"]
     item_id: UUID
     display_name: str = Field(min_length=1, max_length=255)
 
 
-class SetHeroAction(BaseModel):
+class SetHeroAction(StrictRevisionModel):
     type: Literal["set_hero"]
     item_id: UUID
     is_hero: bool
 
 
-class SetItemEmphasisAction(BaseModel):
+class SetItemEmphasisAction(StrictRevisionModel):
     type: Literal["set_item_emphasis"]
     item_id: UUID
     emphasis: ItemEmphasis
 
 
-class ReplaceImageAction(BaseModel):
+class ReplaceImageAction(StrictRevisionModel):
     type: Literal["replace_image"]
     item_id: UUID
     image_id: UUID
@@ -72,7 +76,7 @@ RevisionAction = Annotated[
 ]
 
 
-class RevisionCommand(BaseModel):
+class RevisionCommand(StrictRevisionModel):
     client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     source: RevisionSource
     expected_revision: int = Field(ge=0)

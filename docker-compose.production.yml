@@ -93,6 +93,25 @@ services:
       TELEGRAM_HTTP_TIMEOUT_SECONDS: ${TELEGRAM_HTTP_TIMEOUT_SECONDS:-20}
       TELEGRAM_HTTP_MAX_ATTEMPTS: ${TELEGRAM_HTTP_MAX_ATTEMPTS:-1}
 
+      # AI-2 natural-language revision parsing. Disabled unless both kill
+      # switches are true and an isolated provider profile is configured.
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_REVISION_ENABLED: ${AI_REVISION_ENABLED:-false}
+      AI_REVISION_PROVIDER: ${AI_REVISION_PROVIDER:-openai_compatible}
+      AI_REVISION_MODEL: ${AI_REVISION_MODEL:-}
+      AI_COMPLEX_REVISION_PROVIDER: ${AI_COMPLEX_REVISION_PROVIDER:-}
+      AI_COMPLEX_REVISION_MODEL: ${AI_COMPLEX_REVISION_MODEL:-}
+      AI_FALLBACK_PROVIDER: ${AI_FALLBACK_PROVIDER:-}
+      AI_FALLBACK_MODEL: ${AI_FALLBACK_MODEL:-}
+      AI_OPENAI_COMPATIBLE_API_BASE_URL: ${AI_OPENAI_COMPATIBLE_API_BASE_URL:-https://api.openai.com/v1}
+      AI_OPENAI_COMPATIBLE_API_KEY: ${AI_OPENAI_COMPATIBLE_API_KEY:-}
+      AI_HTTP_TIMEOUT_SECONDS: ${AI_HTTP_TIMEOUT_SECONDS:-15}
+      AI_HTTP_MAX_ATTEMPTS: ${AI_HTTP_MAX_ATTEMPTS:-2}
+      AI_MAX_INSTRUCTION_LENGTH: ${AI_MAX_INSTRUCTION_LENGTH:-2000}
+      AI_MAX_ACTIONS_PER_REQUEST: ${AI_MAX_ACTIONS_PER_REQUEST:-20}
+      AI_PROPOSAL_EXPIRE_MINUTES: ${AI_PROPOSAL_EXPIRE_MINUTES:-15}
+      AI_REVISION_RATE_LIMIT_PER_MINUTE: ${AI_REVISION_RATE_LIMIT_PER_MINUTE:-5}
+
       # Central WhatsApp channel (Evolution API). Off by default. Evolution
       # API is NOT one of the services below — it is an external/self-hosted
       # dependency this container reaches over the `egress` network. See

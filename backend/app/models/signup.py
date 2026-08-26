@@ -19,7 +19,14 @@ SIGNUP_REQUEST_STATUSES = ("pending", "reviewing", "approved", "rejected", "prov
 # This tuple is the single source of truth: the constraint below and the
 # migration must both be derived from it, or a schema built from the models
 # (every DB-backed test) will reject rows the migrated database accepts.
-SIGNUP_THROTTLE_KEY_TYPES = ("ip", "email", "whatsapp_ip", "whatsapp_user", "whatsapp_sender")
+SIGNUP_THROTTLE_KEY_TYPES = (
+    "ip",
+    "email",
+    "whatsapp_ip",
+    "whatsapp_user",
+    "whatsapp_sender",
+    "ai_user",
+)
 
 
 class SignupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
