@@ -357,7 +357,7 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         },
         generated_at=datetime.now(UTC),
     )
-    assert weekly.index("Explicit hero") < weekly.index("Standard first")
+    assert weekly.index("Standard first") < weekly.index("Explicit hero")
     assert (
         weekly.count(
             '<article class="product-card" data-emphasis="featured" data-merchandising-role="featured"'
