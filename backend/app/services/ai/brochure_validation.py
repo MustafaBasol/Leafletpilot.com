@@ -21,6 +21,12 @@ def _norm(value: object) -> str:
 
 def _required_facts(snapshot: dict[str, Any]) -> list[str]:
     facts = [snapshot.get("market_name"), snapshot.get("title")]
+    profile = snapshot.get("market_profile") or {}
+    visibility = profile.get("visibility") or {}
+    facts.append(profile.get("name"))
+    for key in ("address", "phone", "website", "instagram", "facebook"):
+        if visibility.get(key):
+            facts.append(profile.get(key))
     header = snapshot.get("header") or {}
     facts.extend([header.get("validity_text"), header.get("footer_note")])
     for item in snapshot.get("items") or []:
@@ -46,7 +52,7 @@ def validate_generated_brochure(image_bytes: bytes, snapshot: dict[str, Any], *,
     try:
         import pytesseract  # optional deployment dependency; absence fails closed
         extracted = pytesseract.image_to_string(Image.open(BytesIO(image_bytes)), config="--psm 6")
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional OCR must fail closed
         report["checks"]["ocr_available"] = False
         report["reason"] = "ocr_unavailable_or_low_confidence"
         return BrochureValidationResult(False, report)

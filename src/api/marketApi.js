@@ -2,6 +2,8 @@ import { apiBaseUrl } from "./config.js";
 import { apiClient, apiRequest, ApiError } from "./client.js";
 import { getAccessToken } from "./authSession.js";
 
+export const getMarketSettings = (marketId) => apiClient.get("/market/settings", { marketId });
+export const updateMarketSettings = (payload, marketId) => apiClient.patch("/market/settings", payload, { marketId });
 export const getMarketLogo = (marketId) => apiClient.get("/market/logo", { marketId });
 export const uploadMarketLogo = (file, marketId) => apiRequest("/market/logo", { method: "PUT", body: file, headers: { "Content-Type": file.type }, marketId });
 export const removeMarketLogo = (marketId) => apiRequest("/market/logo", { method: "DELETE", marketId });

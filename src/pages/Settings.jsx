@@ -1,137 +1,110 @@
 import { useEffect, useRef, useState } from "react";
 import { getSelectedMarketId } from "../api/authSession.js";
 import { isRealApiEnabled } from "../api/config.js";
-import { fetchMarketLogo, getMarketLogo, removeMarketLogo, uploadMarketLogo } from "../api/marketApi.js";
-import { ApiStatus } from "../components/ApiStatus.jsx";
-import { marketSettings, outputFormats, templates } from "../data/mockData.js";
-import { getMarketPlan } from "../data/dataSource.js";
-import { Button, Card, Checkbox, Input, PageHeader, SelectPlaceholder } from "../components/ui/index.js";
+import { fetchMarketLogo, getMarketLogo, getMarketSettings, removeMarketLogo, updateMarketSettings, uploadMarketLogo } from "../api/marketApi.js";
+import { Button, Card, Checkbox, Input, PageHeader } from "../components/ui/index.js";
 
-function formatLimit(value) {
-  return value === null || value === undefined ? "Sınırsız" : value;
-}
+const emptySettings = {
+  name: "", address_line_1: "", address_line_2: "", postal_code: "", city: "", country_code: "FR",
+  phone: "", website_url: "", instagram_url: "", facebook_url: "",
+  brochure_preferences: { show_logo: true, show_address: false, show_phone: false, show_website: false, show_instagram: false, show_facebook: false },
+  has_logo: false,
+};
 
-function PlanUsageCard() {
-  const [plan, setPlan] = useState(null);
+function LogoControl({ marketId, hasLogo, onChanged }) {
+  const inputRef = useRef(null);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
-    getMarketPlan()
-      .then((response) => {
-        if (!cancelled) setPlan(response);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    let objectUrl = "";
+    async function load() {
+      if (!isRealApiEnabled || !marketId) return;
+      const status = await getMarketLogo(marketId);
+      if (status?.has_logo) {
+        objectUrl = URL.createObjectURL(await fetchMarketLogo(marketId));
+        setUrl(objectUrl);
+      } else setUrl("");
+    }
+    load().catch(() => setError("Logo yuklenemedi."));
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [marketId, hasLogo]);
 
-  if (!plan) return null;
-
-  return (
-    <Card title="Plan / Kullanım" className="span-12">
-      <div className="settings-form">
-        <p>
-          Mevcut plan: <strong>{plan.name}</strong>
-        </p>
-        <ul>
-          <li>
-            Aylık kampanya: {plan.monthly_campaigns_used} / {formatLimit(plan.monthly_campaigns_limit)}
-          </li>
-          <li>Aylık dışa aktarım limiti: {formatLimit(plan.monthly_exports_limit)}</li>
-          <li>Özel ürün limiti: {formatLimit(plan.private_products_limit)}</li>
-          <li>Özel şablon limiti: {formatLimit(plan.private_templates_limit)}</li>
-          <li>Çıktı formatları: {(plan.export_formats || []).join(", ").toUpperCase()}</li>
-        </ul>
-      </div>
-    </Card>
-  );
-}
-
-function MarketLogoCard() {
-  const inputRef = useRef(null);
-  const [logoUrl, setLogoUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const marketId = getSelectedMarketId();
-  async function load() {
-    if (!isRealApiEnabled || !marketId) return;
-    const status = await getMarketLogo(marketId);
-    if (status?.has_logo) { const blob = await fetchMarketLogo(marketId); setLogoUrl(URL.createObjectURL(blob)); }
-  }
-  useEffect(() => { load().catch(() => setMessage("Logo yüklenemedi.")); return () => { if (logoUrl) URL.revokeObjectURL(logoUrl); }; }, [marketId]);
   async function upload(event) {
-    const file = event.target.files?.[0]; if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { setMessage('PNG veya JPEG logo (en fazla 10 MB) seçin.'); return; }
-    try { setBusy(true); await uploadMarketLogo(file, marketId); await load(); setMessage('Market logosu güncellendi.'); } catch (error) { setMessage(error.message || 'Logo yüklenemedi.'); } finally { setBusy(false); event.target.value = ''; }
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      setError("PNG, JPEG veya WebP (en fazla 10 MB) secin.");
+      return;
+    }
+    try { setBusy(true); setError(""); await uploadMarketLogo(file, marketId); onChanged(); }
+    catch (cause) { setError(cause.message || "Logo yuklenemedi."); }
+    finally { setBusy(false); event.target.value = ""; }
   }
-  async function remove() { try { setBusy(true); await removeMarketLogo(marketId); setLogoUrl(''); setMessage('Market logosu kaldırıldı.'); } catch (error) { setMessage(error.message || 'Logo kaldırılamadı.'); } finally { setBusy(false); } }
-  return <Card title="Market logosu" className="span-4"><div className="settings-form">{logoUrl ? <img src={logoUrl} alt="Market logosu" style={{ maxWidth: 180, maxHeight: 80, objectFit: 'contain' }} /> : <p>Logo yok; broşür market adıyla oluşturulur.</p>}<input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={upload} /><div className="page-actions"><Button onClick={() => inputRef.current?.click()} disabled={busy}>{logoUrl ? 'Logoyu değiştir' : 'Logo yükle'}</Button>{logoUrl ? <Button variant="danger" onClick={remove} disabled={busy}>Logoyu kaldır</Button> : null}</div>{message ? <p className="inline-result">{message}</p> : null}</div></Card>;
+  async function remove() {
+    try { setBusy(true); setError(""); await removeMarketLogo(marketId); onChanged(); }
+    catch (cause) { setError(cause.message || "Logo kaldirilamadi."); }
+    finally { setBusy(false); }
+  }
+  return <div className="settings-form">
+    {url ? <img src={url} alt="Market logosu" style={{ maxWidth: 180, maxHeight: 80, objectFit: "contain" }} /> : <p>Logo yok; brosur market adiyla olusturulur.</p>}
+    <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={upload} aria-label="Market logosu yukle" />
+    <div className="page-actions"><Button onClick={() => inputRef.current?.click()} disabled={busy}>{url ? "Logoyu degistir" : "Logo yukle"}</Button>{url ? <Button variant="danger" onClick={remove} disabled={busy}>Logoyu kaldir</Button> : null}</div>
+    {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}
+  </div>;
 }
+
 export function Settings() {
-  const [settings, setSettings] = useState(marketSettings);
-  const [saved, setSaved] = useState(false);
+  const marketId = getSelectedMarketId();
+  const [settings, setSettings] = useState(emptySettings);
+  const [loading, setLoading] = useState(isRealApiEnabled);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
 
-  function updateField(field, value) {
-    setSettings((current) => ({ ...current, [field]: value }));
-    setSaved(false);
+  const load = async () => {
+    if (!isRealApiEnabled) { setSettings(emptySettings); setLoading(false); return; }
+    setLoading(true); setError("");
+    try { setSettings({ ...emptySettings, ...(await getMarketSettings(marketId)) }); }
+    catch (cause) { setError(cause.message || "Ayarlar yuklenemedi."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [marketId]);
+  const field = (name, value) => { setSettings((current) => ({ ...current, [name]: value })); setNotice(""); };
+  const preference = (name, value) => { setSettings((current) => ({ ...current, brochure_preferences: { ...current.brochure_preferences, [name]: value } })); setNotice(""); };
+  async function save() {
+    const { id, has_logo, logo_mime_type, ...payload } = settings;
+    void id; void has_logo; void logo_mime_type;
+    try { setSaving(true); setError(""); const saved = await updateMarketSettings(payload, marketId); setSettings({ ...emptySettings, ...saved }); setNotice("Ayarlar kaydedildi."); }
+    catch (cause) { setError(cause.message || "Ayarlar kaydedilemedi."); }
+    finally { setSaving(false); }
   }
 
-  function toggleFormat(label) {
-    setSettings((current) => {
-      const exists = current.defaultOutputFormats.includes(label);
-      return {
-        ...current,
-        defaultOutputFormats: exists
-          ? current.defaultOutputFormats.filter((format) => format !== label)
-          : [...current.defaultOutputFormats, label],
-      };
-    });
-    setSaved(false);
-  }
-
-  return (
-    <>
-      <PageHeader
-        title="Ayarlar"
-        description="Market marka bilgileri, varsayılan şablon ve çıktı tercihleri için basit frontend ayarları."
-        actions={
-          <Button variant="primary" onClick={() => setSaved(true)}>
-            Kaydet
-          </Button>
-        }
-      />
-      {saved ? <p className="inline-result">Ayarlar yerel olarak kaydedildi.</p> : null}
-      <section className="dashboard-grid">
-        <Card title="Market Ayarları" className="span-8">
-          <div className="settings-form">
-            <div className="logo-placeholder">{settings.logoInitials}</div>
-            <div className="form-grid">
-              <Input label="Market adı" value={settings.marketName} onChange={(event) => updateField("marketName", event.target.value)} />
-              <Input label="Ana renk" type="color" value={settings.primaryColor} onChange={(event) => updateField("primaryColor", event.target.value)} />
-              <Input label="İkincil renk" type="color" value={settings.secondaryColor} onChange={(event) => updateField("secondaryColor", event.target.value)} />
-              <SelectPlaceholder label="Varsayılan şablon" value={templates.find((template) => template.name === settings.defaultTemplate)?.name || settings.defaultTemplate} />
-              <SelectPlaceholder label="Para birimi" value={settings.currency} />
-              <SelectPlaceholder label="Dil" value={settings.language} />
-            </div>
-          </div>
-        </Card>
-        {isRealApiEnabled ? <MarketLogoCard /> : null}
-        <Card title="Varsayılan Çıktılar" className="span-4">
-          <div className="checkbox-grid single-column">
-            {outputFormats.map((format) => (
-              <Checkbox
-                key={format.id}
-                label={format.label}
-                checked={settings.defaultOutputFormats.includes(format.label)}
-                onChange={() => toggleFormat(format.label)}
-              />
-            ))}
-          </div>
-        </Card>
-        <PlanUsageCard />
-        <ApiStatus />
-      </section>
-    </>
-  );
+  return <>
+    <PageHeader title="Ayarlar" description="Burada girdiginiz bilgiler yeni brosurlerde otomatik kullanilacaktir." actions={<Button variant="primary" onClick={save} disabled={loading || saving}>{saving ? "Kaydediliyor..." : "Kaydet"}</Button>} />
+    {notice ? <p className="inline-result inline-result-success" role="status">{notice}</p> : null}
+    {error ? <p className="inline-result inline-result-warning" role="alert">{error}</p> : null}
+    <section className="dashboard-grid">
+      <Card title="GENEL" className="span-8"><div className="form-grid">
+        <Input label="Market adi" value={settings.name} onChange={(event) => field("name", event.target.value)} required />
+        <Input label="Telefon" value={settings.phone || ""} onChange={(event) => field("phone", event.target.value)} />
+        <Input label="Adres" value={settings.address_line_1 || ""} onChange={(event) => field("address_line_1", event.target.value)} />
+        <Input label="Adres satiri 2" value={settings.address_line_2 || ""} onChange={(event) => field("address_line_2", event.target.value)} />
+        <Input label="Posta kodu" value={settings.postal_code || ""} onChange={(event) => field("postal_code", event.target.value)} />
+        <Input label="Sehir" value={settings.city || ""} onChange={(event) => field("city", event.target.value)} />
+        <Input label={"\u00dclke kodu"} value={settings.country_code || ""} onChange={(event) => field("country_code", event.target.value)} maxLength="2" />
+        <Input label="Web sitesi" type="url" value={settings.website_url || ""} onChange={(event) => field("website_url", event.target.value)} />
+      </div></Card>
+      <Card title="MARKA & SOSYAL" className="span-4"><LogoControl marketId={marketId} hasLogo={settings.has_logo} onChanged={load} /><div className="settings-form"><Input label="Instagram" value={settings.instagram_url || ""} onChange={(event) => field("instagram_url", event.target.value)} /><Input label="Facebook" value={settings.facebook_url || ""} onChange={(event) => field("facebook_url", event.target.value)} /><p className="table-hint">Instagram ve Facebook yalnizca brosurde goster etkinlestirildiginde eklenir.</p></div></Card>
+      <Card title={"BRO\u015e\u00dcRDE G\u00d6STER"} className="span-12"><p className="table-hint">Market adi brosurlerde her zaman gosterilir. Diger bilgilerin gorunurlugunu buradan secebilirsiniz.</p><div className="checkbox-grid">
+        <Checkbox label="Logo" checked={settings.brochure_preferences.show_logo} onChange={(event) => preference("show_logo", event.target.checked)} />
+        <Checkbox label="Adres" checked={settings.brochure_preferences.show_address} onChange={(event) => preference("show_address", event.target.checked)} />
+        <Checkbox label="Telefon" checked={settings.brochure_preferences.show_phone} onChange={(event) => preference("show_phone", event.target.checked)} />
+        <Checkbox label="Web sitesi" checked={settings.brochure_preferences.show_website} onChange={(event) => preference("show_website", event.target.checked)} />
+        <Checkbox label="Instagram" checked={settings.brochure_preferences.show_instagram} onChange={(event) => preference("show_instagram", event.target.checked)} />
+        <Checkbox label="Facebook" checked={settings.brochure_preferences.show_facebook} onChange={(event) => preference("show_facebook", event.target.checked)} />
+      </div></Card>
+    </section>
+  </>;
 }

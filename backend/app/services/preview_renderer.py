@@ -228,14 +228,18 @@ def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetim
         price_size += 7
     title_size = 50 if config.get("headline_emphasis") == "high" else 42
     accent = config.get("primary_color") or config.get("accent_color") or "#c1121f"; dark = config.get("accent_dark") or "#003049"; soft = config.get("secondary_color") or config.get("accent_soft_color") or "#fff1f2"
-    logos = _logo(header.get("market_logo"), payload.get("market_name") or "LeafletPilot", "market-logo")
+    market_name = payload.get("market_name") or "LeafletPilot"
+    logos = _logo(header.get("market_logo"), "", "market-logo") + f'<span class="market-name">{_text(market_name)}</span>'
     if config.get("show_additional_logos", True):
         logos += "".join(_logo(x, "", "header-logo") for x in (header.get("header_logos") or []))
     payments = "".join(_logo(x, "", "payment-icon") for x in (header.get("payment_icons") or [])) if config.get("show_payment_icons", True) else ""
     stock = header.get("stock_message")
     preview_class = "compact-weekly" if compact else "premium-market"
     template_class = "template-compact-weekly" if compact else "template-premium-market"
-    footer = (header.get("footer_note") or copy["stock"]) if config.get("show_footer", True) else ""
+    footer_parts = list(payload.get("footer_contacts") or [])
+    if config.get("show_footer", True):
+        footer_parts.append(header.get("footer_note") or copy["stock"])
+    footer = " | ".join(part for part in footer_parts if part)
     return f'''<!-- preview-{preview_class} template-{_attr(payload.get("template_slug") or slug)} {template_class} {layout_key} layout-{columns}x{rows} products-{len(items)} --><!doctype html><html lang="{_attr(language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
 *{{box-sizing:border-box}}@page{{size:A4 portrait;margin:0}}html,body{{margin:0;width:1240px;height:1754px;background:#fffaf0;color:#16202a;font-family:Arial,Helvetica,sans-serif}}.preview-document{{width:1240px;height:1754px;padding:38px;display:flex;flex-direction:column;overflow:hidden}}.hero{{height:190px;display:flex;justify-content:space-between;padding:24px 28px;border-radius:12px;background:linear-gradient(135deg,{accent},{dark});color:#fff;overflow:hidden}}.logos{{display:flex;gap:8px;align-items:center;height:38px;margin-bottom:10px}}.market-logo,.header-logo,.payment-icon{{max-height:34px;max-width:140px;object-fit:contain;background:#fff;padding:3px;border-radius:4px}}.market-name{{font-size:18px;font-weight:900}}.eyebrow{{margin:0 0 6px;color:#ffe8b7;font-size:13px;font-weight:700;text-transform:uppercase}}h1{{margin:0;font-size:{title_size}px;line-height:1.05;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.meta{{max-width:260px;text-align:right;font-size:15px;font-weight:700;overflow-wrap:anywhere}}.validity,.stock{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:17px}}.stock{{margin-top:8px;font-size:12px;line-height:14px}}.section-title{{height:38px;display:flex;justify-content:space-between;align-items:end;margin-top:16px;color:{dark};font-size:20px;font-weight:800}}.product-grid{{height:{grid}px;display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));grid-template-rows:repeat({rows},max-content);align-content:start;align-items:start;gap:{gap}px;margin-top:12px;min-height:0;overflow:hidden}}.product-card{{display:flex;flex-direction:column;align-self:start;min-width:0;height:max-content;min-height:0;padding:{pad}px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 5px 14px #0f172a14}}.template-compact-weekly .product-card{{border-radius:6px;box-shadow:none;border-top:4px solid {accent}}}.template-premium-market .product-card{{border-radius:18px;box-shadow:0 10px 24px #0f172a1c}}.product-stage{{width:100%;height:{image}px;flex:0 0 {image}px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:9px;background:#fff}}.product-image,.image-placeholder{{display:block;width:100%;height:100%;object-fit:contain;object-position:center;border-radius:7px;background:#fff}}.product-image.photo{{padding:4px;border:1px solid #eef0f2}}.product-image.cutout{{filter:drop-shadow(0 8px 7px #0f172a20)}}.image-placeholder{{display:flex;align-items:center;justify-content:center;background:{soft};color:#64748b;font-size:12px;font-weight:700}}.product-brand,.product-name,.product-unit,.product-stock{{overflow-wrap:anywhere;word-break:break-word}}.product-brand{{margin:8px 0 0;color:{accent};font-size:10px;line-height:14px;font-weight:800;text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}}.product-name{{margin:4px 0 0;font-size:{name_size}px;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.product-unit,.product-stock{{margin:4px 0 0;color:#64748b;font-size:11px;line-height:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}.price-row{{display:flex;min-width:0;width:100%;align-items:flex-start;flex-direction:column;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}}.price{{color:{accent};font-size:{price_size}px;line-height:1.05;font-weight:900;display:block;width:100%;min-width:0;max-width:100%;white-space:normal;overflow:hidden;overflow-wrap:anywhere;word-break:break-all}}.price-secondary{{display:flex;align-items:center;gap:6px;max-width:100%;min-height:18px}}.old-price{{color:#64748b;font-size:12px;text-decoration:line-through;white-space:nowrap}}.promo-badge{{padding:3px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.empty-state{{grid-column:1/-1;display:flex;align-items:center;justify-content:center;color:#64748b}}.footer{{height:46px;display:flex;justify-content:space-between;margin-top:auto;padding-top:10px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;overflow:hidden}}.footer-note{{height:28px;line-height:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}}.payment-icons{{display:flex;gap:6px;align-items:center}}</style></head><body><main class="preview-document preview-{_attr(slug)} {template_class}"><header class="hero"><div><div class="logos">{logos}</div><p class="eyebrow">{_text(header.get("promo_title") or payload.get("template_name") or "Premium Market")}</p><h1 data-clamp-enabled="true" data-clamp-lines="2">{_text(title)}</h1></div><div class="meta"><div class="validity" data-clamp-enabled="true" data-clamp-lines="2">{_text(validity)}</div>{f'<div class="stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(stock)}</div>' if stock else ''}</div></header><div class="section-title"><strong>{_text(copy["offers"])}</strong><span>{len(items)} {_text(copy["products"])}</span></div><section class="product-grid">{cards}</section>{f'<footer class="footer"><span class="footer-note" data-clamp-enabled="true" data-clamp-lines="2">{_text(footer)}</span><span class="payment-icons">{payments}</span></footer>' if config.get("show_footer", True) else ''}</main></body></html>'''
 
@@ -246,12 +250,15 @@ def _live_payload(
     *,
     include_applied_intelligence: bool = True,
 ) -> dict[str, Any]:
+    from app.services.market_profile import market_brochure_profile, profile_footer_lines
+
     config = dict(template.config_json or {}) if template else {}
     market = campaign.market
+    market_profile = market_brochure_profile(market)
     builder_config = dict(campaign.builder_config_json or {})
     config = {**dict(getattr(market, "promo_profile_json", None) or {}), **config, **builder_config}
-    header = {k: config.get(k) for k in ("market_logo", "header_logos", "payment_icons", "promo_title", "validity_text", "stock_message", "footer_note")}
-    header["market_logo"] = header.get("market_logo") or getattr(market, "logo_storage_key", None) or getattr(market, "logo_url", None)
+    header = {k: config.get(k) for k in ("header_logos", "payment_icons", "promo_title", "validity_text", "stock_message", "footer_note")}
+    header["market_logo"] = market_profile.get("logo_key")
     header["promo_title"] = builder_config.get("subtitle") or header.get("promo_title")
     header["footer_note"] = builder_config.get("footer") or header.get("footer_note")
     configured_layout = config.get("layout") or getattr(template, "slug", None) or "promo-4"
@@ -260,7 +267,7 @@ def _live_payload(
     layout_family = configured_layout if configured_layout in {"premium-market", "compact-weekly"} else None
     if configured_layout not in LAYOUTS and configured_layout not in LAYOUT_ALIASES and configured_layout not in SUPERMARKET_LAYOUTS:
         configured_layout = "promo-9" if item_count <= 9 else "promo-16"
-    result = {"contract_version": 2, "template_id": str(template.id) if template else None, "template_version": getattr(template, "version", None), "template_name": getattr(template, "name", None), "template_slug": configured_layout, "layout_family": layout_family, "template_config": config, "campaign_id": str(campaign.id), "market_id": str(campaign.market_id), "title": builder_config.get("headline") or campaign.title, "language": campaign.language, "currency": campaign.currency, "market_name": getattr(market, "name", None), "header": header, "builder_config": builder_config, "items": []}
+    result = {"contract_version": 3, "template_id": str(template.id) if template else None, "template_version": getattr(template, "version", None), "template_name": getattr(template, "name", None), "template_slug": configured_layout, "layout_family": layout_family, "template_config": config, "campaign_id": str(campaign.id), "market_id": str(campaign.market_id), "title": builder_config.get("headline") or campaign.title, "language": campaign.language, "currency": campaign.currency, "market_name": market_profile.get("name"), "market_profile": market_profile, "footer_contacts": profile_footer_lines(market_profile), "header": header, "builder_config": builder_config, "items": []}
     for item in sorted(visible_items, key=lambda x: (x.sort_order, str(x.id))):
         mp = getattr(item, "_market_product", None) or item.market_product; product = item.product; effective = resolve_effective_product(product, mp)
         global_image = next((i for i in (getattr(product, "images", []) or []) if i.is_primary and getattr(i, "quality_status", None) != "missing"), None)
@@ -463,8 +470,8 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
     header = payload.get("header") or {}
     title = payload.get("title") or "Campaign"
     validity = header.get("validity_text") or generated_at.strftime("%d.%m.%Y")
-    market_fallback = (payload.get("market_name") or "MARKET") if config["show_market_name"] else ""
-    logos = _logo(header.get("market_logo"), market_fallback, "market-logo")
+    market_name = payload.get("market_name") or "MARKET"
+    logos = _logo(header.get("market_logo"), "", "market-logo") + f'<span class="market-name">{_text(market_name)}</span>'
     if config.get("show_additional_logos", True):
         logos += "".join(_logo(value, "", "header-logo") for value in (header.get("header_logos") or [])[:2])
     payments = "".join(_logo(value, "", "payment-icon") for value in (header.get("payment_icons") or [])) if config.get("show_payment_icons", True) else ""
@@ -474,7 +481,10 @@ def _render_supermarket_payload_html(payload: dict[str, Any], *, generated_at: d
     )
     stock = header.get("stock_message") if config.get("show_stock_message", True) else ""
     copy = LOCALIZED_COPY.get(str(payload.get("language") or "tr").lower()[:2], LOCALIZED_COPY["en"])
-    footer_note = (header.get("footer_note") or copy["stock"]) if config.get("show_footer_note", True) else ""
+    footer_parts = list(payload.get("footer_contacts") or [])
+    if config.get("show_footer_note", True):
+        footer_parts.append(header.get("footer_note") or copy["stock"])
+    footer_note = " | ".join(part for part in footer_parts if part)
     stock_html = f'<div class="stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(stock)}</div>' if stock else ""
     title_html = f'<h1 data-clamp-enabled="true" data-clamp-lines="2">{_text(title)}</h1>' if config["show_header_title"] else ""
     footer_html = f'<footer class="footer"><span class="footer-note" data-clamp-enabled="true" data-clamp-lines="1">{_text(footer_note)}</span><span class="payment-icons">{payments}</span></footer>' if config["show_footer"] else ""
