@@ -71,7 +71,6 @@ class OpenAICompatibleProvider:
                     "schema": schema.model_json_schema(),
                 },
             },
-            "temperature": 0,
         }
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
         for attempt in range(self._max_attempts):
