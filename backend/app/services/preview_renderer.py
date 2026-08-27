@@ -77,30 +77,35 @@ def _apply_campaign_intelligence(
     items: list[dict[str, Any]],
     builder_config: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str], str] | None:
+    """Apply recommendation treatments without changing campaign item order.
+
+    _live_payload supplies items in CampaignItem.sort_order. Recommendations
+    describe visual treatment only; reconstructing their recommendation order
+    here would make metadata silently override an explicit campaign revision.
+    """
     plan = builder_config.get("campaign_intelligence")
     if not isinstance(plan, dict) or plan.get("engineVersion") != "campaign-intelligence-v1":
         return None
     recommendations = plan.get("products")
     if not isinstance(recommendations, list):
         return None
-    by_id = {str(item.get("id")): item for item in items}
+    recommendations_by_id = {
+        str(recommendation.get("productId")): recommendation
+        for recommendation in recommendations
+        if isinstance(recommendation, dict) and recommendation.get("productId")
+    }
     reduced_ids = {str(value) for value in builder_config.get("reduced_emphasis_item_ids", [])}
     ordered: list[dict[str, Any]] = []
     roles: list[str] = []
-    seen: set[str] = set()
-    for recommendation in recommendations:
-        if not isinstance(recommendation, dict):
-            continue
-        product_id = str(recommendation.get("productId") or "")
-        item = by_id.get(product_id)
-        if item is None:
-            continue
+    for position, item in enumerate(items):
+        product_id = str(item.get("id"))
+        recommendation = recommendations_by_id.get(product_id, {})
         role = str(recommendation.get("role") or "standard")
         if role not in {"hero", "featured", "standard", "support"}:
             role = "standard"
         if product_id in reduced_ids:
             role = "support"
-        if item.get("is_hero") or item.get("emphasis") == "featured":
+        if item.get("is_hero") or item.get("emphasis") in {"hero", "featured"}:
             role = "hero"
         size = str(recommendation.get("recommendedSize") or "md")
         if role == "hero":
@@ -114,21 +119,11 @@ def _apply_campaign_intelligence(
             "price_treatment": "hero-panel" if role == "hero" else "surface-accent",
             "image_treatment": {"xl": "hero", "lg": "large", "md": "medium", "sm": "compact"}.get(size, "medium"),
             "group_key": recommendation.get("groupKey"),
-            "position_hint": len(ordered),
+            "position_hint": position,
             "engine_version": plan.get("engineVersion"),
         }
         ordered.append({**item, "badge": _intelligence_badge(item, recommendation), "_merchandising": merchandising})
         roles.append(role)
-        seen.add(product_id)
-    for item in items:
-        if str(item.get("id")) not in seen:
-            ordered.append(item)
-            roles.append("featured" if item.get("emphasis") == "featured" else "standard")
-    explicit = next((index for index, item in enumerate(ordered) if item.get("is_hero") or item.get("emphasis") == "featured"), None)
-    if explicit not in (None, 0):
-        ordered.insert(0, ordered.pop(explicit))
-        roles.insert(0, roles.pop(explicit))
-        roles[0] = "hero"
     composition = str((plan.get("strategy") or {}).get("composition") or "balanced_grid")
     if composition not in {"hero_plus_grid", "balanced_grid", "dense_value_grid"}:
         composition = "balanced_grid"
@@ -138,19 +133,13 @@ def _apply_campaign_intelligence(
 def _merchandising_sequence(
     items: list[dict[str, Any]], density_name: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Resolve stable retail roles; an explicit featured item leads the sequence."""
+    """Assign visual roles while preserving the supplied campaign sequence."""
     ordered = list(items)
     pattern = MERCHANDISING_ROLE_PATTERNS[density_name]
-    explicit = next(
-        (index for index, item in enumerate(ordered) if item.get("emphasis") == "featured"),
-        None,
-    )
-    if explicit is not None:
-        ordered.insert(0, ordered.pop(explicit))
     roles = [pattern[index] if index < len(pattern) else pattern[-1] for index in range(len(ordered))]
-    if explicit is not None and roles:
-        roles = ["secondary" if role == "featured" else role for role in roles]
-        roles[0] = "featured"
+    for index, item in enumerate(ordered):
+        if item.get("is_hero") or item.get("emphasis") in {"hero", "large", "featured"}:
+            roles[index] = "featured"
     return ordered, roles
 
 
