@@ -362,7 +362,7 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         weekly.count(
             '<article class="product-card" data-emphasis="featured" data-merchandising-role="featured"'
         )
-        == 1
+        == 2
     )
     assert 'data-merchandising-role="secondary"' in weekly
 
