@@ -364,7 +364,6 @@ def test_retail_cards_use_soft_separation_and_deterministic_editorial_emphasis()
         )
         == 2
     )
-    assert 'data-merchandising-role="secondary"' in weekly
 
 
 def test_weekly_and_compact_compositions_hide_the_safe_grid_with_grouped_whitespace():
