@@ -514,6 +514,11 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
         )
     else:
         smart_role = None
+    # Dense templates retain a leading visual anchor without changing the DOM
+    # sequence. A requested hero at another position keeps its own bounded
+    # hero treatment through data-smart-role instead.
+    if merchandising and density["name"] != "editorial" and index == 0:
+        role = "featured"
     item_emphasis = item.get("emphasis")
     emphasis = (
         "featured"
@@ -737,6 +742,7 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .composition-catalogue-grid .product-card:first-child[data-smart-role="hero"] .promo-card-image{height:215px;flex-basis:215px}
 .composition-catalogue-grid .product-card:first-child[data-smart-role="hero"] .price{font-size:34px}
 :is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-smart-role="hero"]{outline:4px solid color-mix(in srgb,var(--price-panel,#ffd928) 72%,transparent);outline-offset:-4px}
+:is(.composition-weekly-grid,.composition-catalogue-grid) .product-card:not(:first-child)[data-smart-role="hero"] .promo-card-image{height:170px;flex-basis:170px}
 .smart-strategy-hero-right .product-grid,.smart-strategy-hero-top-right .product-grid,.smart-strategy-hero-corner-right .product-grid{direction:rtl}
 .smart-strategy-hero-right .product-card,.smart-strategy-hero-top-right .product-card,.smart-strategy-hero-corner-right .product-card{direction:ltr}
 .smart-composition .product-card[data-smart-role="support"]{opacity:.94}
