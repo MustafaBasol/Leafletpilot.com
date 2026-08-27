@@ -22,6 +22,10 @@ import {
   getCampaignItemImageOptions,
   undoCampaignRevision,
   updateCampaignDetail,
+  getProfessionalizationHistory,
+  createProfessionalizationRun,
+  applyProfessionalizationRun,
+  restoreOriginalProfessionalization,
 } from "../data/dataSource.js";
 import {
   Badge,
@@ -258,6 +262,8 @@ export function CampaignDetail({ campaignId, view = "" }) {
   const [aiProposal, setAiProposal] = useState(null);
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState("");
+  const [professionalization, setProfessionalization] = useState({ runs: [], active_run_id: null });
+  const [professionalizationGoal, setProfessionalizationGoal] = useState("");
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
   const canMutateCurrentCampaign = canEditCampaigns && !campaign.frozenAt;
@@ -366,6 +372,30 @@ export function CampaignDetail({ campaignId, view = "" }) {
     return `${prefix}-${value}`;
   }
 
+  async function loadProfessionalization() {
+    if (!isRealApiEnabled || !campaign.frozenAt) return;
+    setProfessionalization(await getProfessionalizationHistory(campaignId));
+  }
+
+  async function createProfessionalPlan(event) {
+    event.preventDefault();
+    try {
+      setAiLoading("professionalization-create");
+      const run = await createProfessionalizationRun(campaignId, { client_request_id: `professionalize-${Date.now()}`, design_goal: professionalizationGoal || null });
+      setProfessionalization((current) => ({ ...current, runs: [run, ...(current.runs || [])] }));
+      setNotice("Profesyonel tasarım önerisi hazır.");
+    } catch (error) { setAiError(aiFailureMessage(error)); } finally { setAiLoading(""); }
+  }
+
+  async function applyProfessionalPlan(runId) {
+    try { setAiLoading("professionalization-apply"); await applyProfessionalizationRun(campaignId, runId); await loadProfessionalization(); await loadPreview(); setNotice("Profesyonel tasarım uygulandı."); }
+    catch (error) { setAiError(aiFailureMessage(error)); } finally { setAiLoading(""); }
+  }
+
+  async function restoreOriginalDesign() {
+    try { setAiLoading("professionalization-original"); await restoreOriginalProfessionalization(campaignId); await loadProfessionalization(); await loadPreview(); setNotice("Onaylı özgün tasarım geri yüklendi."); }
+    catch (error) { setAiError(aiFailureMessage(error)); } finally { setAiLoading(""); }
+  }
   async function prepareAIRevision(event) {
     event.preventDefault();
     const instruction = aiInstruction.trim();
@@ -937,6 +967,18 @@ export function CampaignDetail({ campaignId, view = "" }) {
         </Card>
         </div>
 
+
+        {campaign.frozenAt && isRealApiEnabled ? (
+          <Card title="Onay sonrası profesyonelleştirme" className="span-12">
+            <p>AI yalnızca sınırlandırılmış görsel plan önerir; ürün, fiyat ve sıra değişmez.</p>
+            <form className="ai-revision-form" onSubmit={createProfessionalPlan}>
+              <input value={professionalizationGoal} onChange={(event) => setProfessionalizationGoal(event.target.value)} maxLength={300} placeholder="İsteğe bağlı görsel hedef" />
+              <Button variant="primary" type="submit" disabled={aiLoading === "professionalization-create"}>Profesyonel öneri hazırla</Button>
+              <Button type="button" disabled={aiLoading === "professionalization-original"} onClick={restoreOriginalDesign}>Özgün onaylı tasarımı kullan</Button>
+            </form>
+            {(professionalization.runs || []).map((run) => <div className="ai-revision-proposal" key={run.id}><strong>{run.is_active ? "Etkin profesyonel plan" : "Plan sürümü"}</strong><p>{(run.summary || []).join(" · ") || "Sınırlandırılmış görsel düzen"}</p>{!run.is_active ? <Button onClick={() => applyProfessionalPlan(run.id)} disabled={aiLoading === "professionalization-apply"}>Bu planı uygula</Button> : null}</div>)}
+          </Card>
+        ) : null}
         <Card title="Eksik Ürünler" className="span-4">
           <div className="stack-list">
             {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren ürün yok.</p> : null}

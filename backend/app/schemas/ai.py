@@ -69,3 +69,79 @@ class AIRevisionProposalRead(BaseModel):
 class AIRevisionApplyResult(BaseModel):
     proposal: AIRevisionProposalRead
     revision: RevisionResult
+
+
+ProfessionalizationStatus = Literal["ready", "applied", "superseded", "failed"]
+
+
+class ProfessionalizationRequest(BaseModel):
+    """Explicit request only; no commercial facts are accepted from the client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    design_goal: str | None = Field(default=None, max_length=300)
+
+
+class ProfessionalizationEmphasis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position: int = Field(ge=1, le=16)
+    treatment: Literal["featured", "support"]
+
+
+class AIProfessionalizationPlanEnvelope(BaseModel):
+    """Strict, bounded design-direction contract consumed by our renderer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ready", "unsupported"]
+    header_style: Literal["burst", "band", "minimal"] | None = None
+    card_style: Literal["shadow", "outlined", "rounded"] | None = None
+    price_style: Literal["panel", "ticket", "split"] | None = None
+    badge_style: Literal["pill", "sticker", "burst", "ribbon"] | None = None
+    image_treatment: Literal["stage", "cutout", "photo"] | None = None
+    price_prominence: Literal["normal", "high"] = "normal"
+    headline_emphasis: Literal["normal", "high"] = "normal"
+    emphasis: list[ProfessionalizationEmphasis] = Field(default_factory=list, max_length=3)
+    rationale: list[str] = Field(default_factory=list, max_length=4)
+    unsupported_reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_status_contract(self) -> AIProfessionalizationPlanEnvelope:
+        visual_fields = (self.header_style, self.card_style, self.price_style, self.badge_style, self.image_treatment)
+        if self.status == "ready" and not any(visual_fields) and not self.emphasis:
+            raise ValueError("ready output requires a bounded visual treatment")
+        if self.status == "unsupported" and (self.emphasis or not self.unsupported_reason):
+            raise ValueError("unsupported output requires a reason and no emphasis")
+        if len({entry.position for entry in self.emphasis}) != len(self.emphasis):
+            raise ValueError("emphasis positions must be unique")
+        return self
+
+
+class ProfessionalizationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    campaign_id: UUID
+    snapshot_hash: str
+    provider: str
+    model: str
+    status: ProfessionalizationStatus
+    is_active: bool
+    plan: AIProfessionalizationPlanEnvelope
+    summary: list[str]
+    applied_at: datetime | None
+    created_at: datetime
+    idempotent: bool = False
+
+
+class ProfessionalizationApplyResult(BaseModel):
+    run: ProfessionalizationRunRead
+    original_available: bool = True
+
+
+class ProfessionalizationHistoryRead(BaseModel):
+    active_run_id: UUID | None = None
+    original_available: bool = True
+    runs: list[ProfessionalizationRunRead] = Field(default_factory=list)

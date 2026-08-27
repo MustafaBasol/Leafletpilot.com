@@ -5,6 +5,7 @@ from functools import lru_cache
 from app.core.config import settings
 from app.services.ai.openai_compatible import OpenAICompatibleProvider
 from app.services.ai.orchestrator import AIOrchestrator
+from app.services.ai.professionalization import AIProfessionalizationService
 from app.services.ai.registry import AIProviderRegistry
 from app.services.ai.revision_parser import AIRevisionService
 from app.services.ai.router import AIModelRouter
@@ -49,3 +50,22 @@ def get_ai_revision_service() -> AIRevisionService:
         }
     )
     return AIRevisionService(AIOrchestrator(registry, router))
+
+
+@lru_cache
+def get_ai_professionalization_service() -> AIProfessionalizationService:
+    registry = AIProviderRegistry()
+    registry.register(
+        OpenAICompatibleProvider(
+            api_base_url=settings.ai_openai_compatible_api_base_url,
+            api_key=settings.ai_openai_compatible_api_key.get_secret_value(),
+            timeout_seconds=settings.ai_http_timeout_seconds,
+            max_attempts=settings.ai_http_max_attempts,
+        )
+    )
+    provider = settings.ai_professionalization_provider or settings.ai_revision_provider
+    model = settings.ai_professionalization_model or settings.ai_revision_model
+    routes = [AIModelRoute(AICapability.COMPLEX_DESIGN_ANALYSIS, provider, model)]
+    if settings.ai_professionalization_fallback_provider and settings.ai_professionalization_fallback_model:
+        routes.append(AIModelRoute(AICapability.COMPLEX_DESIGN_ANALYSIS, settings.ai_professionalization_fallback_provider, settings.ai_professionalization_fallback_model))
+    return AIProfessionalizationService(AIOrchestrator(registry, AIModelRouter({AICapability.COMPLEX_DESIGN_ANALYSIS: routes})))

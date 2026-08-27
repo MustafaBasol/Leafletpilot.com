@@ -35,6 +35,7 @@ AI_PROPOSAL_STATUSES = (
     "failed",
 )
 AI_USAGE_STATUSES = ("success", "failed", "timeout")
+AI_PROFESSIONALIZATION_STATUSES = ("ready", "applied", "superseded", "failed")
 
 
 class AIRevisionProposal(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -78,6 +79,38 @@ class AIRevisionProposal(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     created_by_user: Mapped[User] = relationship()
     revision: Mapped[CampaignRevision | None] = relationship()
 
+
+class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """Versioned, tenant-scoped visual plan layered over a frozen snapshot."""
+
+    __tablename__ = "ai_professionalization_runs"
+    __table_args__ = (
+        CheckConstraint(f"status in {AI_PROFESSIONALIZATION_STATUSES}", name="ck_ai_professionalization_runs_status"),
+        UniqueConstraint("market_id", "created_by_user_id", "client_request_id", name="uq_ai_professionalization_runs_market_user_request"),
+        Index("ix_ai_professionalization_runs_market_campaign", "market_id", "campaign_id"),
+        Index("ix_ai_professionalization_runs_campaign_active", "campaign_id", "is_active"),
+        Index("ix_ai_professionalization_runs_market_created_at", "market_id", "created_at"),
+    )
+
+    market_id: Mapped[UUID] = mapped_column(ForeignKey("markets.id"), nullable=False)
+    campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    client_request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    capability: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
+    is_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    design_goal: Mapped[str | None] = mapped_column(Text)
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    summary_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    market: Mapped[Market] = relationship()
+    campaign: Mapped[Campaign] = relationship(back_populates="professionalization_runs")
+    created_by_user: Mapped[User] = relationship()
 
 class AIUsageEvent(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """Prompt-free provider usage and failure telemetry."""

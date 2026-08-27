@@ -1,5 +1,5 @@
 from app.models.activity import ActivityLog
-from app.models.ai import AIRevisionProposal, AIUsageEvent
+from app.models.ai import AIProfessionalizationRun, AIRevisionProposal, AIUsageEvent
 from app.models.billing import MarketSubscription, StripeWebhookEvent
 from app.models.campaign import Campaign, CampaignItem, CampaignRevision, MatchingSuggestion
 from app.models.catalog import (
@@ -35,9 +35,16 @@ from app.models.whatsapp import (
 )
 
 __all__ = [
-    "ActivityLog",
+    "INVITATION_STATUSES",
+    "MARKET_USER_ROLES",
+    "SIGNUP_REQUEST_STATUSES",
+    "WHATSAPP_IDENTITY_STATUSES",
+    "WHATSAPP_SESSION_STATES",
+    "WHATSAPP_VERIFICATION_STATUSES",
+    "AIProfessionalizationRun",
     "AIRevisionProposal",
     "AIUsageEvent",
+    "ActivityLog",
     "Brand",
     "BrandAlias",
     "Campaign",
@@ -50,12 +57,10 @@ __all__ = [
     "EmailChangeToken",
     "ExportJob",
     "IncomingMessage",
-    "INVITATION_STATUSES",
-    "MARKET_USER_ROLES",
     "Market",
     "MarketCatalogImport",
-    "MarketProduct",
     "MarketInvitation",
+    "MarketProduct",
     "MarketSubscription",
     "MarketUser",
     "MatchingSuggestion",
@@ -65,19 +70,15 @@ __all__ = [
     "Product",
     "ProductAlias",
     "ProductImage",
-    "SIGNUP_REQUEST_STATUSES",
     "SignupRequest",
     "SignupThrottle",
     "StripeWebhookEvent",
-    "Template",
     "TelegramAccount",
     "TelegramConversationState",
     "TelegramUpdate",
+    "Template",
     "User",
     "UserWhatsAppIdentity",
-    "WHATSAPP_IDENTITY_STATUSES",
-    "WHATSAPP_SESSION_STATES",
-    "WHATSAPP_VERIFICATION_STATUSES",
     "WhatsAppIntegrationState",
     "WhatsAppSession",
     "WhatsAppVerification",
