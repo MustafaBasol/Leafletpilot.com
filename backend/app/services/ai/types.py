@@ -12,6 +12,7 @@ class AICapability(StrEnum):
     COMPLEX_DESIGN_ANALYSIS = "complex_design_analysis"
     IMAGE_GENERATION = "image_generation"
     IMAGE_EDITING = "image_editing"
+    BROCHURE_IMAGE_PROFESSIONALIZATION = "brochure_image_professionalization"
 
 
 @dataclass(frozen=True)

@@ -41,6 +41,8 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     country_code: Mapped[str] = mapped_column(String(2), default="FR", nullable=False)
     city: Mapped[str | None] = mapped_column(String(120))
     logo_url: Mapped[str | None] = mapped_column(String(1000))
+    logo_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    logo_mime_type: Mapped[str | None] = mapped_column(String(64))
     primary_color: Mapped[str | None] = mapped_column(String(32))
     secondary_color: Mapped[str | None] = mapped_column(String(32))
     promo_profile_json: Mapped[dict | None] = mapped_column(JSONB)

@@ -61,3 +61,25 @@ class AIOrchestrator:
         if last_error is not None:
             raise last_error
         raise RuntimeError("AI router returned no usable route.")
+
+async def _professionalize_brochure_image(self: AIOrchestrator, *, capability: AICapability, system_prompt: str, immutable_facts: dict[str, Any], source_image: bytes, source_mime_type: str, logo_image: bytes | None = None, logo_mime_type: str | None = None) -> AIInvocationResult:
+    last_error: AIProviderTransientError | None = None
+    for route in self._router.routes_for(capability):
+        provider = self._registry.get(route.provider)
+        method = getattr(provider, "professionalize_brochure_image", None)
+        if method is None:
+            continue
+        started = perf_counter()
+        try:
+            result = await method(capability=capability, model=route.model, system_prompt=system_prompt, immutable_facts=immutable_facts, source_image=source_image, source_mime_type=source_mime_type, logo_image=logo_image, logo_mime_type=logo_mime_type)
+            if not isinstance(result.output, bytes) or not result.output:
+                raise AIProviderOutputError("AI provider did not return a brochure image.", provider=route.provider, model=route.model)
+            return AIInvocationResult(output=result.output, capability=capability, provider=route.provider, model=route.model, latency_ms=max(0, round((perf_counter() - started) * 1000)), usage=result.usage)
+        except AIProviderTransientError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise AIProviderTransientError("No configured provider supports brochure image professionalization.")
+
+
+AIOrchestrator.professionalize_brochure_image = _professionalize_brochure_image

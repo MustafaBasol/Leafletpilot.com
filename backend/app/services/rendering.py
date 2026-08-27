@@ -136,7 +136,11 @@ async def render_campaign_export(
             storage_keys[file_format] = storage_key
             output_paths[file_format] = output_path
 
-        await asyncio.to_thread(
+        active_professional = next((run for run in campaign.professionalization_runs if run.is_active and run.generated_image_storage_key), None)
+        if active_professional is not None:
+            await asyncio.to_thread(_render_professional_image_assets_sync, storage_path_for_key(active_professional.generated_image_storage_key), output_paths)
+        else:
+            await asyncio.to_thread(
             _render_campaign_assets_sync,
             payload,
             generated_at=generated_at,
@@ -204,6 +208,19 @@ async def render_campaign_export(
         await session.refresh(failed_job)
         return []
 
+
+def _render_professional_image_assets_sync(source_path: Path, output_paths: dict[str, Path]) -> None:
+    """Export the accepted AI PNG directly; no AI-provided HTML/CSS is rendered."""
+    from shutil import copyfile
+    from PIL import Image
+    if not source_path.is_file():
+        raise RuntimeError("Professional brochure image is missing.")
+    for file_format, output_path in output_paths.items():
+        if file_format == "png":
+            copyfile(source_path, output_path)
+        else:
+            with Image.open(source_path) as image:
+                image.convert("RGB").save(output_path, "PDF", resolution=300.0)
 
 async def render_html_to_pdf(html: str, output_path: Path) -> None:
     await asyncio.to_thread(render_html_to_pdf_sync, html, output_path)

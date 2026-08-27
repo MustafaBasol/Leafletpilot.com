@@ -238,7 +238,8 @@ class AIProfessionalizationService:
             id=run.id, campaign_id=run.campaign_id, snapshot_hash=run.snapshot_hash,
             provider=run.provider, model=run.model, status=run.status, is_active=run.is_active,
             plan=AIProfessionalizationPlanEnvelope.model_validate(run.plan_json), summary=list(run.summary_json or []),
-            applied_at=run.applied_at, created_at=run.created_at, idempotent=idempotent,
+            applied_at=run.applied_at, generated_image_file_id=run.generated_image_file_id,
+            validation_report=run.validation_report_json, error_code=run.error_code, created_at=run.created_at, idempotent=idempotent,
         )
 
     @staticmethod
@@ -250,3 +251,84 @@ class AIProfessionalizationService:
     @staticmethod
     def _provider_error(error):
         return HTTPException(status_code=503, detail={"code": error.code, "message": "AI professionalization is temporarily unavailable; original export remains available."})
+async def queue_automatic_professionalization(session: AsyncSession, *, campaign_id: UUID, market_id: UUID, user_id: UUID | None) -> AIProfessionalizationRun | None:
+    """Create exactly one pending run for an immutable approved snapshot."""
+    if not settings.ai_enabled or not settings.ai_professionalization_enabled:
+        return None
+    campaign = await session.scalar(select(Campaign).where(Campaign.id == campaign_id, Campaign.market_id == market_id))
+    if campaign is None or campaign.frozen_at is None or not isinstance(campaign.snapshot_json, dict):
+        return None
+    snapshot_hash = frozen_snapshot_hash(campaign.snapshot_json)
+    existing = await session.scalar(select(AIProfessionalizationRun).where(
+        AIProfessionalizationRun.campaign_id == campaign_id, AIProfessionalizationRun.market_id == market_id,
+        AIProfessionalizationRun.snapshot_hash == snapshot_hash,
+        AIProfessionalizationRun.status.in_(("pending", "generating", "validating", "ready", "applied")),
+    ))
+    if existing is not None:
+        return existing
+    provider = settings.ai_professionalization_provider or settings.ai_revision_provider
+    model = settings.ai_professionalization_model or settings.ai_revision_model
+    run = AIProfessionalizationRun(
+        market_id=market_id, campaign_id=campaign_id, created_by_user_id=user_id,
+        client_request_id=f"automatic-{campaign_id}-{snapshot_hash[:16]}", request_fingerprint=snapshot_hash,
+        snapshot_hash=snapshot_hash, capability=AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION.value,
+        provider=provider or "unavailable", model=model or "unavailable", status="pending", request_mode="automatic",
+        plan_json={"status": "unsupported", "unsupported_reason": "Automatic final image is being prepared."}, summary_json=[],
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    logger.info("ai.brochure_professionalization.started market_id=%s campaign_id=%s run_id=%s provider=%s model=%s", market_id, campaign_id, run.id, run.provider, run.model)
+    return run
+
+
+async def process_automatic_professionalization(session: AsyncSession, *, run_id: UUID, service: AIProfessionalizationService) -> None:
+    """Generate, validate, and atomically apply a final image or fail closed."""
+    from pathlib import Path
+    from datetime import UTC, datetime
+    from app.models import CampaignFile, Market
+    from app.services.ai.brochure_validation import validate_generated_brochure
+    from app.services.campaign_rendering import get_campaign_for_render, render_campaign_snapshot_html
+    from app.services.rendering import storage_path_for_key, render_html_to_png
+
+    run = await session.scalar(select(AIProfessionalizationRun).where(AIProfessionalizationRun.id == run_id).with_for_update())
+    if run is None or run.status != "pending":
+        return
+    campaign = await get_campaign_for_render(session, run.campaign_id, run.market_id)
+    if campaign is None or not isinstance(campaign.snapshot_json, dict) or frozen_snapshot_hash(campaign.snapshot_json) != run.snapshot_hash:
+        run.status = "rejected"; run.error_code = "snapshot_integrity_failed"; run.completed_at = datetime.now(UTC); await session.commit(); return
+    run.status = "generating"; await session.commit()
+    snapshot = campaign.snapshot_json
+    source_key = f"markets/{run.market_id}/campaigns/{run.campaign_id}/professionalization/{run.id}/approved-source.png"
+    source_path = storage_path_for_key(source_key); source_path.parent.mkdir(parents=True, exist_ok=True)
+    await render_html_to_png(render_campaign_snapshot_html(snapshot, generated_at=datetime.now(UTC)), source_path)
+    run.source_image_storage_key = source_key
+    market = await session.get(Market, run.market_id)
+    logo_bytes = logo_mime = None
+    if market and market.logo_storage_key:
+        logo_path = storage_path_for_key(market.logo_storage_key)
+        if logo_path.is_file():
+            logo_bytes = logo_path.read_bytes(); logo_mime = market.logo_mime_type or "image/png"; run.logo_storage_key = market.logo_storage_key
+    facts = {"campaign_title": snapshot.get("title"), "market_name": snapshot.get("market_name"), "header": snapshot.get("header") or {}, "products": [{k: item.get(k) for k in ("name", "price", "old_price", "currency", "unit_label", "quantity_label", "sort_order")} for item in snapshot.get("items") or []]}
+    try:
+        invocation = await service._orchestrator.professionalize_brochure_image(capability=AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION, system_prompt=PROFESSIONALIZATION_SYSTEM_PROMPT, immutable_facts=facts, source_image=source_path.read_bytes(), source_mime_type="image/png", logo_image=logo_bytes, logo_mime_type=logo_mime)
+        logger.info("ai.brochure_professionalization.generated market_id=%s campaign_id=%s run_id=%s provider=%s model=%s latency_ms=%s", run.market_id, run.campaign_id, run.id, invocation.provider, invocation.model, invocation.latency_ms)
+        run.provider, run.model, run.status = invocation.provider, invocation.model, "validating"
+        validation = validate_generated_brochure(invocation.output, snapshot, logo_required=bool(logo_bytes))
+        run.validation_report_json = validation.report
+        if not validation.accepted:
+            run.status = "rejected"; run.error_code = str(validation.report.get("reason") or "validation_failed"); run.completed_at = datetime.now(UTC); await session.commit()
+            logger.warning("ai.brochure_professionalization.validation_failed market_id=%s campaign_id=%s run_id=%s reason=%s", run.market_id, run.campaign_id, run.id, run.error_code); return
+        output_key = f"markets/{run.market_id}/campaigns/{run.campaign_id}/professionalization/{run.id}/professional.png"
+        output_path = storage_path_for_key(output_key); output_path.parent.mkdir(parents=True, exist_ok=True); output_path.write_bytes(invocation.output)
+        file = CampaignFile(campaign_id=run.campaign_id, market_id=run.market_id, file_type="brochure_png", format="png", status="ready", storage_key=output_key, size_bytes=output_path.stat().st_size)
+        session.add(file); await session.flush()
+        await session.execute(update(AIProfessionalizationRun).where(AIProfessionalizationRun.campaign_id == run.campaign_id, AIProfessionalizationRun.market_id == run.market_id, AIProfessionalizationRun.is_active.is_(True)).values(is_active=False, status="superseded"))
+        run.generated_image_storage_key = output_key; run.generated_image_file_id = file.id; run.status = "applied"; run.is_active = True; run.applied_at = run.completed_at = datetime.now(UTC)
+        session.add(AIUsageEvent(market_id=run.market_id, campaign_id=run.campaign_id, user_id=run.created_by_user_id, capability=run.capability, provider=run.provider, model=run.model, request_type="brochure_image_professionalization", status="success", input_tokens=invocation.usage.input_tokens, output_tokens=invocation.usage.output_tokens, latency_ms=invocation.latency_ms))
+        await session.commit(); logger.info("ai.brochure_professionalization.applied market_id=%s campaign_id=%s run_id=%s", run.market_id, run.campaign_id, run.id)
+    except Exception as exc:
+        await session.rollback(); run = await session.get(AIProfessionalizationRun, run_id)
+        if run is not None:
+            run.status = "failed"; run.error_code = getattr(exc, "code", "provider_failure"); run.completed_at = datetime.now(UTC); await session.commit()
+        logger.warning("ai.brochure_professionalization.failed market_id=%s campaign_id=%s run_id=%s error_code=%s", getattr(run, "market_id", None), getattr(run, "campaign_id", None), run_id, getattr(exc, "code", "provider_failure"))

@@ -251,7 +251,7 @@ def _live_payload(
     builder_config = dict(campaign.builder_config_json or {})
     config = {**dict(getattr(market, "promo_profile_json", None) or {}), **config, **builder_config}
     header = {k: config.get(k) for k in ("market_logo", "header_logos", "payment_icons", "promo_title", "validity_text", "stock_message", "footer_note")}
-    header["market_logo"] = header.get("market_logo") or getattr(market, "logo_url", None)
+    header["market_logo"] = header.get("market_logo") or getattr(market, "logo_storage_key", None) or getattr(market, "logo_url", None)
     header["promo_title"] = builder_config.get("subtitle") or header.get("promo_title")
     header["footer_note"] = builder_config.get("footer") or header.get("footer_note")
     configured_layout = config.get("layout") or getattr(template, "slug", None) or "promo-4"
