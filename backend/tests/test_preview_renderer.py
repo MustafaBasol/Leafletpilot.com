@@ -367,3 +367,140 @@ def test_preview_renderer_honors_controlled_large_emphasis() -> None:
 
 
     assert 'data-emphasis="featured"' in html
+
+
+
+def _assert_card_sequence(html: str, *names: str) -> None:
+    positions = [html.index(">" + name + "</h2>") for name in names]
+    assert positions == sorted(positions)
+
+
+def _production_order_campaign(*, builder_config: dict | None = None) -> tuple[Campaign, Template]:
+    market_id = uuid4()
+    campaign = Campaign(
+        title="Production order regression",
+        market_id=market_id,
+        currency="TRY",
+        language="tr",
+        builder_config_json=builder_config or {},
+    )
+    sutas = CampaignItem(
+        id=uuid4(),
+        campaign_id=campaign.id,
+        market_id=market_id,
+        raw_line="Sütaş Yoğurt",
+        incoming_name="Sütaş Yoğurt",
+        display_name="Sütaş Yoğurt",
+        price=Decimal("39.90"),
+        currency="TRY",
+        sort_order=0,
+        is_hero=False,
+        emphasis="large",
+        match_status="matched",
+    )
+    coca = CampaignItem(
+        id=uuid4(),
+        campaign_id=campaign.id,
+        market_id=market_id,
+        raw_line="Coca Cola 1L",
+        incoming_name="Coca Cola 1L",
+        display_name="Coca Cola 1L",
+        price=Decimal("49.90"),
+        currency="TRY",
+        sort_order=1,
+        is_hero=True,
+        emphasis="normal",
+        match_status="matched",
+    )
+    eti = CampaignItem(
+        id=uuid4(),
+        campaign_id=campaign.id,
+        market_id=market_id,
+        raw_line="Eti Burçak",
+        incoming_name="Eti Burçak",
+        display_name="Eti Burçak",
+        price=Decimal("29.90"),
+        currency="TRY",
+        sort_order=2,
+        is_hero=False,
+        emphasis="normal",
+        match_status="matched",
+    )
+    # Deliberately provide a non-authoritative relationship order.
+    campaign.items = [eti, coca, sutas]
+    template = Template(
+        name="Supermarket",
+        slug="supermarket-promo-4",
+        template_type="premium",
+        is_global=True,
+        is_active=True,
+        config_json={"layout": "supermarket-promo-4"},
+    )
+    return campaign, template
+
+
+def test_production_hero_after_large_item_preserves_explicit_card_order() -> None:
+    campaign, template = _production_order_campaign(builder_config={"smart_composition": True})
+
+    html = render_campaign_preview_html(
+        campaign, template, generated_at=datetime(2026, 8, 27, tzinfo=UTC)
+    )
+
+    _assert_card_sequence(html, "Sütaş Yoğurt", "Coca Cola 1L", "Eti Burçak")
+    coca_start = html.rfind("<article", 0, html.index(">Coca Cola 1L</h2>"))
+    coca_card = html[coca_start:html.index("</article>", coca_start)]
+    assert 'data-hero="true"' in coca_card
+    assert 'data-emphasis="featured"' in coca_card
+
+
+def test_campaign_intelligence_and_smart_composition_never_reorder_explicit_items() -> None:
+    campaign, template = _production_order_campaign()
+    sutas, coca, eti = sorted(campaign.items, key=lambda item: item.sort_order)
+    campaign.builder_config_json = {
+        "campaign_intelligence": {
+            "engineVersion": "campaign-intelligence-v1",
+            "products": [
+                {"productId": str(coca.id), "role": "hero", "recommendedSize": "xl"},
+                {"productId": str(eti.id), "role": "featured", "recommendedSize": "lg"},
+                {"productId": str(sutas.id), "role": "standard", "recommendedSize": "md"},
+            ],
+        }
+    }
+
+    html = render_campaign_preview_html(
+        campaign, template, generated_at=datetime(2026, 8, 27, tzinfo=UTC)
+    )
+
+    _assert_card_sequence(html, "Sütaş Yoğurt", "Coca Cola 1L", "Eti Burçak")
+
+
+def test_frozen_snapshot_keeps_the_same_explicit_card_order() -> None:
+    campaign, template = _production_order_campaign(builder_config={"smart_composition": True})
+    live_html = render_campaign_preview_html(
+        campaign, template, generated_at=datetime(2026, 8, 27, tzinfo=UTC)
+    )
+    snapshot = {
+        "template_slug": template.slug,
+        "template_config": template.config_json,
+        "language": campaign.language,
+        "currency": campaign.currency,
+        "items": [
+            {
+                "id": str(item.id),
+                "name": item.display_name,
+                "price": str(item.price),
+                "currency": item.currency,
+                "sort_order": item.sort_order,
+                "is_hero": item.is_hero,
+                "emphasis": item.emphasis,
+            }
+            for item in sorted(campaign.items, key=lambda item: item.sort_order)
+        ],
+        "builder_config": {"smart_composition": True},
+    }
+    frozen_html = render_campaign_snapshot_html(
+        snapshot, generated_at=datetime(2026, 8, 27, tzinfo=UTC)
+    )
+
+    _assert_card_sequence(frozen_html, "Sütaş Yoğurt", "Coca Cola 1L", "Eti Burçak")
+    assert live_html.count('class="product-card"') == frozen_html.count('class="product-card"')
