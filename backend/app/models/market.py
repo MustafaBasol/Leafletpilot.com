@@ -4,7 +4,16 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +49,12 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     legal_name: Mapped[str | None] = mapped_column(String(255))
     country_code: Mapped[str] = mapped_column(String(2), default="FR", nullable=False)
     city: Mapped[str | None] = mapped_column(String(120))
+    address_line_1: Mapped[str | None] = mapped_column(String(255))
+    address_line_2: Mapped[str | None] = mapped_column(String(255))
+    postal_code: Mapped[str | None] = mapped_column(String(32))
+    website_url: Mapped[str | None] = mapped_column(String(500))
+    instagram_url: Mapped[str | None] = mapped_column(String(500))
+    facebook_url: Mapped[str | None] = mapped_column(String(500))
     logo_url: Mapped[str | None] = mapped_column(String(1000))
     logo_storage_key: Mapped[str | None] = mapped_column(String(1000))
     logo_mime_type: Mapped[str | None] = mapped_column(String(64))
@@ -51,7 +66,14 @@ class Market(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     language: Mapped[str] = mapped_column(String(16), default="tr", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(255))
+    # contact_phone is the established canonical market phone field.
     contact_phone: Mapped[str | None] = mapped_column(String(64))
+    brochure_show_logo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    brochure_show_address: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    brochure_show_phone: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    brochure_show_website: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    brochure_show_instagram: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    brochure_show_facebook: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     default_template_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("templates.id", name="fk_markets_default_template_id_templates", use_alter=True)
     )

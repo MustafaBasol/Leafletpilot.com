@@ -37,6 +37,33 @@ def frozen_snapshot_hash(snapshot: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def frozen_market_profile(snapshot: dict) -> dict:
+    """Read the frozen profile, retaining legacy snapshot header identity."""
+    profile = dict(snapshot.get("market_profile") or {})
+    if profile:
+        return profile
+    header = dict(snapshot.get("header") or {})
+    logo_key = header.get("market_logo")
+    return {"name": snapshot.get("market_name"), "visibility": {"logo": bool(logo_key)}, "logo_key": logo_key}
+
+
+def immutable_brochure_facts(snapshot: dict) -> dict:
+    """Build the privacy-safe frozen fact payload for final-image generation."""
+    profile = frozen_market_profile(snapshot)
+    visibility = dict(profile.get("visibility") or {})
+    market = {"name": profile.get("name") or snapshot.get("market_name")}
+    for key in ("address", "phone", "website", "instagram", "facebook"):
+        if visibility.get(key) and profile.get(key):
+            market[key] = profile[key]
+    if visibility.get("logo") and profile.get("logo_key"):
+        market["logo_reference"] = profile["logo_key"]
+    return {
+        "campaign_title": snapshot.get("title"), "market": market,
+        "header": snapshot.get("header") or {},
+        "products": [{key: item.get(key) for key in ("name", "price", "old_price", "currency", "unit_label", "quantity_label", "sort_order")} for item in snapshot.get("items") or []],
+    }
+
+
 class AIProfessionalizationService:
     def __init__(self, orchestrator: AIOrchestrator) -> None:
         self._orchestrator = orchestrator
@@ -284,12 +311,15 @@ async def queue_automatic_professionalization(session: AsyncSession, *, campaign
 
 async def process_automatic_professionalization(session: AsyncSession, *, run_id: UUID, service: AIProfessionalizationService) -> None:
     """Generate, validate, and atomically apply a final image or fail closed."""
-    from pathlib import Path
     from datetime import UTC, datetime
-    from app.models import CampaignFile, Market
+
+    from app.models import CampaignFile
     from app.services.ai.brochure_validation import validate_generated_brochure
-    from app.services.campaign_rendering import get_campaign_for_render, render_campaign_snapshot_html
-    from app.services.rendering import storage_path_for_key, render_html_to_png
+    from app.services.campaign_rendering import (
+        get_campaign_for_render,
+        render_campaign_snapshot_html,
+    )
+    from app.services.rendering import render_html_to_png, storage_path_for_key
 
     run = await session.scalar(select(AIProfessionalizationRun).where(AIProfessionalizationRun.id == run_id).with_for_update())
     if run is None or run.status != "pending":
@@ -303,18 +333,20 @@ async def process_automatic_professionalization(session: AsyncSession, *, run_id
     source_path = storage_path_for_key(source_key); source_path.parent.mkdir(parents=True, exist_ok=True)
     await render_html_to_png(render_campaign_snapshot_html(snapshot, generated_at=datetime.now(UTC)), source_path)
     run.source_image_storage_key = source_key
-    market = await session.get(Market, run.market_id)
+    profile = frozen_market_profile(snapshot)
+    visibility = dict(profile.get("visibility") or {})
     logo_bytes = logo_mime = None
-    if market and market.logo_storage_key:
-        logo_path = storage_path_for_key(market.logo_storage_key)
+    logo_key = profile.get("logo_key") if visibility.get("logo") else None
+    if logo_key:
+        logo_path = storage_path_for_key(logo_key)
         if logo_path.is_file():
-            logo_bytes = logo_path.read_bytes(); logo_mime = market.logo_mime_type or "image/png"; run.logo_storage_key = market.logo_storage_key
-    facts = {"campaign_title": snapshot.get("title"), "market_name": snapshot.get("market_name"), "header": snapshot.get("header") or {}, "products": [{k: item.get(k) for k in ("name", "price", "old_price", "currency", "unit_label", "quantity_label", "sort_order")} for item in snapshot.get("items") or []]}
+            logo_bytes = logo_path.read_bytes(); logo_mime = profile.get("logo_mime_type") or "image/png"; run.logo_storage_key = logo_key
+    facts = immutable_brochure_facts(snapshot)
     try:
         invocation = await service._orchestrator.professionalize_brochure_image(capability=AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION, system_prompt=PROFESSIONALIZATION_SYSTEM_PROMPT, immutable_facts=facts, source_image=source_path.read_bytes(), source_mime_type="image/png", logo_image=logo_bytes, logo_mime_type=logo_mime)
         logger.info("ai.brochure_professionalization.generated market_id=%s campaign_id=%s run_id=%s provider=%s model=%s latency_ms=%s", run.market_id, run.campaign_id, run.id, invocation.provider, invocation.model, invocation.latency_ms)
         run.provider, run.model, run.status = invocation.provider, invocation.model, "validating"
-        validation = validate_generated_brochure(invocation.output, snapshot, logo_required=bool(logo_bytes))
+        validation = validate_generated_brochure(invocation.output, snapshot, logo_required=bool(logo_key and logo_bytes))
         run.validation_report_json = validation.report
         if not validation.accepted:
             run.status = "rejected"; run.error_code = str(validation.report.get("reason") or "validation_failed"); run.completed_at = datetime.now(UTC); await session.commit()
@@ -327,7 +359,7 @@ async def process_automatic_professionalization(session: AsyncSession, *, run_id
         run.generated_image_storage_key = output_key; run.generated_image_file_id = file.id; run.status = "applied"; run.is_active = True; run.applied_at = run.completed_at = datetime.now(UTC)
         session.add(AIUsageEvent(market_id=run.market_id, campaign_id=run.campaign_id, user_id=run.created_by_user_id, capability=run.capability, provider=run.provider, model=run.model, request_type="brochure_image_professionalization", status="success", input_tokens=invocation.usage.input_tokens, output_tokens=invocation.usage.output_tokens, latency_ms=invocation.latency_ms))
         await session.commit(); logger.info("ai.brochure_professionalization.applied market_id=%s campaign_id=%s run_id=%s", run.market_id, run.campaign_id, run.id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - provider failures must preserve original output
         await session.rollback(); run = await session.get(AIProfessionalizationRun, run_id)
         if run is not None:
             run.status = "failed"; run.error_code = getattr(exc, "code", "provider_failure"); run.completed_at = datetime.now(UTC); await session.commit()

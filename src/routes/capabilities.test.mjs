@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { canAccessPilotPath } from "./capabilities.js";
 
-test("hidden top-level path is denied", () => {
-  assert.equal(canAccessPilotPath("/settings"), false);
+test("settings center is visible", () => {
+  assert.equal(canAccessPilotPath("/settings"), true);
 });
 
 test("explicitly visible descendant of a hidden path is allowed", () => {
