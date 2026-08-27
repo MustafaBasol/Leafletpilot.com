@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getSelectedMarketId } from "../api/authSession.js";
+import { isRealApiEnabled } from "../api/config.js";
+import { fetchMarketLogo, getMarketLogo, removeMarketLogo, uploadMarketLogo } from "../api/marketApi.js";
 import { ApiStatus } from "../components/ApiStatus.jsx";
 import { marketSettings, outputFormats, templates } from "../data/mockData.js";
 import { getMarketPlan } from "../data/dataSource.js";
@@ -45,6 +48,26 @@ function PlanUsageCard() {
   );
 }
 
+function MarketLogoCard() {
+  const inputRef = useRef(null);
+  const [logoUrl, setLogoUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const marketId = getSelectedMarketId();
+  async function load() {
+    if (!isRealApiEnabled || !marketId) return;
+    const status = await getMarketLogo(marketId);
+    if (status?.has_logo) { const blob = await fetchMarketLogo(marketId); setLogoUrl(URL.createObjectURL(blob)); }
+  }
+  useEffect(() => { load().catch(() => setMessage("Logo yüklenemedi.")); return () => { if (logoUrl) URL.revokeObjectURL(logoUrl); }; }, [marketId]);
+  async function upload(event) {
+    const file = event.target.files?.[0]; if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { setMessage('PNG veya JPEG logo (en fazla 10 MB) seçin.'); return; }
+    try { setBusy(true); await uploadMarketLogo(file, marketId); await load(); setMessage('Market logosu güncellendi.'); } catch (error) { setMessage(error.message || 'Logo yüklenemedi.'); } finally { setBusy(false); event.target.value = ''; }
+  }
+  async function remove() { try { setBusy(true); await removeMarketLogo(marketId); setLogoUrl(''); setMessage('Market logosu kaldırıldı.'); } catch (error) { setMessage(error.message || 'Logo kaldırılamadı.'); } finally { setBusy(false); } }
+  return <Card title="Market logosu" className="span-4"><div className="settings-form">{logoUrl ? <img src={logoUrl} alt="Market logosu" style={{ maxWidth: 180, maxHeight: 80, objectFit: 'contain' }} /> : <p>Logo yok; broşür market adıyla oluşturulur.</p>}<input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={upload} /><div className="page-actions"><Button onClick={() => inputRef.current?.click()} disabled={busy}>{logoUrl ? 'Logoyu değiştir' : 'Logo yükle'}</Button>{logoUrl ? <Button variant="danger" onClick={remove} disabled={busy}>Logoyu kaldır</Button> : null}</div>{message ? <p className="inline-result">{message}</p> : null}</div></Card>;
+}
 export function Settings() {
   const [settings, setSettings] = useState(marketSettings);
   const [saved, setSaved] = useState(false);
@@ -93,6 +116,7 @@ export function Settings() {
             </div>
           </div>
         </Card>
+        {isRealApiEnabled ? <MarketLogoCard /> : null}
         <Card title="Varsayılan Çıktılar" className="span-4">
           <div className="checkbox-grid single-column">
             {outputFormats.map((format) => (

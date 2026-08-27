@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +62,7 @@ from app.services import campaign as campaign_service
 from app.services import product_matching
 from app.services import revision as revision_service
 from app.services.ai.dependencies import get_ai_professionalization_service, get_ai_revision_service
-from app.services.ai.professionalization import AIProfessionalizationService
+from app.services.ai.professionalization import AIProfessionalizationService, process_automatic_professionalization, queue_automatic_professionalization
 from app.services.ai.revision_parser import AIRevisionService
 from app.services.campaign_parser import parse_campaign_text
 
@@ -346,14 +346,14 @@ async def finalize_campaign(
     actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
     _: None = Depends(require_campaign_approval_scope),
+    background_tasks: BackgroundTasks = None,
+    ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service),
 ) -> CampaignFinalizeResponse:
-    return await campaign_service.finalize_campaign(
-        session,
-        campaign_id,
-        market_id,
-        expected_revision=payload.expected_revision,
-        actor_id=actor.id,
-    )
+    result = await campaign_service.finalize_campaign(session, campaign_id, market_id, expected_revision=payload.expected_revision, actor_id=actor.id)
+    run = await queue_automatic_professionalization(session, campaign_id=campaign_id, market_id=market_id, user_id=actor.id)
+    if run is not None and background_tasks is not None:
+        background_tasks.add_task(_process_professionalization_background, run.id)
+    return result
 
 
 @router.post("/{campaign_id}/approve", response_model=CampaignFinalizeResponse)
@@ -364,14 +364,14 @@ async def approve_campaign(
     actor: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_campaign_session),
     _: None = Depends(require_campaign_approval_scope),
+    background_tasks: BackgroundTasks = None,
+    ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service),
 ) -> CampaignFinalizeResponse:
-    return await campaign_service.finalize_campaign(
-        session,
-        campaign_id,
-        market_id,
-        expected_revision=payload.expected_revision,
-        actor_id=actor.id,
-    )
+    result = await campaign_service.finalize_campaign(session, campaign_id, market_id, expected_revision=payload.expected_revision, actor_id=actor.id)
+    run = await queue_automatic_professionalization(session, campaign_id=campaign_id, market_id=market_id, user_id=actor.id)
+    if run is not None and background_tasks is not None:
+        background_tasks.add_task(_process_professionalization_background, run.id)
+    return result
 
 
 @router.delete("/{campaign_id}", response_model=CampaignDetail)
@@ -575,3 +575,10 @@ async def list_export_jobs(
     session: AsyncSession = Depends(get_campaign_session),
 ) -> list[ExportJobRead]:
     return await campaign_service.list_export_jobs(session, campaign_id, market_id)
+
+async def _process_professionalization_background(run_id: UUID) -> None:
+    from app.core.database import AsyncSessionLocal
+    if AsyncSessionLocal is None:
+        return
+    async with AsyncSessionLocal() as worker_session:
+        await process_automatic_professionalization(worker_session, run_id=run_id, service=get_ai_professionalization_service())

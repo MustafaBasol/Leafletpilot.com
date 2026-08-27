@@ -179,3 +179,34 @@ class OpenAICompatibleProvider:
         raise AIProviderTransientError(
             "AI provider is temporarily unavailable.", provider=self.name, model=model
         )
+
+async def _professionalize_brochure_image(self: OpenAICompatibleProvider, *, capability: AICapability, model: str, system_prompt: str, immutable_facts: dict[str, Any], source_image: bytes, source_mime_type: str, logo_image: bytes | None = None, logo_mime_type: str | None = None) -> AIProviderResult:
+    """OpenAI-compatible image edit adapter; unsupported endpoints fail closed."""
+    if not self._api_base_url or not self._api_key or not model:
+        raise AIConfigurationError("Image professionalization configuration is incomplete.", provider=self.name, model=model)
+    prompt = system_prompt + "\\n\\nImmutable commercial facts (preserve exactly):\\n" + json.dumps(immutable_facts, ensure_ascii=False, separators=(",", ":"))
+    files: list[tuple[str, tuple[str, bytes, str]]] = [("image[]", ("approved-brochure.png", source_image, source_mime_type))]
+    if logo_image and logo_mime_type:
+        files.append(("image[]", ("market-logo", logo_image, logo_mime_type)))
+    try:
+        async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+            response = await client.post(f"{self._api_base_url}/images/edits", headers={"Authorization": f"Bearer {self._api_key}"}, data={"model": model, "prompt": prompt, "size": "1024x1536", "response_format": "b64_json"}, files=files)
+    except httpx.TimeoutException as exc:
+        raise AIProviderTimeoutError("AI image provider timed out.", provider=self.name, model=model) from exc
+    except httpx.HTTPError as exc:
+        raise AIProviderTransientError("AI image provider network failure.", provider=self.name, model=model) from exc
+    if response.status_code in {401, 403}:
+        raise AIProviderAuthenticationError("AI image provider authentication failed.", provider=self.name, model=model)
+    if response.status_code in {404, 405, 408, 429} or response.status_code >= 500:
+        raise AIProviderTransientError("AI image professionalization is unavailable.", provider=self.name, model=model)
+    if response.is_error:
+        raise AIProviderError(f"AI image provider rejected the request ({response.status_code}).", provider=self.name, model=model)
+    try:
+        import base64
+        body = response.json(); image = base64.b64decode(body["data"][0]["b64_json"], validate=True)
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise AIProviderOutputError("AI image provider returned malformed image output.", provider=self.name, model=model) from exc
+    return AIProviderResult(output=image, usage=AIProviderUsage(input_tokens=(body.get("usage") or {}).get("input_tokens"), output_tokens=(body.get("usage") or {}).get("output_tokens")))
+
+
+OpenAICompatibleProvider.professionalize_brochure_image = _professionalize_brochure_image

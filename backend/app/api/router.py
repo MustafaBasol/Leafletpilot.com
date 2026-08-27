@@ -5,6 +5,7 @@ from app.api.routes.billing import router as billing_router
 from app.api.routes.campaigns import router as campaigns_router
 from app.api.routes.catalog import router as catalog_router
 from app.api.routes.health import router as health_router
+from app.api.routes.market_logo import router as market_logo_router
 from app.api.routes.onboarding import router as onboarding_router
 from app.api.routes.platform import router as platform_router
 from app.api.routes.platform_catalog import router as platform_catalog_router
@@ -26,6 +27,7 @@ api_router.include_router(auth_router)
 api_router.include_router(billing_router)
 api_router.include_router(campaigns_router)
 api_router.include_router(catalog_router)
+api_router.include_router(market_logo_router)
 api_router.include_router(templates_router)
 api_router.include_router(team_router)
 api_router.include_router(plans_router)

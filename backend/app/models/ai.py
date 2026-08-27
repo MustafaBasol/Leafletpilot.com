@@ -35,7 +35,7 @@ AI_PROPOSAL_STATUSES = (
     "failed",
 )
 AI_USAGE_STATUSES = ("success", "failed", "timeout")
-AI_PROFESSIONALIZATION_STATUSES = ("ready", "applied", "superseded", "failed")
+AI_PROFESSIONALIZATION_STATUSES = ("pending", "generating", "validating", "ready", "applied", "rejected", "superseded", "failed")
 
 
 class AIRevisionProposal(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -94,7 +94,7 @@ class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 
     market_id: Mapped[UUID] = mapped_column(ForeignKey("markets.id"), nullable=False)
     campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
-    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     client_request_id: Mapped[str] = mapped_column(String(128), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -103,8 +103,17 @@ class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
     is_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    request_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="automatic")
+    source_image_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    logo_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    generated_image_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    generated_image_file_id: Mapped[UUID | None] = mapped_column(ForeignKey("campaign_files.id"))
+    generated_pdf_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    validation_report_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     design_goal: Mapped[str | None] = mapped_column(Text)
-    plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     summary_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

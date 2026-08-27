@@ -71,7 +71,7 @@ class AIRevisionApplyResult(BaseModel):
     revision: RevisionResult
 
 
-ProfessionalizationStatus = Literal["ready", "applied", "superseded", "failed"]
+ProfessionalizationStatus = Literal["pending", "generating", "validating", "ready", "applied", "rejected", "superseded", "failed"]
 
 
 class ProfessionalizationRequest(BaseModel):

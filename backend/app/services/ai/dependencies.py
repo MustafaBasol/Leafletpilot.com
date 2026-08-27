@@ -65,7 +65,7 @@ def get_ai_professionalization_service() -> AIProfessionalizationService:
     )
     provider = settings.ai_professionalization_provider or settings.ai_revision_provider
     model = settings.ai_professionalization_model or settings.ai_revision_model
-    routes = [AIModelRoute(AICapability.COMPLEX_DESIGN_ANALYSIS, provider, model)]
+    routes = [AIModelRoute(AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION, provider, model)]
     if settings.ai_professionalization_fallback_provider and settings.ai_professionalization_fallback_model:
-        routes.append(AIModelRoute(AICapability.COMPLEX_DESIGN_ANALYSIS, settings.ai_professionalization_fallback_provider, settings.ai_professionalization_fallback_model))
-    return AIProfessionalizationService(AIOrchestrator(registry, AIModelRouter({AICapability.COMPLEX_DESIGN_ANALYSIS: routes})))
+        routes.append(AIModelRoute(AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION, settings.ai_professionalization_fallback_provider, settings.ai_professionalization_fallback_model))
+    return AIProfessionalizationService(AIOrchestrator(registry, AIModelRouter({AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION: routes})))
