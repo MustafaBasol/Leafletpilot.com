@@ -205,7 +205,13 @@ def create_composition_plan(
     for index, item in enumerate(items):
         identity = _identity(item, index)
         entry = by_identity[identity]
-        price_treatment, image_treatment = _treatments(entry["role"], index)
+        geometry_role = entry["role"]
+        # Dense layouts cannot safely expand a non-leading card into the
+        # positional hero geometry. Keep the hero role, but use the bounded
+        # featured treatment at its authoritative position.
+        if geometry_role == "hero" and len(items) > 4 and index:
+            geometry_role = "featured"
+        price_treatment, image_treatment = _treatments(geometry_role, index)
         products.append(
             {
                 "product_id": str(item.get("id") or identity[2]),
