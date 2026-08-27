@@ -192,13 +192,29 @@ def _treatments(role: str, index: int) -> tuple[str, str]:
 def create_composition_plan(
     items: list[dict[str, Any]], *, campaign_key: str = ""
 ) -> dict[str, Any]:
+    """Assign visual merchandising treatments without changing item position.
+
+    Callers pass the authoritative CampaignItem.sort_order sequence. Ranking
+    still chooses roles and treatments, but its result is mapped back to that
+    supplied sequence so a hero or high-scoring product never becomes an
+    implicit move command.
+    """
     classified = group_products(classify_products(score_products(items)))
+    by_identity = {entry["identity"]: entry for entry in classified}
     products = []
-    for index, entry in enumerate(classified):
-        price_treatment, image_treatment = _treatments(entry["role"], index)
+    for index, item in enumerate(items):
+        identity = _identity(item, index)
+        entry = by_identity[identity]
+        geometry_role = entry["role"]
+        # Dense layouts cannot safely expand a non-leading card into the
+        # positional hero geometry. Keep the hero role, but use the bounded
+        # featured treatment at its authoritative position.
+        if geometry_role == "hero" and len(items) > 4 and index:
+            geometry_role = "featured"
+        price_treatment, image_treatment = _treatments(geometry_role, index)
         products.append(
             {
-                "product_id": str(entry["item"].get("id") or entry["identity"][2]),
+                "product_id": str(item.get("id") or identity[2]),
                 "role": entry["role"],
                 "emphasis_score": entry["score"],
                 "score_factors": entry["factors"],
@@ -208,7 +224,7 @@ def create_composition_plan(
                 "image_treatment": image_treatment,
                 "group_key": entry["group_key"],
                 "position_hint": index,
-                "item": entry["item"],
+                "item": item,
             }
         )
     return {

@@ -60,17 +60,18 @@ def test_canonical_plan_role_counts_and_renderer_treatments(
     hero = next(product for product in plan["products"] if product["role"] == "hero")
     assert hero["price_treatment"] == "promo-panel"
     assert hero["image_treatment"] == "hero"
-    assert plan["products"][-1]["role"] == "support"
+    assert [product["product_id"] for product in plan["products"]] == [item["id"] for item in _items(count)]
 
 
 def test_manual_hero_wins_and_missing_image_is_not_hero_when_alternatives_exist() -> None:
     items = _items(4)
     items[-1]["is_hero"] = True
     plan = create_composition_plan(items, campaign_key="manual")
-    assert plan["products"][0]["product_id"] == items[-1]["id"]
+    assert [product["product_id"] for product in plan["products"]] == [item["id"] for item in items]
+    assert plan["products"][-1]["role"] == "hero"
     items[-1]["is_hero"] = False
     plan = create_composition_plan(items, campaign_key="automatic")
-    assert plan["products"][0]["product_id"] != items[-1]["id"]
+    assert next(product for product in plan["products"] if product["role"] == "hero")["product_id"] != items[-1]["id"]
 
 
 def test_category_diversity_separates_featured_products_when_possible() -> None:
@@ -123,7 +124,8 @@ def test_no_discount_identical_prices_and_extreme_discount_do_not_crash() -> Non
         item.pop("old_price")
     items[3].update({"price": "0.01", "old_price": "999999.99"})
     plan = create_composition_plan(items, campaign_key="edge-prices")
-    assert plan["products"][0]["product_id"] == items[3]["id"]
+    assert [product["product_id"] for product in plan["products"]] == [item["id"] for item in items]
+    assert plan["products"][3]["role"] == "hero"
     assert plan["products"][0]["emphasis_score"] <= 90
 
 
@@ -131,7 +133,7 @@ def test_missing_image_never_becomes_automatic_hero_when_visual_candidates_exist
     items = _items(4)
     items[-1].update({"price": "0.01", "old_price": "999999.99"})
     plan = create_composition_plan(items, campaign_key="missing-image")
-    assert plan["products"][0]["product_id"] != items[-1]["id"]
+    assert next(product for product in plan["products"] if product["role"] == "hero")["product_id"] != items[-1]["id"]
 
 
 def test_all_missing_images_still_produce_a_stable_fallback_hero() -> None:
@@ -141,4 +143,4 @@ def test_all_missing_images_still_produce_a_stable_fallback_hero() -> None:
     assert create_composition_plan(items, campaign_key="fallback") == create_composition_plan(
         items, campaign_key="fallback"
     )
-    assert create_composition_plan(items, campaign_key="fallback")["products"][0]["role"] == "hero"
+    assert sum(product["role"] == "hero" for product in create_composition_plan(items, campaign_key="fallback")["products"]) == 1

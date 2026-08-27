@@ -122,7 +122,7 @@ def test_empty_campaign_and_explainability_are_safe() -> None:
     assert "product image missing" in result["products"][0]["reasons"]
 
 
-def test_applied_plan_orders_products_and_preserves_manual_facts() -> None:
+def test_applied_plan_preserves_product_order_and_manual_facts() -> None:
     items = [_item(1, price="8"), _item(2, price="4", is_hero=True)]
     items[0]["badge"] = "Store special"
     plan = _analyze(deepcopy(items))
@@ -131,8 +131,8 @@ def test_applied_plan_orders_products_and_preserves_manual_facts() -> None:
 
     assert applied is not None
     ordered, roles, strategy = applied
-    assert ordered[0]["id"] == "product-2"
-    assert roles[0] == "hero"
+    assert [item["id"] for item in ordered] == ["product-1", "product-2"]
+    assert roles == ["standard", "hero"]
     assert next(item for item in ordered if item["id"] == "product-1")["badge"] == "Store special"
     assert strategy in {"hero_plus_grid", "balanced_grid", "dense_value_grid"}
 
