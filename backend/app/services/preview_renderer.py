@@ -755,6 +755,8 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .composition-catalogue-grid .product-card:first-child[data-smart-role="hero"] .price{font-size:34px}
 :is(.composition-weekly-grid,.composition-catalogue-grid) .product-card[data-smart-role="hero"]{outline:4px solid color-mix(in srgb,var(--price-panel,#ffd928) 72%,transparent);outline-offset:-4px}
 :is(.composition-weekly-grid,.composition-catalogue-grid) .product-card:not(:first-child)[data-smart-role="hero"] .promo-card-image{height:170px;flex-basis:170px}
+.composition-weekly-grid .product-card:first-child[data-merchandising-role="featured"] .promo-card-image{height:320px;flex-basis:320px}
+.composition-catalogue-grid .product-card:first-child[data-merchandising-role="featured"] .promo-card-image{height:215px;flex-basis:215px}
 .smart-strategy-hero-right .product-grid,.smart-strategy-hero-top-right .product-grid,.smart-strategy-hero-corner-right .product-grid{direction:rtl}
 .smart-strategy-hero-right .product-card,.smart-strategy-hero-top-right .product-card,.smart-strategy-hero-corner-right .product-card{direction:ltr}
 .smart-composition .product-card[data-smart-role="support"]{opacity:.94}
