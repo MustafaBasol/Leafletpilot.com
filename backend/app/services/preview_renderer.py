@@ -522,7 +522,19 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
     item_emphasis = item.get("emphasis")
     emphasis = (
         "featured"
-        if role == "featured" or smart_role == "hero" or item_emphasis in {"large", "hero"}
+        if (
+            smart_role == "hero"
+            or item_emphasis in {"large", "hero"}
+            or (
+                role == "featured"
+                and not (
+                    merchandising
+                    and density["name"] != "editorial"
+                    and index == 0
+                    and smart_role != "hero"
+                )
+            )
+        )
         else "normal"
     )
     rhythm = ("a", "b", "c")[index % 3]
