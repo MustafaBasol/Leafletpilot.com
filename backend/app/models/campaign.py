@@ -152,6 +152,7 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     professionalization_runs: Mapped[list[AIProfessionalizationRun]] = relationship(
+        back_populates="campaign",
         cascade="all, delete-orphan",
         foreign_keys="AIProfessionalizationRun.campaign_id",
     )

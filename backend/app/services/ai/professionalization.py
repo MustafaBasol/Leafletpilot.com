@@ -183,9 +183,16 @@ class AIProfessionalizationService:
 
     @staticmethod
     def _assert_frozen_snapshot(campaign):
-        if campaign.frozen_at is None or not isinstance(campaign.snapshot_json, dict):
+        snapshot = campaign.snapshot_json
+        if (
+            campaign.frozen_at is None
+            or campaign.finalized_at is None
+            or campaign.approved_revision is None
+            or not isinstance(snapshot, dict)
+            or snapshot.get("approved_revision") != campaign.approved_revision
+        ):
             raise HTTPException(status_code=409, detail={"code": "campaign_not_approved", "message": "Approve the campaign before professionalizing it."})
-        return campaign.snapshot_json
+        return snapshot
 
     @staticmethod
     def _privacy_safe_context(snapshot):

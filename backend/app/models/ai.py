@@ -109,7 +109,7 @@ class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     market: Mapped[Market] = relationship()
-    campaign: Mapped[Campaign] = relationship()
+    campaign: Mapped[Campaign] = relationship(back_populates="professionalization_runs")
     created_by_user: Mapped[User] = relationship()
 
 class AIUsageEvent(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
