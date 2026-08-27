@@ -157,6 +157,13 @@ def render_campaign_preview_html(
 
 
 def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
+    plan = payload.get("professionalization_plan")
+    if isinstance(plan, dict):
+        style_keys = ("header_style", "card_style", "price_style", "badge_style", "image_treatment", "price_prominence", "headline_emphasis")
+        payload = dict(payload)
+        payload["template_config"] = {**dict(payload.get("template_config") or {}), **{key: plan[key] for key in style_keys if plan.get(key)}}
+        treatments = {entry.get("position"): entry.get("treatment") for entry in plan.get("emphasis", []) if isinstance(entry, dict)}
+        payload["items"] = [{**item, "_professionalization_treatment": treatments.get(index)} for index, item in enumerate(payload.get("items") or [], start=1)]
     config = dict(payload.get("template_config") or {})
     requested_slug = str(payload.get("template_slug") or config.get("layout") or "promo-4")
     family = str(payload.get("layout_family") or requested_slug)
@@ -284,7 +291,7 @@ def _card(item: dict[str, Any], config: dict[str, Any], dense: bool, compact: bo
     stock = f'<p class="product-stock" data-clamp-enabled="true" data-clamp-lines="2">{_text(item["stock_note"])}</p>' if item.get("stock_note") else ""
     brand_text, unit_text = _text(item.get("brand")), _text(unit)
     legacy = f'<!-- class="product-brand">{brand_text} --><!-- class="product-unit">{unit_text} -->'
-    emphasis = "featured" if item.get("emphasis") in {"large", "hero"} or item.get("is_hero") else "normal"
+    emphasis = "featured" if item.get("emphasis") in {"large", "hero"} or item.get("is_hero") or item.get("_professionalization_treatment") == "featured" else "normal"
     variant = f'{"compact-card" if compact else "editorial-card"}" data-emphasis="{emphasis}'
     return f'<article class="product-card" data-card-variant="{variant}"><div class="product-stage">{_image(item)}</div>{legacy}<p class="product-brand" data-clamp-enabled="true" data-clamp-lines="1">{brand_text}</p><h2 class="product-name" data-clamp-enabled="true" data-clamp-lines="2">{_text(item.get("name") or item.get("resolved_name"))}</h2><p class="product-unit" data-clamp-enabled="true" data-clamp-lines="2">{unit_text}</p>{stock}<div class="price-row"><span class="price">{_text(_money(item.get("price") or item.get("promo_price"), item.get("currency")))}</span><span class="price-secondary">{old}{badge}</span></div></article>'
 
@@ -524,7 +531,7 @@ def _supermarket_card(item: dict[str, Any], config: dict[str, Any], density: dic
         "featured"
         if (
             smart_role == "hero"
-            or item_emphasis in {"large", "hero"}
+            or item_emphasis in {"large", "hero"} or item.get("_professionalization_treatment") == "featured"
             or (
                 role == "featured"
                 and not (

@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     ai_max_actions_per_request: int = Field(default=20, alias="AI_MAX_ACTIONS_PER_REQUEST")
     ai_proposal_expire_minutes: int = Field(default=15, alias="AI_PROPOSAL_EXPIRE_MINUTES")
     ai_revision_rate_limit_per_minute: int = Field(default=5, alias="AI_REVISION_RATE_LIMIT_PER_MINUTE")
+    ai_professionalization_enabled: bool = Field(default=False, alias="AI_PROFESSIONALIZATION_ENABLED")
+    ai_professionalization_provider: str = Field(default="", alias="AI_PROFESSIONALIZATION_PROVIDER")
+    ai_professionalization_model: str = Field(default="", alias="AI_PROFESSIONALIZATION_MODEL")
+    ai_professionalization_fallback_provider: str = Field(default="", alias="AI_PROFESSIONALIZATION_FALLBACK_PROVIDER")
+    ai_professionalization_fallback_model: str = Field(default="", alias="AI_PROFESSIONALIZATION_FALLBACK_MODEL")
+    ai_professionalization_rate_limit_per_minute: int = Field(default=3, alias="AI_PROFESSIONALIZATION_RATE_LIMIT_PER_MINUTE")
+    ai_professionalization_max_runs_per_campaign: int = Field(default=5, alias="AI_PROFESSIONALIZATION_MAX_RUNS_PER_CAMPAIGN")
     # --- Central LeafletPilot WhatsApp channel (Evolution API) -------------
     # ONE platform-owned WhatsApp number, ONE Evolution instance, MANY markets.
     # Credentials are runtime environment configuration only: they are never
@@ -274,6 +281,10 @@ class Settings(BaseSettings):
             raise ValueError("AI_PROPOSAL_EXPIRE_MINUTES must be between 1 and 60.")
         if self.ai_revision_rate_limit_per_minute < 1:
             raise ValueError("AI_REVISION_RATE_LIMIT_PER_MINUTE must be at least 1.")
+        if self.ai_professionalization_rate_limit_per_minute < 1:
+            raise ValueError("AI_PROFESSIONALIZATION_RATE_LIMIT_PER_MINUTE must be at least 1.")
+        if not 1 <= self.ai_professionalization_max_runs_per_campaign <= 20:
+            raise ValueError("AI_PROFESSIONALIZATION_MAX_RUNS_PER_CAMPAIGN must be between 1 and 20.")
         if self.ai_enabled:
             self._validate_enabled_ai_settings()
         for limit_name, limit_value in (
@@ -358,8 +369,10 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_BASE_URL must use HTTPS in production.")
 
     def _validate_enabled_ai_settings(self) -> None:
-        if not self.ai_revision_model.strip():
+        if not self.ai_revision_model.strip() and not (self.ai_professionalization_enabled and self.ai_professionalization_model.strip()):
             raise ValueError("AI_REVISION_MODEL is required when AI_ENABLED=true.")
+        if self.ai_professionalization_enabled and not (self.ai_professionalization_model.strip() or self.ai_revision_model.strip()):
+            raise ValueError("AI_PROFESSIONALIZATION_MODEL or AI_REVISION_MODEL is required when AI-3 is enabled.")
         if self.ai_revision_provider == "openai_compatible":
             if not self.ai_openai_compatible_api_key.get_secret_value().strip():
                 raise ValueError("AI_OPENAI_COMPATIBLE_API_KEY is required when AI_ENABLED=true.")

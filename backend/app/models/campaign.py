@@ -24,6 +24,7 @@ from app.core.database import Base
 from app.models.base import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.ai import AIProfessionalizationRun
     from app.models.catalog import MarketProduct, Product, ProductImage
     from app.models.export import CampaignFile, ExportJob
     from app.models.market import Market
@@ -148,6 +149,11 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="campaign",
         cascade="all, delete-orphan",
         foreign_keys="CampaignRevision.campaign_id",
+    )
+
+    professionalization_runs: Mapped[list[AIProfessionalizationRun]] = relationship(
+        cascade="all, delete-orphan",
+        foreign_keys="AIProfessionalizationRun.campaign_id",
     )
 
     @property

@@ -418,9 +418,11 @@ async def get_campaign_preview_html(
     campaign = await get_campaign(session, campaign_id, market_id)
     generated_at = datetime.now(UTC).replace(microsecond=0)
     if campaign.snapshot_json:
-        from app.services.campaign_rendering import render_campaign_snapshot_html
-
-        snapshot = campaign.snapshot_json
+        from app.services.campaign_rendering import (
+            build_campaign_render_payload,
+            render_campaign_snapshot_html,
+        )
+        snapshot = build_campaign_render_payload(campaign, campaign.template)
         return CampaignPreviewHtml(
             campaign_id=campaign.id,
             template_id=snapshot.get("template_id"),
@@ -1056,6 +1058,8 @@ async def finalize_campaign(
         "approved_at": now.isoformat(),
         "approval": {"campaign_id": str(campaign.id), "market_id": str(campaign.market_id)},
     })
+    from app.services.ai.professionalization import frozen_snapshot_hash
+    snapshot["snapshot_sha256"] = frozen_snapshot_hash(snapshot)
     campaign.snapshot_json = snapshot
     campaign.frozen_at = now
     campaign.finalized_at = now

@@ -813,3 +813,23 @@ export async function getCampaignItemImageOptions(campaignId, itemId) {
   if (!isRealApiEnabled) return [];
   return campaignApi.getCampaignItemImageOptions(campaignId, itemId, requireSelectedMarketId());
 }
+
+export async function getProfessionalizationHistory(campaignId) {
+  if (!isRealApiEnabled) return { runs: [], active_run_id: null, original_available: true };
+  return campaignApi.getProfessionalizationHistory(campaignId, requireSelectedMarketId());
+}
+
+export async function createProfessionalizationRun(campaignId, payload) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.createProfessionalizationRun(campaignId, payload, requireSelectedMarketId());
+}
+
+export async function applyProfessionalizationRun(campaignId, runId) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.applyProfessionalizationRun(campaignId, runId, requireSelectedMarketId());
+}
+
+export async function restoreOriginalProfessionalization(campaignId) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.restoreOriginalProfessionalization(campaignId, requireSelectedMarketId());
+}

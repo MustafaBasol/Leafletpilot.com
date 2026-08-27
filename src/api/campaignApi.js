@@ -124,3 +124,19 @@ export function approveCampaign(campaignId, payload, marketId) {
 export function getCampaignItemImageOptions(campaignId, itemId, marketId) {
   return apiClient.get(`/campaigns/${campaignId}/items/${itemId}/image-options`, { marketId });
 }
+
+export function getProfessionalizationHistory(campaignId, marketId) {
+  return apiClient.get(`/campaigns/${campaignId}/professionalization`, { marketId });
+}
+
+export function createProfessionalizationRun(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/professionalization`, payload, { marketId });
+}
+
+export function applyProfessionalizationRun(campaignId, runId, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/professionalization/${runId}/apply`, undefined, { marketId });
+}
+
+export function restoreOriginalProfessionalization(campaignId, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/professionalization/original`, undefined, { marketId });
+}

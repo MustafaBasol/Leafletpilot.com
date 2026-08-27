@@ -14,6 +14,7 @@ def campaign_render_load_options():
     return (
         selectinload(Campaign.market),
         selectinload(Campaign.template),
+        selectinload(Campaign.professionalization_runs),
         selectinload(Campaign.items)
         .selectinload(CampaignItem.product)
         .selectinload(Product.brand),
@@ -62,7 +63,14 @@ async def get_campaign_for_render(
 def build_campaign_render_payload(campaign: Campaign, template) -> dict:
     """Single preview/export input contract; frozen campaigns use this exact data."""
     if campaign.snapshot_json:
-        return campaign.snapshot_json
+        from copy import deepcopy
+
+        from app.services.ai.professionalization import frozen_snapshot_hash
+        payload = deepcopy(campaign.snapshot_json)
+        active = next((run for run in campaign.professionalization_runs if run.is_active), None)
+        if active is not None and active.snapshot_hash == frozen_snapshot_hash(campaign.snapshot_json):
+            payload["professionalization_plan"] = dict(active.plan_json)
+        return payload
     from app.services.preview_renderer import _live_payload
     return _live_payload(campaign, template)
 

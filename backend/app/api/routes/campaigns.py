@@ -13,7 +13,15 @@ from app.api.deps import (
 )
 from app.core.roles import MARKET_MUTATION_ROLES
 from app.models import User
-from app.schemas.ai import AIRevisionApplyResult, AIRevisionProposalRead, RevisionIntentRequest
+from app.schemas.ai import (
+    AIRevisionApplyResult,
+    AIRevisionProposalRead,
+    ProfessionalizationApplyResult,
+    ProfessionalizationHistoryRead,
+    ProfessionalizationRequest,
+    ProfessionalizationRunRead,
+    RevisionIntentRequest,
+)
 from app.schemas.campaign import (
     CampaignBuilderOptions,
     CampaignCreate,
@@ -53,7 +61,8 @@ from app.schemas.revision import (
 from app.services import campaign as campaign_service
 from app.services import product_matching
 from app.services import revision as revision_service
-from app.services.ai.dependencies import get_ai_revision_service
+from app.services.ai.dependencies import get_ai_professionalization_service, get_ai_revision_service
+from app.services.ai.professionalization import AIProfessionalizationService
 from app.services.ai.revision_parser import AIRevisionService
 from app.services.campaign_parser import parse_campaign_text
 
@@ -248,6 +257,21 @@ async def apply_revision_intent_proposal(
     )
 
 
+@router.get("/{campaign_id}/professionalization", response_model=ProfessionalizationHistoryRead)
+async def get_professionalization_history(campaign_id: UUID, market_id: UUID = Depends(get_required_market_id), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationHistoryRead:
+    return await ai_service.history(session, campaign_id=campaign_id, market_id=market_id)
+
+@router.post("/{campaign_id}/professionalization", response_model=ProfessionalizationRunRead)
+async def create_professionalization_run(campaign_id: UUID, payload: ProfessionalizationRequest, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), actor: User = Depends(get_current_user), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationRunRead:
+    return await ai_service.create_run(session, campaign_id=campaign_id, market_id=market_id, user_id=actor.id, request=payload)
+
+@router.post("/{campaign_id}/professionalization/{run_id}/apply", response_model=ProfessionalizationApplyResult)
+async def apply_professionalization_run(campaign_id: UUID, run_id: UUID, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), actor: User = Depends(get_current_user), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationApplyResult:
+    return await ai_service.apply_run(session, campaign_id=campaign_id, run_id=run_id, market_id=market_id, user_id=actor.id)
+
+@router.post("/{campaign_id}/professionalization/original", response_model=ProfessionalizationHistoryRead)
+async def restore_original_professionalization(campaign_id: UUID, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationHistoryRead:
+    return await ai_service.restore_original(session, campaign_id=campaign_id, market_id=market_id)
 @router.get("/{campaign_id}/items/{item_id}/image-options", response_model=list[CampaignItemImageOptionRead])
 async def campaign_item_image_options(
     campaign_id: UUID,
