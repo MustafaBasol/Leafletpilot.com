@@ -63,7 +63,9 @@ REFERENCE_EXPECTATIONS = {
         "min_featured_price_ratio": 1.0,
         "min_stage_tiers": 3,
         "min_price_patterns": 3,
-        "min_visual_price_treatments": 4,
+        # A non-leading hero uses bounded dense-grid treatment rather than an
+        # oversized implicit lead slot, while retaining three distinct prices.
+        "min_visual_price_treatments": 3,
         "min_perceptible_offsets": 8,
         "min_price_ratio": 0.38,
     },
