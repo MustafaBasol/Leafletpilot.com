@@ -54,7 +54,9 @@ class DelayedNamedMockProvider(NamedMockProvider):
         return await super().generate_structured(**kwargs)
 
 
-def _service(provider: MockAIProvider, *, fallback: MockAIProvider | None = None) -> AIRevisionService:
+def _service(
+    provider: MockAIProvider, *, fallback: MockAIProvider | None = None
+) -> AIRevisionService:
     registry = AIProviderRegistry()
     registry.register(provider)
     routes = {
@@ -126,9 +128,7 @@ def test_provider_output_schema_is_strict_and_status_aware():
             {"status": "ready", "actions": [], "unexpected": "attacker-controlled"}
         )
     with pytest.raises(ValidationError):
-        AIRevisionParseEnvelope.model_validate(
-            {"status": "clarification_required", "actions": []}
-        )
+        AIRevisionParseEnvelope.model_validate({"status": "clarification_required", "actions": []})
     parsed = AIRevisionParseEnvelope.model_validate(
         {
             "status": "unsupported",
@@ -137,6 +137,38 @@ def test_provider_output_schema_is_strict_and_status_aware():
         }
     )
     assert parsed.status == "unsupported"
+
+
+def test_ai_revision_pydantic_validation_remains_authoritative() -> None:
+    action = AIRevisionParseEnvelope.model_validate(
+        {
+            "status": "ready",
+            "actions": [
+                {
+                    "type": "update_price",
+                    "item_id": str(uuid4()),
+                    "price": "1.99",
+                    "old_price": None,
+                }
+            ],
+        }
+    ).actions[0]
+    assert action.old_price is None
+
+    with pytest.raises(ValidationError):
+        AIRevisionParseEnvelope.model_validate(
+            {
+                "status": "ready",
+                "actions": [
+                    {
+                        "type": "update_price",
+                        "item_id": str(uuid4()),
+                        "price": "1.99",
+                        "unexpected": "attacker-controlled",
+                    }
+                ],
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -348,9 +380,10 @@ async def test_ai_revision_api_lifecycle_when_test_database_url_is_configured(mo
             assert proposal["status"] == "ready"
             assert len(proposal["summary"]) == 2
             assert concurrent_replay.json()["id"] == proposal["id"]
-            assert sorted(
-                [proposal["idempotent"], concurrent_replay.json()["idempotent"]]
-            ) == [False, True]
+            assert sorted([proposal["idempotent"], concurrent_replay.json()["idempotent"]]) == [
+                False,
+                True,
+            ]
             assert len(provider.calls) == 1
 
             async with session_factory() as session:

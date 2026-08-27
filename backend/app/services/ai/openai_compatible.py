@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from typing import Any
 
 import httpx
@@ -16,6 +17,50 @@ from app.services.ai.errors import (
     AIProviderTransientError,
 )
 from app.services.ai.types import AICapability, AIProviderResult, AIProviderUsage
+
+
+def build_openai_strict_schema(schema: type[BaseModel]) -> dict[str, Any]:
+    """Project a Pydantic schema into OpenAI's strict Structured Outputs subset.
+
+    Pydantic remains the source of truth for runtime validation. This projection
+    only adapts its JSON Schema for the provider: OpenAI requires closed objects
+    whose every property is required, and represents optional values with null.
+    """
+
+    return _make_openai_strict_schema(deepcopy(schema.model_json_schema()))
+
+
+def _make_openai_strict_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_make_openai_strict_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    strict_schema = {
+        key: _make_openai_strict_schema(item)
+        for key, item in value.items()
+        # Defaults are authoring hints, not strict-output validation rules.
+        # The provider must emit every property, including nullable ones.
+        if key not in {"default", "discriminator"}
+    }
+
+    # OpenAI's strict subset supports anyOf, not oneOf. Pydantic emits oneOf
+    # for discriminated unions; their literal discriminator makes branches
+    # mutually exclusive, so anyOf preserves the contract.
+    one_of = strict_schema.pop("oneOf", None)
+    if one_of is not None:
+        if "anyOf" in strict_schema:
+            raise ValueError("OpenAI strict schema cannot combine oneOf and anyOf.")
+        strict_schema["anyOf"] = one_of
+
+    if strict_schema.get("type") == "object":
+        strict_schema["additionalProperties"] = False
+
+    properties = strict_schema.get("properties")
+    if isinstance(properties, dict):
+        strict_schema["required"] = list(properties)
+
+    return strict_schema
 
 
 class OpenAICompatibleProvider:
@@ -68,7 +113,7 @@ class OpenAICompatibleProvider:
                 "json_schema": {
                     "name": schema.__name__,
                     "strict": True,
-                    "schema": schema.model_json_schema(),
+                    "schema": build_openai_strict_schema(schema),
                 },
             },
         }
