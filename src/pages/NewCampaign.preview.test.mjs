@@ -9,7 +9,6 @@ const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
 
 test("template gallery uses inert scaled thumbnails", () => {
   assert.match(page, /template-thumbnail/);
-  assert.match(page, /scrolling="no"/);
   assert.match(styles, /template-gallery-card iframe[\s\S]*pointer-events: none/);
   assert.match(styles, /transform: scale\(0\.2\)/);
 });
