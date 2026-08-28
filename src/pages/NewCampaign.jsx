@@ -20,7 +20,7 @@ function catalogItemToPayload(product, index) {
   return { raw_line: product.name, incoming_name: product.name, market_product_id: product.id, sort_order: index };
 }
 
-export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {}) {
+export function NewCampaign({ editCampaignId = "", sourceCampaignId = "", templateId = "" } = {}) {
   const selectedMarketId = getSelectedMarketId();
   const storedMarket = getSelectedMarket();
   const marketOptions = getStoredMarkets();
@@ -84,7 +84,12 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {})
       const products = (response?.products || []).filter((product) => product.is_active !== false);
       setTemplateItems(templates);
       setBuilderProducts(products);
-      setSelectedTemplate((current) => current && templates.some((template) => template.id === current) ? current : templates[0]?.id || "");
+      const requestedTemplate = templateId && templates.some((template) => template.id === templateId) ? templateId : "";
+      setSelectedTemplate((current) => requestedTemplate || (current && templates.some((template) => template.id === current) ? current : templates[0]?.id || ""));
+      if (!loadedCampaign && templateId) {
+        if (requestedTemplate) setNotice("Seçtiğiniz şablon kampanya için hazır.");
+        else setNotice("İstenen şablon kullanılamıyor; mevcut şablonlar gösterildi.");
+      }
       if (loadedCampaign) {
         const isRevision = Boolean(sourceCampaignId);
         const loadedTemplateId = templates.some((template) => template.id === loadedCampaign.template_id)
@@ -139,7 +144,7 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "" } = {})
       setBuilderLoadError(errorText(error));
     });
     return () => { mounted = false; };
-  }, [selectedMarketId, builderLoadAttempt, editCampaignId, sourceCampaignId]);
+  }, [selectedMarketId, builderLoadAttempt, editCampaignId, sourceCampaignId, templateId]);
 
   const clearMessages = () => { setApiError(""); setNotice(""); };
   const toggleProduct = (product) => setSelectedProducts((current) => current.some((item) => item.id === product.id) ? current.filter((item) => item.id !== product.id) : [...current, product]);

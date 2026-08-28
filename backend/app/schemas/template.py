@@ -16,6 +16,17 @@ GRID_PRESETS: dict[int, tuple[GridPreset, int, int]] = {
     16: ("promo-16", 4, 4),
 }
 
+# The persisted token is deliberately small and stable. Renderers and the builder use this helper instead of maintaining competing orientation flags.
+PAGE_FORMAT_DIMENSIONS: dict[str, tuple[int, int, str]] = {
+    "a4_portrait": (1240, 1754, "A4 portrait"),
+    "a4_landscape": (1754, 1240, "A4 landscape"),
+}
+
+
+def normalize_page_format(value: object) -> tuple[int, int, str]:
+    """Return canonical preview dimensions for persisted page-format tokens."""
+    return PAGE_FORMAT_DIMENSIONS.get(str(value), PAGE_FORMAT_DIMENSIONS["a4_portrait"])
+
 
 class TemplateConfig(BaseModel):
     """Canonical, forward-compatible configuration shared by editor and renderer."""

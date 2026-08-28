@@ -24,7 +24,7 @@ async def list_template_builder_presets() -> dict:
             {"value": "a4_portrait", "label": "A4 dikey"},
             {"value": "a4_landscape", "label": "A4 yatay"},
         ],
-        "price_styles": ["bold", "compact", *SUPERMARKET_STYLE_OPTIONS["price_style"]],
+        "price_styles": list(SUPERMARKET_STYLE_OPTIONS["price_style"]),
         "badge_styles": ["pill", "square", "sticker", "burst", "ribbon"],
         "header_styles": list(SUPERMARKET_STYLE_OPTIONS["header_style"]),
         "card_styles": list(SUPERMARKET_STYLE_OPTIONS["card_style"]),

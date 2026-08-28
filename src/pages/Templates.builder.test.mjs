@@ -65,8 +65,8 @@ function previewButtonsIn(collectionName) {
 }
 
 test("create opens a form without posting and submission is guarded", () => {
-  assert.match(page, /setBuilderTemplate\(null\)/);
-  assert.match(page, /submittingRef\.current/);
+  assert.match(page, /setBuilder\(null\)/);
+  assert.match(page, /savingRef\.current/);
   assert.doesNotMatch(page, /name: "Yeni özel şablon"/);
   assert.match(builder, /onSubmit=\{submit\}/);
   assert.match(builder, /Şablon adı zorunludur/);
@@ -77,7 +77,10 @@ test("builder exposes canonical settings, preview, dirty warning, and duplicate 
   assert.match(builder, /template-live-preview/);
   assert.match(builder, /beforeunload/);
   assert.match(builder, /Kaydedilmemiş değişiklikler/);
-  assert.match(page, /Bu isimle bir şablon zaten mevcut/);
+  assert.match(builder, /isLandscape/);
+  assert.match(builder, /Büyük fiyat/);
+  assert.match(builder, /Etiket rozeti/);
+  assert.match(builder, /gridField/);
 });
 
 test("builder exposes the constrained supermarket visual contract", () => {
@@ -128,7 +131,7 @@ test("thumbnail upload falls back when the browser omits the file content type",
   assert.match(api, /file\.type \|\| "application\/octet-stream"/);
 });
 
-test("global and market template previews use the hash-based SPA detail route", () => {
+test("gallery preview stays modal-based and ready templates use New Campaign preselection", () => {
   const fullPageNavigations = [];
   walk(pageAst, (node) => {
     if (node.type === "AssignmentExpression" && memberPath(node.left)?.join(".") === "window.location.href") {
@@ -137,9 +140,8 @@ test("global and market template previews use the hash-based SPA detail route", 
   });
   assert.equal(fullPageNavigations.length, 0, "template previews must not assign window.location.href");
 
-  for (const collectionName of ["shared", "mine"]) {
-    const previewButtons = previewButtonsIn(collectionName);
-    assert.ok(previewButtons.length > 0, `${collectionName} templates must expose a preview button`);
-    assert.ok(previewButtons.every(isTemplateDetailHref), `${collectionName} previews must use #/templates/\${template.id}`);
-  }
+  assert.match(page, /window\.location\.hash = `#\/campaigns\/new\?template_id=\$\{encodeURIComponent\(template\.id\)\}`/);
+  assert.match(page, /⭐ Önerilen/);
+  assert.doesNotMatch(page, /adoptTemplate/);
+  assert.doesNotMatch(page, /Şablonlarınıza eklendi/);
 });

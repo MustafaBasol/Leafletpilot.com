@@ -11,6 +11,7 @@ from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
 from app.services.image_pipeline import stored_flyer_image_has_alpha
 from app.services.merchandising import create_composition_plan
+from app.schemas.template import normalize_page_format
 from app.services.template_presets import (
     FILL_BOOST_CONFIG_KEY,
     SUPERMARKET_PRESETS,
@@ -153,7 +154,7 @@ def render_campaign_preview_html(
     payload = _live_payload(campaign, template)
     selected_format = output_format or (payload.get("builder_config") or {}).get("output_format", "pdf")
     html = render_render_payload_html(payload, generated_at=generated_at)
-    return _apply_output_format(html, selected_format)
+    return _apply_output_format(html, selected_format, (payload.get("template_config") or {}).get("page_format"))
 
 
 def render_render_payload_html(payload: dict[str, Any], *, generated_at: datetime) -> str:
@@ -376,9 +377,11 @@ def _unit_label(item: dict[str, Any]) -> str:
     return text
 
 
-def _apply_output_format(html: str, output_format: str | None) -> str:
+def _apply_output_format(html: str, output_format: str | None, page_format: object = None) -> str:
     selected = output_format if output_format in PREVIEW_FORMATS else "pdf"
     width, height, page_size = PREVIEW_FORMATS[selected]
+    if selected in {"pdf", "png"}:
+        width, height, page_size = normalize_page_format(page_format)
     html = html.replace("@page{size:A4 portrait;margin:0}", f"@page{{size:{page_size};margin:0}}")
     html = html.replace("width:1240px;height:1754px", f"width:{width}px;height:{height}px")
     html = html.replace("<body>", f'<body data-output-format="{_attr(selected)}" data-preview-width="{width}" data-preview-height="{height}">', 1)
@@ -634,7 +637,7 @@ SUPERMARKET_ART_DIRECTION_CSS = """
 .price-panel{align-self:flex-start;width:88%;border:0;border-radius:4px;box-shadow:5px 5px 0 #8e101c20}
 .product-card[data-rhythm="b"] .price-panel{align-self:flex-end}
 .product-card[data-rhythm="c"] .price-panel{width:82%}
-.retail-price-panel .price-panel{border-left:9px solid color-mix(in srgb,var(--price-color,#c5161d) 72%,transparent)}
+.retail-price-bold .price-panel{width:94%;padding:4px 0;background:transparent;box-shadow:none}.retail-price-bold .price{font-size:1.22em}.retail-price-compact .price-panel{width:62%;min-height:46px;padding:4px 6px}.retail-price-compact .price{font-size:.78em}.retail-price-panel .price-panel{border-left:9px solid color-mix(in srgb,var(--price-color,#c5161d) 72%,transparent)}
 .retail-price-ticket .price-panel{width:92%;border-radius:0;box-shadow:7px 7px 0 #6f10212b}
 .retail-price-split .price-panel{width:100%;border:3px solid var(--price-panel,#ffd928);border-left:12px solid var(--price-panel,#ffd928);background:color-mix(in srgb,var(--card-bg,#fff8e7) 68%,transparent);box-shadow:none}
 .price{overflow:hidden;text-overflow:clip;font-variant-numeric:tabular-nums;letter-spacing:-.035em}

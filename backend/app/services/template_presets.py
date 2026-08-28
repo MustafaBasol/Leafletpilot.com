@@ -31,7 +31,7 @@ SUPERMARKET_VISUAL_DEFAULTS = {
 SUPERMARKET_STYLE_OPTIONS = {
     "header_style": ("burst", "band", "minimal"),
     "card_style": ("shadow", "outlined", "rounded"),
-    "price_style": ("panel", "ticket", "split"),
+    "price_style": ("bold", "compact", "panel", "ticket", "split"),
     "badge_style": ("pill", "sticker", "burst", "ribbon"),
     "image_treatment": ("stage", "cutout", "photo"),
 }
@@ -119,7 +119,7 @@ def supermarket_visual_config(value: dict[str, Any] | None) -> dict[str, Any]:
             resolved[key] = candidate.lower()
     for key, options in SUPERMARKET_STYLE_OPTIONS.items():
         candidate = source.get(key)
-        legacy = {"bold": "panel", "compact": "split", "square": "sticker"}.get(candidate, candidate)
+        legacy = {"square": "sticker"}.get(candidate, candidate)
         if legacy in options:
             resolved[key] = legacy
     for key in (
