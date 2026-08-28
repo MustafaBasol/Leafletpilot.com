@@ -190,7 +190,7 @@ async def _professionalize_brochure_image(self: OpenAICompatibleProvider, *, cap
         files.append(("image[]", ("market-logo", logo_image, logo_mime_type)))
     try:
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-            response = await client.post(f"{self._api_base_url}/images/edits", headers={"Authorization": f"Bearer {self._api_key}"}, data={"model": model, "prompt": prompt, "size": "1024x1536", "response_format": "b64_json"}, files=files)
+            response = await client.post(f"{self._api_base_url}/images/edits", headers={"Authorization": f"Bearer {self._api_key}"}, data={"model": model, "prompt": prompt, "size": "1024x1536"}, files=files)
     except httpx.TimeoutException as exc:
         raise AIProviderTimeoutError("AI image provider timed out.", provider=self.name, model=model) from exc
     except httpx.HTTPError as exc:

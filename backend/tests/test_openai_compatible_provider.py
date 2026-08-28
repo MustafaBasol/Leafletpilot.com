@@ -11,7 +11,9 @@ from app.schemas.ai import AIRevisionParseEnvelope
 from app.services.ai.errors import (
     AIProviderAuthenticationError,
     AIProviderError,
+    AIProviderOutputError,
     AIProviderTimeoutError,
+    AIProviderTransientError,
 )
 from app.services.ai.openai_compatible import OpenAICompatibleProvider, build_openai_strict_schema
 from app.services.ai.types import AICapability
@@ -37,9 +39,17 @@ class RecordingAsyncClient:
         return None
 
     async def post(
-        self, url: str, *, headers: dict[str, str], json: dict[str, object]
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object] | None = None,
+        data: dict[str, str] | None = None,
+        files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
     ) -> httpx.Response:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+        self.calls.append(
+            {"url": url, "headers": headers, "json": json, "data": data, "files": files}
+        )
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -233,3 +243,88 @@ async def test_timeout_retry_limit_and_timeout_value_are_unchanged() -> None:
 
     assert len(RecordingAsyncClient.calls) == 2
     assert RecordingAsyncClient.timeouts == [17, 17]
+
+
+async def _professionalize(
+    provider: OpenAICompatibleProvider,
+    *,
+    logo_image: bytes | None = None,
+):
+    return await provider.professionalize_brochure_image(
+        capability=AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION,
+        model="configured-image-model",
+        system_prompt="Make this brochure professional.",
+        immutable_facts={"market_name": "LeafletPilot Market"},
+        source_image=b"source-png",
+        source_mime_type="image/png",
+        logo_image=logo_image,
+        logo_mime_type="image/png" if logo_image else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_edit_request_omits_response_format_and_preserves_multipart_fields() -> None:
+    RecordingAsyncClient.responses = [
+        httpx.Response(200, json={"data": [{"b64_json": "Z2VuZXJhdGVkLXBuZw=="}]})
+    ]
+
+    result = await _professionalize(_provider(), logo_image=b"logo-png")
+
+    assert result.output == b"generated-png"
+    request = RecordingAsyncClient.calls[0]
+    assert request["url"] == "https://api.openai.com/v1/images/edits"
+    assert request["headers"] == {"Authorization": "Bearer test-provider-key"}
+    assert request["data"] == {
+        "model": "configured-image-model",
+        "prompt": (
+            "Make this brochure professional.\\n\\nImmutable commercial facts (preserve exactly):\\n"
+            '{"market_name":"LeafletPilot Market"}'
+        ),
+        "size": "1024x1536",
+    }
+    assert "response_format" not in request["data"]
+    assert request["files"] == [
+        ("image[]", ("approved-brochure.png", b"source-png", "image/png")),
+        ("image[]", ("market-logo", b"logo-png", "image/png")),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_image_edit_unknown_parameter_response_is_a_non_retryable_provider_error() -> None:
+    RecordingAsyncClient.responses = [
+        httpx.Response(
+            400,
+            json={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "unknown_parameter",
+                    "param": "response_format",
+                    "message": "Unknown parameter: 'response_format'.",
+                }
+            },
+        )
+    ]
+
+    with pytest.raises(AIProviderError, match="rejected the request \\(400\\)"):
+        await _professionalize(_provider())
+
+    assert len(RecordingAsyncClient.calls) == 1
+    assert "response_format" not in RecordingAsyncClient.calls[0]["data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "error_type"),
+    [
+        (httpx.Response(401), AIProviderAuthenticationError),
+        (httpx.Response(503), AIProviderTransientError),
+        (httpx.Response(200, json={"data": [{}]}), AIProviderOutputError),
+    ],
+)
+async def test_image_edit_error_mappings_remain_intact(
+    response: httpx.Response, error_type: type[Exception]
+) -> None:
+    RecordingAsyncClient.responses = [response]
+
+    with pytest.raises(error_type):
+        await _professionalize(_provider())
