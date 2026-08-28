@@ -365,7 +365,7 @@ async def update_template(
     for key, value in updates.items():
         setattr(template, key, value)
     if updates:
-        template.version += 1
+        template.version = (template.version or 0) + 1
     return await _persist(session, template)
 
 
