@@ -47,7 +47,14 @@ async def test_market_cannot_update_global_template(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_market_owned_template_update_remains_allowed(monkeypatch):
-    template = Template(id=uuid4(), name="Market", slug="market", is_global=False, market_id=uuid4())
+    template = Template(
+        id=uuid4(),
+        name="Market",
+        slug="market",
+        is_global=False,
+        market_id=uuid4(),
+        version=None,
+    )
     persisted = []
 
     async def get_template(*args, **kwargs):
@@ -63,7 +70,33 @@ async def test_market_owned_template_update_remains_allowed(monkeypatch):
     result = await template_service.update_template(object(), template.id, TemplateUpdate(name="Updated"), template.market_id)
 
     assert result.name == "Updated"
+    assert result.version == 1
     assert persisted == [template]
+
+
+@pytest.mark.asyncio
+async def test_market_owned_template_update_increments_existing_version(monkeypatch):
+    template = Template(
+        id=uuid4(),
+        name="Market",
+        slug="market",
+        is_global=False,
+        market_id=uuid4(),
+        version=7,
+    )
+
+    async def get_template(*args, **kwargs):
+        return template
+
+    async def persist(session, value):
+        return value
+
+    monkeypatch.setattr(template_service, "get_template", get_template)
+    monkeypatch.setattr(template_service, "_persist", persist)
+
+    result = await template_service.update_template(object(), template.id, TemplateUpdate(name="Updated"), template.market_id)
+
+    assert result.version == 8
 
 
 async def _return(value):
