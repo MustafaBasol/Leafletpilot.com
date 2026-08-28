@@ -29,11 +29,11 @@ test("finalization sends the object body and market id as the third API argument
     exportFormats: [{ id: "pdf" }],
   });
 
-  assert.deepEqual(calls, [[
+  assert.deepEqual(calls[0], [
     "campaign-42",
     { expected_revision: 7 },
     "market-9",
-  ]]);
+  ]);
   assert.equal(typeof calls[0][1], "object");
   assert.notEqual(calls[0][1], "market-9");
   assert.deepEqual(calls[1], ["navigate", "campaign-42"]);
