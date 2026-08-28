@@ -1005,7 +1005,7 @@ export function CampaignDetail({ campaignId, view = "" }) {
           >
             {rows.map((product, index) => (
               <tr key={product.id}>
-                <td><ProductThumbnail label={product.matchedProduct || product.incomingName} hasImage={product.image} /></td>
+                <td><ProductThumbnail label={product.matchedProduct || product.incomingName} alt={product.matchedProduct || product.incomingName} hasImage={product.image} imageUrl={product.effectiveImageUrl} marketId={campaign.marketId} refreshKey={product.effectiveImageRefreshKey} /></td>
                 <td>{product.incomingName}{product.rawLine ? <small>{product.rawLine}</small> : null}</td>
                 <td><strong>{product.matchedProduct}</strong></td>
                 <td>{product.price}</td>

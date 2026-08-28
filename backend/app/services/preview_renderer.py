@@ -9,6 +9,7 @@ from typing import Any
 
 from app.models import Campaign, Template
 from app.services.catalog import resolve_effective_product
+from app.services.campaign_item_images import resolve_effective_campaign_item_image
 from app.services.image_pipeline import stored_flyer_image_has_alpha
 from app.services.merchandising import create_composition_plan
 from app.schemas.template import normalize_page_format
@@ -271,16 +272,17 @@ def _live_payload(
     result = {"contract_version": 3, "template_id": str(template.id) if template else None, "template_version": getattr(template, "version", None), "template_name": getattr(template, "name", None), "template_slug": configured_layout, "layout_family": layout_family, "template_config": config, "campaign_id": str(campaign.id), "market_id": str(campaign.market_id), "title": builder_config.get("headline") or campaign.title, "language": campaign.language, "currency": campaign.currency, "market_name": market_profile.get("name"), "market_profile": market_profile, "footer_contacts": profile_footer_lines(market_profile), "header": header, "builder_config": builder_config, "items": []}
     for item in sorted(visible_items, key=lambda x: (x.sort_order, str(x.id))):
         mp = getattr(item, "_market_product", None) or item.market_product; product = item.product; effective = resolve_effective_product(product, mp)
+        effective_image = resolve_effective_campaign_item_image(item, campaign.market_id, market_product=mp)
         global_image = next((i for i in (getattr(product, "images", []) or []) if i.is_primary and getattr(i, "quality_status", None) != "missing"), None)
         override_image = item.image_override
         market_image = getattr(mp, "image_storage_key", None)
-        image = getattr(override_image, "storage_key", None) or market_image or getattr(global_image, "storage_key", None)
+        image = effective_image.storage_key
         image_has_alpha = (
             getattr(override_image, "has_transparent_background", None)
-            if override_image is not None
-            else (stored_flyer_image_has_alpha(market_image) if market_image else getattr(global_image, "has_transparent_background", None))
+            if effective_image.source == "campaign_override"
+            else (stored_flyer_image_has_alpha(market_image) if effective_image.source == "market_product" else getattr(global_image, "has_transparent_background", None))
         )
-        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": getattr(override_image, "mime_type", None) or getattr(mp, "image_mime_type", None) or getattr(global_image, "mime_type", None) or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
+        result["items"].append({"id": str(item.id), "name": item.display_name or item.incoming_name, "resolved_name": effective.name, "brand": getattr(mp, "private_brand_text", None) or getattr(getattr(product, "brand", None), "name", None), "image_key": image, "image_mime_type": effective_image.mime_type or "image/png", "image_has_alpha": image_has_alpha, "price": _str(item.price), "old_price": _str(item.old_price), "promo_price": _str(getattr(mp, "promo_price", None) or getattr(product, "promo_price", None)), "currency": item.currency or getattr(mp, "currency", None) or campaign.currency, "package_size": getattr(mp, "private_package_size", None) or getattr(product, "package_size", None), "package_type": getattr(mp, "private_package_type", None) or getattr(product, "package_type", None), "unit_label": item.unit_label, "quantity_label": item.quantity_label, "badge": getattr(mp, "badge_text", None) or getattr(product, "badge_text", None), "stock_note": getattr(mp, "stock_note", None), "sort_order": item.sort_order})
         result["items"][-1].update(
             category=item.category_hint or (str(effective.category_id) if effective.category_id else None),
             is_hero=bool(item.is_hero),

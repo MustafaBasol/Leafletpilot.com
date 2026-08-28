@@ -406,6 +406,9 @@ async def get_campaign(
     if campaign is None:
         raise _not_found("Campaign")
     campaign.items.sort(key=lambda item: (item.sort_order, item.created_at, str(item.id)))
+    from app.services.campaign_item_images import enrich_campaign_detail_images
+
+    await enrich_campaign_detail_images(session, campaign)
     return campaign
 
 

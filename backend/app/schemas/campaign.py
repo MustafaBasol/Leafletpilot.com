@@ -109,6 +109,9 @@ class CampaignItemRead(BaseModel):
     is_hidden: bool = False
     emphasis: str = "normal"
     image_override_product_image_id: UUID | None = None
+    effective_image_url: str | None = None
+    effective_image_source: str | None = None
+    effective_image_refresh_key: str | None = None
     match_confidence: Decimal | None
     matching_notes: str | None
     parsed_payload: dict[str, Any] | None
