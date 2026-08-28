@@ -9,6 +9,7 @@ from app.core.roles import MarketRole
 from app.schemas.common import ListResponse
 from app.schemas.template import TemplateCreate, TemplatePreviewResponse, TemplateRead, TemplateUpdate
 from app.services import templates as template_service
+from app.services.template_gallery import generated_preview_path, recommendation_for
 from app.services.template_presets import FLYER_PRESETS, SUPERMARKET_PRESETS, SUPERMARKET_STYLE_OPTIONS
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -72,6 +73,41 @@ async def delete_market_thumbnail(template_id: UUID, market_id: UUID = Depends(r
         raise template_service._global_mutation_forbidden()
     await template_service.remove_thumbnail(session, template)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{template_id}/default", response_model=TemplateRead)
+async def set_default_template(template_id: UUID, market_id: UUID = Depends(require_market_role(MarketRole.MARKET_ADMIN)), session: AsyncSession = Depends(get_catalog_session)) -> TemplateRead:
+    """Keep the existing market default-template semantic behind a compact UI action."""
+    template = await template_service.get_template(session, template_id, market_id)
+    if template.is_global or template.market_id != market_id or not template.is_active:
+        raise template_service._global_mutation_forbidden()
+    from app.models import Market
+    market = await session.get(Market, market_id)
+    if market is None:
+        raise template_service._not_found()
+    market.default_template_id = template.id
+    await session.commit()
+    return template
+
+
+@router.get("/{template_id}/preview-thumbnail", include_in_schema=False)
+async def generated_preview_thumbnail(template_id: UUID, market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)):
+    """Renderer-produced PNG. Access is guarded by the normal template scope."""
+    template = await template_service.get_template(session, template_id, market_id)
+    return FileResponse(await generated_preview_path(template), media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/gallery")
+async def template_gallery(product_count: int | None = Query(default=None, ge=1, le=100), market_id: UUID = Depends(get_current_market_id), session: AsyncSession = Depends(get_catalog_session)) -> dict:
+    """A deduplicated gallery: stock templates appear once; adopted copies stay hidden."""
+    templates, _ = await template_service.list_templates(session, market_id=market_id, include_global=True, search=None, is_active=None, is_global=None, limit=200, offset=0)
+    mine = [item for item in templates if not item.is_global and item.source_template_id is None]
+    ready = [item for item in templates if item.is_global and item.is_active and item.status == "published"]
+    adopted = {item.source_template_id for item in templates if not item.is_global and item.source_template_id is not None}
+    from app.models import Market
+    market = await session.get(Market, market_id)
+    recommended = recommendation_for([*ready, *mine], product_count, getattr(market, "default_template_id", None))
+    return {"recommended": recommended, "ready": ready, "mine": mine, "adopted_template_ids": [str(item) for item in adopted if item], "product_count": product_count}
 
 
 @router.get("/{template_id}/thumbnail", include_in_schema=False)

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 Color = str
@@ -156,6 +156,30 @@ class TemplateRead(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def ideal_product_min(self) -> int:
+        from app.services.template_gallery import suitability_for_template
+        return suitability_for_template(self.slug, self.config_json).minimum
+
+    @computed_field
+    @property
+    def ideal_product_max(self) -> int:
+        from app.services.template_gallery import suitability_for_template
+        return suitability_for_template(self.slug, self.config_json).maximum
+
+    @computed_field
+    @property
+    def user_description(self) -> str:
+        from app.services.template_gallery import suitability_for_template
+        return suitability_for_template(self.slug, self.config_json).description
+
+    @computed_field
+    @property
+    def display_category(self) -> str:
+        from app.services.template_gallery import suitability_for_template
+        return suitability_for_template(self.slug, self.config_json).category
 
 
 class TemplatePreviewResponse(BaseModel):

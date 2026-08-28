@@ -28,3 +28,5 @@ export function getTemplatePresets(marketId) { return apiClient.get("/templates/
 export function uploadTemplateThumbnail(templateId, file, marketId) {
   return apiClient.post(`/templates/${templateId}/thumbnail`, file, { marketId, headers: { "Content-Type": file.type || "application/octet-stream" } });
 }
+
+export function setDefaultTemplate(templateId, marketId) { return apiClient.post(`/templates/${templateId}/default`, {}, { marketId }); }

@@ -364,6 +364,8 @@ async def update_template(
         updates["market_id"] = resolve_market_scope(updates["is_global"], market_id)
     for key, value in updates.items():
         setattr(template, key, value)
+    if updates:
+        template.version += 1
     return await _persist(session, template)
 
 
