@@ -21,7 +21,10 @@ def campaign_render_load_options():
         selectinload(Campaign.items)
         .selectinload(CampaignItem.product)
         .selectinload(Product.images),
-        selectinload(Campaign.items).selectinload(CampaignItem.market_product),
+        selectinload(Campaign.items)
+        .selectinload(CampaignItem.market_product)
+        .selectinload(MarketProduct.product)
+        .selectinload(Product.images),
         selectinload(Campaign.items).selectinload(CampaignItem.image_override),
     )
 
@@ -43,7 +46,9 @@ async def get_campaign_for_render(
     market_product_ids = [item.market_product_id for item in campaign.items if item.market_product_id]
     if product_ids:
         rows = await session.scalars(
-            select(MarketProduct).where(MarketProduct.market_id == market_id, MarketProduct.product_id.in_(product_ids))
+            select(MarketProduct)
+            .options(selectinload(MarketProduct.product).selectinload(Product.images))
+            .where(MarketProduct.market_id == market_id, MarketProduct.product_id.in_(product_ids))
         )
         by_product = {row.product_id: row for row in rows}
         for item in campaign.items:
@@ -51,7 +56,9 @@ async def get_campaign_for_render(
                 item._market_product = by_product[item.product_id]
     if market_product_ids:
         rows = await session.scalars(
-            select(MarketProduct).where(MarketProduct.market_id == market_id, MarketProduct.id.in_(market_product_ids))
+            select(MarketProduct)
+            .options(selectinload(MarketProduct.product).selectinload(Product.images))
+            .where(MarketProduct.market_id == market_id, MarketProduct.id.in_(market_product_ids))
         )
         by_id = {row.id: row for row in rows}
         for item in campaign.items:

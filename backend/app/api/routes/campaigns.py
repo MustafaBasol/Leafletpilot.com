@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -169,6 +169,28 @@ async def get_campaign(
     return await campaign_service.get_campaign(session, campaign_id, market_id)
 
 
+@router.get("/{campaign_id}/items/{item_id}/image/content", include_in_schema=False)
+async def campaign_item_image_content(
+    campaign_id: UUID,
+    item_id: UUID,
+    market_id: UUID = Depends(get_required_market_id),
+    session: AsyncSession = Depends(get_campaign_session),
+):
+    """Serve the exact effective campaign image behind a tenant-scoped URL."""
+    from app.services.campaign_item_images import get_campaign_item_effective_image
+    from app.services.rendering import storage_path_for_key
+
+    image = await get_campaign_item_effective_image(session, campaign_id, item_id, market_id)
+    if image is None or not image.storage_key:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    path = storage_path_for_key(image.storage_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found.")
+    return FileResponse(
+        path,
+        media_type=image.mime_type or "application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/{campaign_id}/revisions", response_model=list[CampaignRevisionRead])

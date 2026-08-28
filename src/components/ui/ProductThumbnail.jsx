@@ -7,7 +7,7 @@ const sizeClasses = {
   lg: "product-thumb--lg",
 };
 
-export function ProductThumbnail({ label, hasImage = true, imageUrl = "", marketId = "", refreshKey = "", size = "sm" }) {
+export function ProductThumbnail({ label, alt = "", hasImage = true, imageUrl = "", marketId = "", refreshKey = "", size = "sm" }) {
   const [source, setSource] = useState(null);
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export function ProductThumbnail({ label, hasImage = true, imageUrl = "", market
 
   return (
     <span className={`product-thumb ${sizeClass} ${hasImage ? "" : "is-empty"}`.trim()}>
-      {showImage ? <img src={source.src} alt="" aria-hidden="true" onError={() => setSource({ error: true })} /> : source?.loading ? null : source?.error || !hasImage ? "Yok" : label.slice(0, 2).toUpperCase()}
+      {showImage ? <img src={source.src} alt={alt || label || "Ürün görseli"} onError={() => setSource({ error: true })} /> : source?.loading ? null : source?.error || !hasImage ? "Yok" : label.slice(0, 2).toUpperCase()}
     </span>
   );
 }

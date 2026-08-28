@@ -41,3 +41,9 @@ test("stale image requests cannot overwrite the latest thumbnail", () => {
   assert.match(componentSource, /active = false;[\s\S]*controller\.abort\(\);/);
   assert.match(componentSource, /if \(!active\) \{[\s\S]*return;[\s\S]*\}[\s\S]*setSource\(nextSource\)/);
 });
+
+test("loaded thumbnails provide meaningful alt text and retain broken-image fallback", () => {
+  assert.match(componentSource, /alt = ""/);
+  assert.match(componentSource, /alt=\{alt \|\| label \|\| "Ürün görseli"\}/);
+  assert.match(componentSource, /onError=\{\(\) => setSource\(\{ error: true \}\)\}/);
+});

@@ -63,6 +63,15 @@ test("failed export jobs surface an error instead of a success notice", () => {
   assert.match(dataSource, /if \(job\?\.status === "failed"\)/);
   assert.match(dataSource, /throw new Error\(job\.error_message \|\| "Çıktı üretilemedi/);
 });
+
+test("Campaign Detail uses the server-resolved effective image with accessible thumbnail fallback", () => {
+  assert.match(dataSource, /effective_image_url/);
+  assert.match(dataSource, /image: Boolean\(item\.effective_image_url\)/);
+  assert.match(page, /imageUrl=\{product\.effectiveImageUrl\}/);
+  assert.match(page, /refreshKey=\{product\.effectiveImageRefreshKey\}/);
+  assert.match(page, /alt=\{product\.matchedProduct \|\| product\.incomingName\}/);
+  assert.match(page, /marketId=\{campaign\.marketId\}/);
+});
 test("an explicit ?view=preview request scrolls to and focuses the real preview section", () => {
   assert.match(page, /export function CampaignDetail\(\{ campaignId, view = "" \}\)/);
   assert.match(page, /if \(view !== "preview" \|\| isLoading\) return;/);
