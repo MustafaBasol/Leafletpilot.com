@@ -23,7 +23,7 @@ test("finalization sends the object body and market id as the third API argument
     persistDraft: async () => persistedDraft,
     finalize: async (...args) => calls.push(args),
     createExport: async () => assert.fail("no export format was selected"),
-    navigate: () => assert.fail("navigation is asserted separately"),
+    navigate: (id) => calls.push(["navigate", id]),
     selectedMarketId: "market-9",
     selectedFormats: [],
     exportFormats: [{ id: "pdf" }],
@@ -35,7 +35,7 @@ test("finalization sends the object body and market id as the third API argument
     "market-9",
   ]]);
   assert.equal(typeof calls[0][1], "object");
-  assert.notEqual(calls[0][1], "market-9");
+  assert.notEqual(calls[0][1], "market-9");\n  assert.deepEqual(calls[1], ["navigate", "campaign-42"]);
 });
 
 test("a failed finalize does not create exports or navigate", async () => {
