@@ -2300,6 +2300,8 @@ tbody tr:hover {
 }
 .template-preview-page {
   aspect-ratio: 210 / 297;
+  width: min(100%, 360px);
+  margin-inline: auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -5182,3 +5184,19 @@ tbody tr:hover {
 .template-gallery-card .template-thumb { height:240px; min-height:240px; }
 .template-gallery-card .template-thumb img { min-height:240px; object-fit:cover; }
 @media (max-width: 700px) { .template-management-grid { grid-template-columns:1fr; } .gallery-controls input { flex-basis:100%; } .template-preview-modal .template-thumb { min-height:300px; } }
+/* Builder preview mirrors the canonical persisted page-format and retail style tokens. */
+.template-preview-page.is-landscape { aspect-ratio: 297 / 210; width: min(100%, 480px); }
+.template-preview-page.retail-price-bold .template-preview-price { width: 94%; border: 0; background: transparent; box-shadow: none; }
+.template-preview-page.retail-price-bold .template-preview-price strong { font-size: 1.35em; }
+.template-preview-page.retail-price-compact .template-preview-price { width: 62%; min-height: 0; padding: 2px 3px; }
+.template-preview-page.retail-price-compact .template-preview-price strong { font-size: .8em; }
+.template-preview-page.retail-price-panel .template-preview-price { border-left: 4px solid var(--retail-price); background: var(--retail-price-panel); }
+.template-preview-page.retail-price-split .template-preview-price strong sup { font-size: .58em; vertical-align: baseline; }
+.template-preview-page.retail-badge-sticker .template-preview-price b { border-radius: 3px; transform: rotate(-4deg); }
+
+/* Gallery cards use a fixed, undistorted viewport; the full modal remains large. */
+.template-management-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.gallery-template-card .template-thumbnail, .gallery-template-card .template-thumb { height: 170px; min-height: 170px; }
+.gallery-template-card .template-thumb img { min-height: 170px; object-fit: contain; }
+.gallery-template-card .template-thumb iframe { transform: scale(.14); transform-origin: top left; }
+@media (max-width: 1040px) { .template-management-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

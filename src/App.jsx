@@ -66,7 +66,7 @@ function Page({ path, sessionVersion }) {
   if (pathname === "/dashboard") return <Dashboard />;
   if (pathname === "/campaigns") return <Campaigns />;
   if (pathname === "/campaigns/new") {
-    return <NewCampaign sourceCampaignId={new URLSearchParams(search).get("source") || ""} />;
+    return <NewCampaign sourceCampaignId={new URLSearchParams(search).get("source") || ""} templateId={new URLSearchParams(search).get("template_id") || ""} />;
   }
   if (pathname.startsWith("/campaigns/") && pathname.endsWith("/edit")) {
     return <NewCampaign editCampaignId={pathname.slice("/campaigns/".length, -"/edit".length)} />;

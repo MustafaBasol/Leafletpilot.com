@@ -27,8 +27,8 @@ const retailToggles = [
 
 const optionLabels = {
   burst: "Dinamik", band: "Bant", minimal: "Minimal", shadow: "Gölgeli", outlined: "Çerçeveli",
-  rounded: "Yuvarlak", panel: "Panel", ticket: "Etiket", split: "Çerçeve", pill: "Kapsül",
-  sticker: "Çıkartma", ribbon: "Şerit", stage: "Sahne", cutout: "Dekupe", photo: "Fotoğraf",
+  rounded: "Yuvarlak", bold: "Büyük fiyat", compact: "Kompakt", panel: "Fiyat paneli", ticket: "Etiket", split: "Bölünmüş fiyat", pill: "Yuvarlak rozet",
+  square: "Kare rozet", sticker: "Etiket rozeti", ribbon: "Şerit", stage: "Sahne", cutout: "Dekupe", photo: "Fotoğraf",
 };
 
 function buildInitialForm(template) {
@@ -80,8 +80,8 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
   const config = form.config_json;
   const isSupermarket = config.layout.startsWith("supermarket-");
   const densityName = config.slot_count === 4 ? "editorial" : config.slot_count === 9 ? "weekly" : "compact";
-  const previewPriceStyle = config.price_style === "bold" ? "panel" : config.price_style === "compact" ? "split" : config.price_style;
-  const previewBadgeStyle = config.badge_style === "square" ? "sticker" : config.badge_style;
+  const isLandscape = config.page_format === "a4_landscape";
+  const gridIsSupported = [4, 6, 9, 12, 16].includes(config.slot_count);
 
   useEffect(() => {
     setForm(initial);
@@ -99,6 +99,13 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
   }
   function field(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   function configField(key, value) { setForm((current) => ({ ...current, config_json: { ...current.config_json, [key]: value } })); }
+  function gridField(key, rawValue) {
+    const value = Math.max(1, Math.min(4, Number(rawValue) || 1));
+    setForm((current) => {
+      const next = { ...current.config_json, [key]: value };
+      return { ...current, config_json: { ...next, slot_count: next.columns * next.rows, grid_preset: null } };
+    });
+  }
   function choosePreset(slug) {
     const preset = presets.items.find((item) => item.slug === slug);
     if (preset) setForm((current) => ({ ...current, config_json: { ...current.config_json, layout: slug, columns: preset.columns, rows: preset.rows, slot_count: preset.columns * preset.rows } }));
@@ -111,14 +118,14 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
     onSave({ ...form, name: form.name.trim(), description: form.description.trim() || null, category: form.category.trim(), is_global: false });
   }
 
-  return <Modal className="template-builder-modal" title={template ? "Şablonu düzenle" : "Özel şablon oluştur"} description="Ayarları değiştirirken gerçek düzenin canlı önizlemesini izleyin." onClose={close} footer={<><Button onClick={close} disabled={busy}>Vazgeç</Button><Button variant="primary" type="submit" form="template-builder-form" disabled={busy}>{busy ? "Kaydediliyor..." : "Kaydet"}</Button></>}>
+  return <Modal className="template-builder-modal" title={template ? "Şablonu düzenle" : "Özel şablon oluştur"} description="Ayarları değiştirirken gerçek düzenin canlı önizlemesini izleyin." onClose={close} footer={<><Button onClick={close} disabled={busy}>Vazgeç</Button><Button variant="primary" type="submit" form="template-builder-form" disabled={busy || !gridIsSupported}>{busy ? "Kaydediliyor..." : "Kaydet"}</Button></>}>
     <div className="template-builder-layout">
       <form id="template-builder-form" className="template-builder-form" onSubmit={submit}>
         <label className="field"><span>Şablon adı *</span><input value={form.name} onChange={(e) => field("name", e.target.value)} aria-invalid={submitted && !form.name.trim()} required />{submitted && !form.name.trim() ? <small className="form-error">Şablon adı zorunludur.</small> : null}</label>
         <label className="field"><span>Açıklama</span><textarea value={form.description} onChange={(e) => field("description", e.target.value)} /></label>
         <div className="form-grid"><label className="field"><span>Kategori *</span><input value={form.category} onChange={(e) => field("category", e.target.value)} required /></label><label className="field"><span>Tür</span><select value={form.template_type} onChange={(e) => field("template_type", e.target.value)}><option value="market">Market broşürü</option><option value="flyer">El ilanı</option></select></label></div>
         <div className="form-grid"><label className="field"><span>Düzen</span><select value={config.layout} onChange={(e) => choosePreset(e.target.value)}>{presets.items.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select></label><label className="field"><span>Sayfa formatı</span><select value={config.page_format} onChange={(e) => configField("page_format", e.target.value)}>{presets.page_formats.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label></div>
-        <div className="form-grid"><label className="field"><span>Sütun</span><input readOnly value={config.columns} /></label><label className="field"><span>Satır</span><input readOnly value={config.rows} /></label><label className="field"><span>Sayfa kapasitesi</span><input readOnly value={config.slot_count} /></label></div>
+        <div className="form-grid"><label className="field"><span>Sütun</span><input type="number" min="1" max="4" value={config.columns} onChange={(e) => gridField("columns", e.target.value)} /></label><label className="field"><span>Satır</span><input type="number" min="1" max="4" value={config.rows} onChange={(e) => gridField("rows", e.target.value)} /></label><label className="field"><span>Sayfa kapasitesi</span><input readOnly value={config.slot_count} /><small>Sütun × satır. {gridIsSupported ? "Geçerli düzen kapasitesi." : "Kaydetmek için 4, 6, 9, 12 veya 16 ürün seçin."}</small></label></div>
         <div className="form-grid"><label className="field"><span>Ana renk</span><input type="color" value={config.primary_color} onChange={(e) => configField("primary_color", e.target.value)} /></label><label className="field"><span>Arka plan</span><input type="color" value={config.secondary_color} onChange={(e) => configField("secondary_color", e.target.value)} /></label></div>
         {isSupermarket ? <fieldset className="retail-token-controls"><legend>Market görsel dili</legend>
           <p className="retail-layout-hint">{"\u0130lk \u00fcr\u00fcn \u00f6ne \u00e7\u0131kar; kampanyada se\u00e7ilen \u00f6ne \u00e7\u0131kan \u00fcr\u00fcn bu hiyerar\u015fiyi devral\u0131r."}</p>
@@ -138,13 +145,13 @@ export function TemplateBuilderModal({ template, presets, busy, error, onClose, 
         </fieldset> : null}
         <fieldset className="template-toggle-grid"><legend>Görünür alanlar</legend>{toggles.map(([key, label]) => <label key={key}><input type="checkbox" checked={config[key]} onChange={(e) => configField(key, e.target.checked)} /> {label}</label>)}</fieldset>
         {isSupermarket ? <fieldset className="template-toggle-grid"><legend>Market başlık ve alt alanları</legend>{retailToggles.map(([key, label]) => <label key={key}><input type="checkbox" checked={config[key]} onChange={(e) => configField(key, e.target.checked)} /> {label}</label>)}</fieldset> : null}
-        <div className="form-grid"><label className="field"><span>Fiyat stili</span><select value={config.price_style} onChange={(e) => configField("price_style", e.target.value)}>{presets.price_styles.map((value) => <option key={value}>{value}</option>)}</select></label><label className="field"><span>Rozet stili</span><select value={config.badge_style} onChange={(e) => configField("badge_style", e.target.value)}>{presets.badge_styles.map((value) => <option key={value}>{value}</option>)}</select></label></div>
+        <div className="form-grid"><label className="field"><span>Fiyat stili</span><select value={config.price_style} onChange={(e) => configField("price_style", e.target.value)}>{presets.price_styles.map((value) => <option key={value} value={value}>{optionLabels[value] || value}</option>)}</select><small>{config.price_style === "compact" ? "Daha fazla ürün için daha küçük fiyat alanı." : config.price_style === "panel" ? "Fiyatı renkli bir panel içinde öne çıkarır." : config.price_style === "ticket" ? "Fiyatı etiket biçiminde gösterir." : config.price_style === "split" ? "Tam ve kuruş bilgisini ayrı vurgular." : "Büyük fiyatı ön plana çıkarır."}</small></label><label className="field"><span>Rozet stili</span><select value={config.badge_style} onChange={(e) => configField("badge_style", e.target.value)}>{presets.badge_styles.map((value) => <option key={value} value={value}>{optionLabels[value] || value}</option>)}</select><small>İndirim ve promosyon rozetinin görünümünü belirler.</small></label></div>
         <label className="field"><span>Küçük görsel (PNG, JPEG veya WebP)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => field("thumbnail", e.target.files?.[0] || null)} /></label>
         <label><input type="checkbox" checked={form.is_active} onChange={(e) => field("is_active", e.target.checked)} /> Şablon aktif</label>
         {error ? <p className="inline-result inline-result-warning">{error}</p> : null}
       </form>
       <div className="template-live-preview" style={{ "--template-primary": isSupermarket ? config.background_start : config.primary_color, "--template-background": isSupermarket ? config.background_end : config.secondary_color, "--retail-card": config.card_background, "--retail-border": config.card_border_color, "--retail-price-panel": config.price_panel_background, "--retail-price": config.price_color, "--retail-label": config.brand_label_background }}>
-        <div className={`template-preview-page ${isSupermarket ? `is-supermarket density-${densityName} retail-header-${config.header_style} retail-card-${config.card_style} retail-price-${previewPriceStyle} retail-badge-${previewBadgeStyle} retail-image-${config.image_treatment}` : "is-generic"}`} data-density-profile={isSupermarket ? densityName : undefined}>
+        <div className={`template-preview-page ${isLandscape ? "is-landscape" : "is-portrait"} ${isSupermarket ? `is-supermarket density-${densityName} retail-header-${config.header_style} retail-card-${config.card_style} retail-price-${config.price_style} retail-badge-${config.badge_style} retail-image-${config.image_treatment}` : `is-generic retail-price-${config.price_style} retail-badge-${config.badge_style}`}`} data-density-profile={isSupermarket ? densityName : undefined}>
           <header data-title-visible={String(config.show_header_title)} aria-label="Kampanya ust alani"><small>{config.show_market_name ? "MARKETİNİZ" : ""}</small>{config.show_header_title ? <strong>Haftanın Fırsatları</strong> : null}<em>07–13 Ağustos</em></header>
           <div className="template-preview-products" style={isSupermarket ? undefined : { gridTemplateColumns: `repeat(${config.columns}, 1fr)`, gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))` }}>
             {Array.from({ length: config.slot_count }, (_, index) => {
