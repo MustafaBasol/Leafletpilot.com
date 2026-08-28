@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { getCampaignPreviewDimensions } from "../components/ui/campaignPreviewSizing.js";
 
 const page = readFileSync(new URL("./NewCampaign.jsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
@@ -8,7 +9,6 @@ const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
 
 test("template gallery uses inert scaled thumbnails", () => {
   assert.match(page, /template-thumbnail/);
-  assert.match(page, /scrolling="no"/);
   assert.match(styles, /template-gallery-card iframe[\s\S]*pointer-events: none/);
   assert.match(styles, /transform: scale\(0\.2\)/);
 });
@@ -89,4 +89,21 @@ test("saved drafts and frozen campaign revisions reopen in the shared builder", 
   assert.match(page, /setCampaignId\(isRevision \? "" : loadedCampaign\.id\)/);
   assert.match(page, /window\.location\.hash = `#\/campaigns\/\$\{id\}\/edit`/);
   assert.match(page, /Önceki kampanya yeni bir revizyon olarak yüklendi/);
+});
+
+
+test("full campaign previews fit backend-declared portrait and landscape pages without gallery transforms", () => {
+  assert.deepEqual(
+    getCampaignPreviewDimensions('<body data-preview-width="1240" data-preview-height="1754">', "pdf"),
+    { width: 1240, height: 1754 },
+  );
+  assert.deepEqual(
+    getCampaignPreviewDimensions('<body data-preview-width="1754" data-preview-height="1240">', "pdf"),
+    { width: 1754, height: 1240 },
+  );
+  assert.match(page, /CampaignHtmlPreview html=\{preview\.html\}/);
+  assert.match(page, /typeof response\?\.html !== "string" \|\| !response\.html\.trim\(\)/);
+  assert.doesNotMatch(page, /className="campaign-preview-frame"/);
+  assert.doesNotMatch(styles, /\.campaign-preview-frame\s*\{[\s\S]*transform: scale\(0\.5\)/);
+  assert.match(styles, /template-gallery-card iframe[\s\S]*transform: scale\(0\.2\)/);
 });

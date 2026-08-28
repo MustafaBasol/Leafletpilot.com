@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "validate": "node scripts/validate.mjs",
     "test:platform": "node --test src/pages/platform/platformOps.test.mjs src/pages/platform/platformCatalogUtils.test.mjs src/pages/platform/catalogQuality.test.mjs src/pages/platform/PlatformMarketProductImportModal.test.mjs src/pages/platform/PlatformBilling.test.mjs src/pages/platform/PlatformMarketList.test.mjs src/api/platformApi.test.mjs",
-    "test:campaign": "node --test src/pages/NewCampaign.preview.test.mjs src/pages/CampaignDetail.preview.test.mjs",
+    "test:campaign": "node --test src/pages/newCampaignFinalize.test.mjs src/pages/NewCampaign.preview.test.mjs src/pages/CampaignDetail.preview.test.mjs",
     "test:plans": "node --test src/api/publicApi.test.mjs src/pages/Landing.test.mjs",
     "test:capabilities": "node --test src/routes/capabilities.test.mjs",
     "test:whatsapp": "node --test src/pages/whatsappStatus.test.mjs src/pages/WhatsAppTeamPanel.test.mjs src/pages/platform/whatsappOps.test.mjs src/pages/platform/PlatformWhatsApp.test.mjs",

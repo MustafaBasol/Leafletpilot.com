@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isRealApiEnabled } from "../api/config.js";
 import { getSelectedMarket, getSelectedMarketId, getStoredMarkets } from "../api/authSession.js";
 import { createCampaign, createExportJob, finalizeCampaign, getCampaign, getCampaignBuilderOptions, getCampaignPreviewHtml, parseCampaignText, updateCampaign } from "../api/campaignApi.js";
-import { Button, Card, Input, PageHeader, ProductThumbnail, Stepper, Table, TemplateThumbnail } from "../components/ui/index.js";
+import { Button, CampaignHtmlPreview, Card, Input, PageHeader, ProductThumbnail, Stepper, Table, TemplateThumbnail } from "../components/ui/index.js";
+import { campaignIdFromPersistedDraft, finalizeCampaignAndCreateExports } from "./newCampaignFinalize.js";
 
 const steps = ["Bilgiler", "Ürün Listesi", "Eşleştirme", "Şablon", "Önizleme", "Çıktılar"];
 const outputFormats = [
@@ -171,19 +172,23 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "", templa
     const id = response?.id || response?.campaign_id || response?.campaign?.id;
     if (!id) throw new Error("Backend yanıtında kampanya kimliği bulunamadı.");
     if (!campaignId) setCampaignId(id);
-    return id;
+    return response;
   }
 
   async function loadPreview(format = previewFormat) {
     const requestId = ++previewRequestRef.current;
     setPreviewLoading(true); setPreviewError("");
     try {
-      const id = await persistDraft(format);
+      const persistedDraft = await persistDraft(format);
+      const id = campaignIdFromPersistedDraft(persistedDraft);
       const response = await getCampaignPreviewHtml(id, selectedMarketId, { format, cache_bust: requestId });
       if (requestId !== previewRequestRef.current) return;
+      if (typeof response?.html !== "string" || !response.html.trim()) {
+        throw new Error("Önizleme yanıtı görüntülenebilir HTML içermiyor.");
+      }
       setPreview(response); setNotice("Önizleme seçili ürünler ve şablonla backend tarafından oluşturuldu.");
     } catch (error) {
-      if (requestId === previewRequestRef.current) setPreviewError(errorText(error));
+      if (requestId === previewRequestRef.current) { setPreview(null); setPreviewError(errorText(error)); }
       throw error;
     } finally {
       if (requestId === previewRequestRef.current) setPreviewLoading(false);
@@ -194,7 +199,8 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "", templa
     try {
       setIsBusy(true);
       clearMessages();
-      const id = await persistDraft();
+      const persistedDraft = await persistDraft();
+      const id = campaignIdFromPersistedDraft(persistedDraft);
       setNotice(`Taslak kaydedildi: ${id}`);
       if (!editCampaignId) window.location.hash = `#/campaigns/${id}/edit`;
     } catch (error) {
@@ -207,10 +213,17 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "", templa
   async function finishCampaign() {
     if (isBusy) return;
     try {
-      setIsBusy(true); clearMessages(); const id = await persistDraft(); await finalizeCampaign(id, selectedMarketId);
-      const formats = selectedFormats.filter((format) => exportFormats.some((item) => item.id === format));
-      if (formats.length) await createExportJob(id, { job_type: "final_export", requested_formats: formats }, selectedMarketId);
-      window.location.hash = `#/campaigns/${id}`;
+      setIsBusy(true);
+      clearMessages();
+      await finalizeCampaignAndCreateExports({
+        persistDraft,
+        finalize: finalizeCampaign,
+        createExport: createExportJob,
+        navigate: (id) => { window.location.hash = `#/campaigns/${id}`; },
+        selectedMarketId,
+        selectedFormats,
+        exportFormats,
+      });
     } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); }
   }
 
@@ -255,7 +268,7 @@ export function NewCampaign({ editCampaignId = "", sourceCampaignId = "", templa
       </div> : null}
       {step === 3 ? <Table columns={inputMode === "catalog" ? ["Ürün", "Fiyat", "Eski fiyat", "Para birimi", "Paket"] : ["Ham satır", "Gelen ürün", "Fiyat", "Eski fiyat", "Uyarılar"]}>{selectedItems.map((product, index) => <tr key={product.id || `${product.raw_line}-${index}`}><td>{product.name || product.incoming_name}</td><td>{product.promo_price ?? product.price ?? "-"} {product.currency || currency}</td><td>{product.regular_price ?? product.old_price ?? "-"}</td>{inputMode === "catalog" ? <><td>{product.currency}</td><td>{[product.package_size, product.package_type].filter(Boolean).join(" ") || "-"}</td></> : <td>{product.warnings?.join(", ") || "-"}</td>}</tr>)}</Table> : null}
       {step === 4 ? <div className="template-grid">{templateItems.map((template) => { const minimum = template.ideal_product_min || Math.max(1, Number(template.config_json?.slot_count || 4) - 4); const maximum = template.ideal_product_max || Number(template.config_json?.slot_count || 16); const recommended = selectedItems.length > 0 && selectedItems.length >= minimum && selectedItems.length <= maximum && !templateItems.some((other) => { const otherMin = other.ideal_product_min || Math.max(1, Number(other.config_json?.slot_count || 4) - 4); const otherMax = other.ideal_product_max || Number(other.config_json?.slot_count || 16); return selectedItems.length >= otherMin && selectedItems.length <= otherMax && otherMax < maximum; }); return <button className={`template-card template-gallery-card ${selectedTemplate === template.id ? "is-selected" : ""}`} type="button" aria-pressed={selectedTemplate === template.id} onClick={() => setSelectedTemplate(template.id)} key={template.id}><div className="template-thumbnail"><TemplateThumbnail templateId={template.id} marketId={selectedMarketId} name={template.name} realPreview /></div>{recommended ? <span className="template-recommendation">Önerilen</span> : null}<strong>{template.name}</strong><small>{template.user_description || "Kampanyanız için dengeli tasarım"}</small><span>{minimum}–{maximum} ürün</span></button>; })}</div> : null}
-      {step === 5 ? <div className="stack-list"><label className="field"><span>Önizleme boyutu</span><select value={previewFormat} onChange={async (event) => { const value = event.target.value; setPreviewFormat(value); try { setIsBusy(true); await loadPreview(value); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }}>{outputFormats.map((format) => <option key={format.id} value={format.id}>{format.label}</option>)}</select></label>{previewLoading ? <p className="inline-result">Önizleme yenileniyor...</p> : null}{previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}{preview?.html ? <div className={`campaign-preview-viewport preview-format-${previewFormat}`}><iframe className="campaign-preview-frame" title="Kampanya önizlemesi" srcDoc={preview.html} sandbox="" scrolling="no" /></div> : <p>Önizleme henüz oluşturulmadı.</p>}<div className="form-grid"><Input label="Başlık" value={builderConfig.headline} onChange={(event) => setBuilderConfig((current) => ({ ...current, headline: event.target.value }))} /><Input label="Alt başlık" value={builderConfig.subtitle} onChange={(event) => setBuilderConfig((current) => ({ ...current, subtitle: event.target.value }))} /><Input label="Alt bilgi" value={builderConfig.footer} onChange={(event) => setBuilderConfig((current) => ({ ...current, footer: event.target.value }))} /></div><Button onClick={async () => { try { setIsBusy(true); await loadPreview(); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }} disabled={isBusy}>{previewLoading ? "Yenileniyor..." : "Önizlemeyi yenile"}</Button></div> : null}
+      {step === 5 ? <div className="stack-list"><label className="field"><span>Önizleme boyutu</span><select value={previewFormat} onChange={async (event) => { const value = event.target.value; setPreviewFormat(value); try { setIsBusy(true); await loadPreview(value); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }}>{outputFormats.map((format) => <option key={format.id} value={format.id}>{format.label}</option>)}</select></label>{previewLoading ? <p className="inline-result">Önizleme yenileniyor...</p> : null}{previewError ? <p className="inline-result inline-result-warning">{previewError}</p> : null}{preview?.html ? <CampaignHtmlPreview html={preview.html} title="Kampanya önizlemesi" fallbackFormat={previewFormat} /> : !previewError ? <p>Önizleme henüz oluşturulmadı.</p> : null}<div className="form-grid"><Input label="Başlık" value={builderConfig.headline} onChange={(event) => setBuilderConfig((current) => ({ ...current, headline: event.target.value }))} /><Input label="Alt başlık" value={builderConfig.subtitle} onChange={(event) => setBuilderConfig((current) => ({ ...current, subtitle: event.target.value }))} /><Input label="Alt bilgi" value={builderConfig.footer} onChange={(event) => setBuilderConfig((current) => ({ ...current, footer: event.target.value }))} /></div><Button onClick={async () => { try { setIsBusy(true); await loadPreview(); } catch (error) { setApiError(errorText(error)); } finally { setIsBusy(false); } }} disabled={isBusy}>{previewLoading ? "Yenileniyor..." : "Önizlemeyi yenile"}</Button></div> : null}
       {step === 5 ? <label className="check-row">
         <input
           type="checkbox"

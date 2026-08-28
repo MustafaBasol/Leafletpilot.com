@@ -1,6 +1,7 @@
 export { Badge } from "./Badge.jsx";
 export { Button } from "./Button.jsx";
 export { Card } from "./Card.jsx";
+export { CampaignHtmlPreview } from "./CampaignHtmlPreview.jsx";
 export { Checkbox } from "./Checkbox.jsx";
 export { ConfirmDialog } from "./ConfirmDialog.jsx";
 export { EmptyState } from "./EmptyState.jsx";

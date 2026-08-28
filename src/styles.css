@@ -4469,16 +4469,6 @@ tbody tr:hover {
   padding: 0 12px;
   cursor: pointer;
 }
-.campaign-preview-frame {
-  width: 1240px;
-  height: 1754px;
-  border: 0;
-  border-radius: 0;
-  background: #fff;
-  transform: scale(0.5);
-  transform-origin: top left;
-}
-
 /* New Campaign product selection */
 .product-list-step {
   display: block;
@@ -4813,17 +4803,6 @@ tbody tr:hover {
 .campaign-preview-viewport.preview-format-whatsapp {
   width: min(540px, 100%);
   aspect-ratio: 1080 / 1920;
-}
-
-.campaign-preview-viewport.preview-format-instagram_post .campaign-preview-frame,
-.campaign-preview-viewport.preview-format-instagram_story .campaign-preview-frame,
-.campaign-preview-viewport.preview-format-whatsapp .campaign-preview-frame {
-  width: 1080px;
-  height: 1920px;
-}
-
-.campaign-preview-viewport.preview-format-instagram_post .campaign-preview-frame {
-  height: 1080px;
 }
 
 .template-gallery-card {
