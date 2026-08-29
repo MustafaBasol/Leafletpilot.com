@@ -9,7 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tesseract-ocr \
+        tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
@@ -20,6 +23,8 @@ COPY scripts ./scripts
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install . \
+    && tesseract --version \
+    && python -c "import pytesseract; print(pytesseract.get_tesseract_version())" \
     && python -m playwright install --with-deps chromium \
     && groupadd --system leafletpilot \
     && useradd --system --gid leafletpilot --home-dir /app --shell /usr/sbin/nologin leafletpilot \

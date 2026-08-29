@@ -19,6 +19,7 @@ dependencies = [
     # lengths wrong, and a wrong answer there is an identity-matching bug.
     "phonenumbers>=8.13",
     "Pillow>=11.1.0,<12",
+    "pytesseract>=0.3.13",
     "pydantic-settings>=2.7.0",
     "playwright>=1.49.1",
     "pypdf>=5.1.0",
