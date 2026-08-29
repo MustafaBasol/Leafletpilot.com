@@ -13,8 +13,6 @@ RUN apt-get update \
         ca-certificates \
         tesseract-ocr \
         tesseract-ocr-eng \
-        tesseract-ocr-tur \
-        tesseract-ocr-fra \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
