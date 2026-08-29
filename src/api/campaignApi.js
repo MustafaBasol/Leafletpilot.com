@@ -133,6 +133,9 @@ export function createProfessionalizationRun(campaignId, payload, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/professionalization`, payload, { marketId });
 }
 
+export function retryProfessionalization(campaignId, payload, marketId) {
+  return apiClient.post(`/campaigns/${campaignId}/professionalization/retry`, payload, { marketId });
+}
 export function applyProfessionalizationRun(campaignId, runId, marketId) {
   return apiClient.post(`/campaigns/${campaignId}/professionalization/${runId}/apply`, undefined, { marketId });
 }

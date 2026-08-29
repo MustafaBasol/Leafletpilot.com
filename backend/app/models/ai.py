@@ -90,6 +90,7 @@ class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         Index("ix_ai_professionalization_runs_market_campaign", "market_id", "campaign_id"),
         Index("ix_ai_professionalization_runs_campaign_active", "campaign_id", "is_active"),
         Index("ix_ai_professionalization_runs_market_created_at", "market_id", "created_at"),
+        Index("ix_ai_professionalization_runs_source_run", "source_run_id"),
     )
 
     market_id: Mapped[UUID] = mapped_column(ForeignKey("markets.id"), nullable=False)
@@ -104,13 +105,18 @@ class AIProfessionalizationRun(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
     is_active: Mapped[bool] = mapped_column(nullable=False, default=False)
     request_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="automatic")
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="approved_original")
+    source_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("ai_professionalization_runs.id"))
+    user_instruction: Mapped[str | None] = mapped_column(Text)
     source_image_storage_key: Mapped[str | None] = mapped_column(String(1000))
     logo_storage_key: Mapped[str | None] = mapped_column(String(1000))
     generated_image_storage_key: Mapped[str | None] = mapped_column(String(1000))
+    candidate_image_storage_key: Mapped[str | None] = mapped_column(String(1000))
     generated_image_file_id: Mapped[UUID | None] = mapped_column(ForeignKey("campaign_files.id"))
     generated_pdf_storage_key: Mapped[str | None] = mapped_column(String(1000))
     validation_report_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    failure_category: Mapped[str | None] = mapped_column(String(64))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     design_goal: Mapped[str | None] = mapped_column(Text)
     plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

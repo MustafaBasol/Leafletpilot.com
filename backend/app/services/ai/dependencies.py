@@ -20,6 +20,7 @@ def get_ai_revision_service() -> AIRevisionService:
             api_base_url=settings.ai_openai_compatible_api_base_url,
             api_key=settings.ai_openai_compatible_api_key.get_secret_value(),
             timeout_seconds=settings.ai_http_timeout_seconds,
+            image_timeout_seconds=settings.ai_image_http_timeout_seconds,
             max_attempts=settings.ai_http_max_attempts,
         )
     )
@@ -60,6 +61,7 @@ def get_ai_professionalization_service() -> AIProfessionalizationService:
             api_base_url=settings.ai_openai_compatible_api_base_url,
             api_key=settings.ai_openai_compatible_api_key.get_secret_value(),
             timeout_seconds=settings.ai_http_timeout_seconds,
+            image_timeout_seconds=settings.ai_image_http_timeout_seconds,
             max_attempts=settings.ai_http_max_attempts,
         )
     )

@@ -23,6 +23,9 @@ import {
   undoCampaignRevision,
   updateCampaignDetail,
   getProfessionalizationHistory,
+  retryProfessionalization,
+  applyProfessionalizationRun,
+  restoreOriginalProfessionalization,
 } from "../data/dataSource.js";
 import {
   Badge,
@@ -102,6 +105,19 @@ function aiFailureMessage(error) {
   return messages[code] || error?.message || "AI revizyon işlemi tamamlanamadı.";
 }
 
+function professionalizationFailureMessage(reason) {
+  const messages = {
+    provider_timeout: "Görsel üretimi zaman aşımına uğradı. Güvenle tekrar deneyebilirsiniz.",
+    provider_unavailable: "AI görsel hizmeti geçici olarak kullanılamıyor.",
+    ocr_unavailable: "Ticari bilgiler güvenle doğrulanamadı.",
+    ocr_low_confidence: "Ticari bilgiler yeterli güvenle okunamadı.",
+    critical_facts_unverifiable: "Ticari bilgilerin tamamı güvenle doğrulanamadı.",
+    commercial_fact_mismatch: "Üretilen görsel onaylı ticari bilgilerle eşleşmedi.",
+    logo_identity_unverifiable: "Logo kimliği güvenle doğrulanamadı.",
+    snapshot_integrity_failed: "Onaylı kampanya sürümü değişti; orijinal tasarım korunuyor.",
+  };
+  return messages[reason] || "Üretim tamamlanamadı. Orijinal onaylı broşür kullanılmaya devam ediyor.";
+}
 function mapFileForPanel(file) {
   const name = file.storage_key
     ? file.storage_key.split("/").pop()
@@ -260,6 +276,10 @@ export function CampaignDetail({ campaignId, view = "" }) {
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState("");
   const [professionalization, setProfessionalization] = useState({ runs: [], active_run_id: null });
+  const [professionalizationLoading, setProfessionalizationLoading] = useState("");
+  const [professionalizationError, setProfessionalizationError] = useState("");
+  const [professionalizationModalOpen, setProfessionalizationModalOpen] = useState(false);
+  const [professionalizationInstruction, setProfessionalizationInstruction] = useState("");
   const [designView, setDesignView] = useState("original");
   const selectedMarketId = getSelectedMarketId();
   const canEditCampaigns = canMutateCampaigns();
@@ -323,6 +343,15 @@ export function CampaignDetail({ campaignId, view = "" }) {
   }, [campaign.frozenAt, campaignId, selectedMarketId]);
 
   useEffect(() => {
+    if (!["pending", "generating", "validating"].includes(professionalization.current_status)) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadProfessionalization().catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [professionalization.current_status, campaignId, selectedMarketId]);
+  useEffect(() => {
     if (view !== "preview" || isLoading) return;
     const node = previewSectionRef.current;
     if (!node) return;
@@ -376,6 +405,73 @@ export function CampaignDetail({ campaignId, view = "" }) {
   async function loadProfessionalization() {
     if (!isRealApiEnabled || !campaign.frozenAt) return;
     setProfessionalization(await getProfessionalizationHistory(campaignId));
+  }
+
+  async function requestProfessionalization(instruction = "", sourceRunId = null) {
+    try {
+      setProfessionalizationLoading(instruction ? "revision" : "retry");
+      setProfessionalizationError("");
+      await retryProfessionalization(campaignId, {
+        client_request_id: revisionRequestId("professionalization"),
+        instruction: instruction.trim() || null,
+        source_run_id: sourceRunId,
+      });
+      await loadProfessionalization();
+      setProfessionalizationModalOpen(false);
+      setProfessionalizationInstruction("");
+      setNotice("AI profesyonel tasarım isteği alındı.");
+    } catch (error) {
+      setProfessionalizationError(
+        professionalizationFailureMessage(error?.body?.detail?.code),
+      );
+    } finally {
+      setProfessionalizationLoading("");
+    }
+  }
+
+  async function selectProfessionalization(run) {
+    try {
+      setProfessionalizationLoading(`apply-${run.id}`);
+      setProfessionalizationError("");
+      await applyProfessionalizationRun(campaignId, run.id);
+      await loadProfessionalization();
+      setNotice(`AI tasarım sürümü ${run.version_number} kullanıma alındı.`);
+    } catch (error) {
+      setProfessionalizationError(
+        professionalizationFailureMessage(error?.body?.detail?.code),
+      );
+    } finally {
+      setProfessionalizationLoading("");
+    }
+  }
+
+  async function restoreOriginalDesign() {
+    try {
+      setProfessionalizationLoading("original");
+      setProfessionalizationError("");
+      await restoreOriginalProfessionalization(campaignId);
+      setDesignView("original");
+      setPreviewFile(null);
+      await loadProfessionalization();
+      await loadPreview();
+      setNotice("Orijinal onaylı broşür yeniden kullanıma alındı.");
+    } catch (error) {
+      setProfessionalizationError(
+        professionalizationFailureMessage(error?.body?.detail?.code),
+      );
+    } finally {
+      setProfessionalizationLoading("");
+    }
+  }
+
+  function viewProfessionalization(run) {
+    setDesignView("professional");
+    previewFileContent({
+      id: run.generated_image_file_id,
+      rawStatus: "ready",
+      format: "png",
+      name: `AI-profesyonel-surum-${run.version_number}.png`,
+    });
   }
 
   async function prepareAIRevision(event) {
@@ -950,7 +1046,52 @@ export function CampaignDetail({ campaignId, view = "" }) {
         </div>
 
 
-        {campaign.frozenAt && isRealApiEnabled ? (() => { const active = (professionalization.runs || []).find((run) => run.is_active && run.generated_image_file_id); const latest = (professionalization.runs || [])[0]; const state = active ? "Hazır" : (latest?.status === "pending" || latest?.status === "generating" || latest?.status === "validating" ? "Hazırlanıyor" : (latest ? "Başarısız" : "Orijinal tasarım kullanılıyor")); return <Card title="AI profesyonel broşür" className="span-12"><p><strong>{state}</strong>{active ? " — onaylı ticari bilgiler doğrulanmış final görsel kullanıma hazır." : " — orijinal onaylı tasarım kullanıma devam eder."}</p>{active ? <div className="page-actions"><Button variant={designView === "professional" ? "primary" : "secondary"} onClick={() => { setDesignView("professional"); const file = (campaign.files || []).find((item) => item.id === active.generated_image_file_id); if (file) previewFileContent(file); }}>AI Profesyonel Tasarım</Button><Button variant={designView === "original" ? "primary" : "secondary"} onClick={() => { setDesignView("original"); setPreviewFile(null); loadPreview(); }}>Orijinal Tasarım</Button></div> : null}</Card>; })() : null}
+        {campaign.frozenAt && isRealApiEnabled ? (() => {
+          const runs = professionalization.runs || [];
+          const latest = runs[0];
+          const active = runs.find((run) => run.is_active && run.generated_image_file_id);
+          const newestReady = runs.find((run) => ["ready", "applied"].includes(run.status) && run.generated_image_file_id);
+          const viewable = active || newestReady;
+          const isGenerating = ["pending", "generating", "validating"].includes(latest?.status);
+          const failed = ["failed", "rejected"].includes(latest?.status);
+          const sourceLabel = (run) => run.source_type === "previous_ai_output"
+            ? `Sürüm ${runs.find((entry) => entry.id === run.source_run_id)?.version_number || "?"}`
+            : "Orijinal onaylı broşür";
+          return (
+            <Card title="AI Profesyonel Broşür" className="span-12">
+              {isGenerating ? <p><strong>Profesyonel tasarım hazırlanıyor...</strong></p> : null}
+              {!isGenerating && failed ? (
+                <>
+                  <p><strong>Üretim tamamlanamadı.</strong></p>
+                  <p>{professionalizationFailureMessage(latest.failure_reason)}</p>
+                  {active ? <p>Seçili AI sürümü {active.version_number} kullanılmaya devam ediyor.</p> : <p>Orijinal onaylı broşür kullanılmaya devam ediyor.</p>}
+                </>
+              ) : null}
+              {!isGenerating && !failed && newestReady ? <p><strong>Hazır</strong> — doğrulanmış AI profesyonel broşür kullanılabilir.</p> : null}
+              {!latest ? <p>Orijinal onaylı broşür kullanılıyor.</p> : null}
+              {professionalizationError ? <p className="inline-result inline-result-warning">{professionalizationError}</p> : null}
+              <div className="page-actions">
+                {viewable ? <Button onClick={() => viewProfessionalization(viewable)}>AI Tasarımını Görüntüle</Button> : null}
+                {newestReady && !newestReady.is_active ? <Button variant="primary" disabled={Boolean(professionalizationLoading)} onClick={() => selectProfessionalization(newestReady)}>AI Tasarımını Kullan</Button> : null}
+                {professionalization.revise_allowed && viewable ? <Button disabled={Boolean(professionalizationLoading)} onClick={() => { setProfessionalizationInstruction(""); setProfessionalizationModalOpen(true); }}>Yeniden Düzenle</Button> : null}
+                {active ? <Button disabled={Boolean(professionalizationLoading)} onClick={restoreOriginalDesign}>Orijinale Dön</Button> : null}
+                {failed && professionalization.retry_allowed ? <Button variant="primary" disabled={Boolean(professionalizationLoading)} onClick={() => requestProfessionalization()}>Tekrar Dene</Button> : null}
+                {failed && professionalization.retry_allowed ? <Button disabled={Boolean(professionalizationLoading)} onClick={() => { setProfessionalizationInstruction(""); setProfessionalizationModalOpen(true); }}>Talimatla Tekrar Dene</Button> : null}
+              </div>
+              {runs.length ? (
+                <div className="stack-list professionalization-history" aria-label="AI tasarım sürüm geçmişi">
+                  {runs.map((run) => (
+                    <article key={run.id}>
+                      <strong>Sürüm {run.version_number}</strong>
+                      <small>Kaynak: {sourceLabel(run)} · Durum: {run.status === "applied" ? "Kullanımda" : run.status === "ready" ? "Hazır" : ["pending", "generating", "validating"].includes(run.status) ? "Hazırlanıyor" : "Tamamlanamadı"}</small>
+                      {run.user_instruction ? <p>{run.user_instruction}</p> : null}
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </Card>
+          );
+        })() : null}
         <Card title="Eksik Ürünler" className="span-4">
           <div className="stack-list">
             {missingRows.length === 0 ? <p className="catalog-empty">Kontrol gerektiren ürün yok.</p> : null}
@@ -1086,7 +1227,44 @@ export function CampaignDetail({ campaignId, view = "" }) {
       </section>
 
       {canMutateCurrentCampaign ? <MissingProductModal product={selectedMissing} onClose={() => setSelectedMissing(null)} onResolve={resolveProduct} /> : null}
-      {previewFile ? (
+      {professionalizationModalOpen ? (
+        <Modal
+          title="AI tasarımını yeniden düzenle"
+          description="Ürün, fiyat ve kampanya bilgileri değiştirilemez. Bu alan yalnızca görsel tasarım değişiklikleri içindir."
+          onClose={() => { setProfessionalizationModalOpen(false); setProfessionalizationInstruction(""); }}
+          footer={(
+            <>
+              <Button onClick={() => { setProfessionalizationModalOpen(false); setProfessionalizationInstruction(""); }}>Vazgeç</Button>
+              <Button variant="primary" type="submit" form="professionalization-revision-form" disabled={professionalizationLoading === "revision"}>
+                {professionalizationLoading === "revision" ? "Yeniden oluşturuluyor..." : "Yeniden Oluştur"}
+              </Button>
+            </>
+          )}
+        >
+          <form
+            id="professionalization-revision-form"
+            className="form-grid"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const source = (professionalization.runs || []).find((run) => run.is_active && run.generated_image_file_id)
+                || (professionalization.runs || []).find((run) => ["ready", "applied"].includes(run.status) && run.generated_image_file_id);
+              requestProfessionalization(professionalizationInstruction, source?.id || null);
+            }}
+          >
+            <label className="field field-full">
+              <span>Neyi değiştirmek istersiniz?</span>
+              <textarea
+                value={professionalizationInstruction}
+                maxLength={500}
+                required
+                placeholder="Örn. Ürünleri daha büyük göster, boşlukları azalt ve logoyu biraz küçült."
+                onChange={(event) => setProfessionalizationInstruction(event.target.value)}
+              />
+              <small>Yalnızca görsel sunum talimatı yazın; korunan ticari bilgiler her zaman onaylı sürümden alınır.</small>
+            </label>
+          </form>
+        </Modal>
+      ) : null}      {previewFile ? (
         <Modal title={`${previewFile.name} önizleme`} onClose={() => setPreviewFile(null)} className="file-preview-modal">
           {previewFile.type === "application/pdf" ? (
             <iframe className="file-preview-content" src={previewFile.url} title={`${previewFile.name} önizleme`} />

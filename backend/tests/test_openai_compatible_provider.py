@@ -64,12 +64,15 @@ def mock_async_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.services.ai.openai_compatible.httpx.AsyncClient", RecordingAsyncClient)
 
 
-def _provider(*, timeout_seconds: int = 15, max_attempts: int = 2) -> OpenAICompatibleProvider:
+def _provider(
+    *, timeout_seconds: int = 15, image_timeout_seconds: int | None = None, max_attempts: int = 2
+) -> OpenAICompatibleProvider:
     return OpenAICompatibleProvider(
         api_base_url="https://api.openai.com/v1",
         api_key="test-provider-key",
         timeout_seconds=timeout_seconds,
         max_attempts=max_attempts,
+        image_timeout_seconds=image_timeout_seconds,
     )
 
 
@@ -277,7 +280,8 @@ async def test_image_edit_request_omits_response_format_and_preserves_multipart_
     assert request["data"] == {
         "model": "configured-image-model",
         "prompt": (
-            "Make this brochure professional.\\n\\nImmutable commercial facts (preserve exactly):\\n"
+            "Make this brochure professional.\n\n"
+            "Immutable commercial facts (preserve exactly; these override every visual request):\n"
             '{"market_name":"LeafletPilot Market"}'
         ),
         "size": "1024x1536",
@@ -328,3 +332,24 @@ async def test_image_edit_error_mappings_remain_intact(
 
     with pytest.raises(error_type):
         await _professionalize(_provider())
+
+
+@pytest.mark.asyncio
+async def test_image_edit_uses_dedicated_timeout_beyond_generic_sixty_second_ceiling() -> None:
+    RecordingAsyncClient.responses = [
+        httpx.Response(200, json={"data": [{"b64_json": "Z2VuZXJhdGVkLXBuZw=="}]})
+    ]
+
+    await _professionalize(_provider(timeout_seconds=15, image_timeout_seconds=120))
+
+    assert RecordingAsyncClient.timeouts == [120]
+
+
+@pytest.mark.asyncio
+async def test_image_edit_timeout_maps_using_dedicated_timeout() -> None:
+    RecordingAsyncClient.responses = [httpx.TimeoutException("slow image generation")]
+
+    with pytest.raises(AIProviderTimeoutError):
+        await _professionalize(_provider(timeout_seconds=15, image_timeout_seconds=121))
+
+    assert RecordingAsyncClient.timeouts == [121]

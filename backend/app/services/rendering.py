@@ -136,7 +136,9 @@ async def render_campaign_export(
             storage_keys[file_format] = storage_key
             output_paths[file_format] = output_path
 
-        active_professional = next((run for run in campaign.professionalization_runs if run.is_active and run.generated_image_storage_key), None)
+        from app.services.ai.professionalization import frozen_snapshot_hash, is_exportable_ai_run
+        snapshot_hash = frozen_snapshot_hash(campaign.snapshot_json) if campaign.snapshot_json else ""
+        active_professional = next((run for run in campaign.professionalization_runs if is_exportable_ai_run(run, snapshot_hash)), None)
         if active_professional is not None:
             await asyncio.to_thread(_render_professional_image_assets_sync, storage_path_for_key(active_professional.generated_image_storage_key), output_paths)
         else:

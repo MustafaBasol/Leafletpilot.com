@@ -124,6 +124,7 @@ class Settings(BaseSettings):
         alias="AI_OPENAI_COMPATIBLE_API_KEY",
     )
     ai_http_timeout_seconds: int = Field(default=15, alias="AI_HTTP_TIMEOUT_SECONDS")
+    ai_image_http_timeout_seconds: int = Field(default=120, alias="AI_IMAGE_HTTP_TIMEOUT_SECONDS")
     ai_http_max_attempts: int = Field(default=2, alias="AI_HTTP_MAX_ATTEMPTS")
     ai_max_instruction_length: int = Field(default=2000, alias="AI_MAX_INSTRUCTION_LENGTH")
     ai_max_actions_per_request: int = Field(default=20, alias="AI_MAX_ACTIONS_PER_REQUEST")
@@ -271,6 +272,8 @@ class Settings(BaseSettings):
             raise ValueError("WHATSAPP_RATE_LIMIT_WINDOW_MINUTES must be at least 1.")
         if self.ai_http_timeout_seconds < 1 or self.ai_http_timeout_seconds > 60:
             raise ValueError("AI_HTTP_TIMEOUT_SECONDS must be between 1 and 60.")
+        if self.ai_image_http_timeout_seconds < 15 or self.ai_image_http_timeout_seconds > 300:
+            raise ValueError("AI_IMAGE_HTTP_TIMEOUT_SECONDS must be between 15 and 300.")
         if self.ai_http_max_attempts < 1 or self.ai_http_max_attempts > 2:
             raise ValueError("AI_HTTP_MAX_ATTEMPTS must be 1 or 2.")
         if self.ai_max_instruction_length < 1 or self.ai_max_instruction_length > 2000:
