@@ -117,7 +117,11 @@ def test_pytesseract_import_is_available() -> None:
 
 
 def test_installed_pytesseract_executes_ocr_path() -> None:
-    pytest.importorskip("pytesseract")
+    pytesseract = pytest.importorskip("pytesseract")
+    try:
+        pytesseract.get_tesseract_version()
+    except (pytesseract.TesseractNotFoundError, OSError):
+        pytest.skip("tesseract executable is not installed in this test environment")
 
     result = validate_generated_brochure(ocr_text_png(), snapshot(), logo_required=False)
 
