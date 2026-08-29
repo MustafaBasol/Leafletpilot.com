@@ -110,6 +110,12 @@ def test_genuinely_unavailable_ocr_still_fails_closed(monkeypatch) -> None:
     assert result.report["reason"] == "ocr_unavailable"
 
 
+def test_pytesseract_import_is_available() -> None:
+    pytesseract = pytest.importorskip("pytesseract")
+
+    assert pytesseract.image_to_data
+
+
 def test_installed_pytesseract_executes_ocr_path() -> None:
     pytest.importorskip("pytesseract")
 
