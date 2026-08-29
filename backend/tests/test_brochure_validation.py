@@ -2,6 +2,7 @@ import sys
 from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image, ImageDraw
 
 from app.services.ai.brochure_validation import validate_generated_brochure
@@ -12,6 +13,17 @@ def candidate_png() -> bytes:
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, 1024, 240), fill="navy")
     draw.rectangle((80, 340, 944, 1420), outline="red", width=12)
+    output = BytesIO()
+    image.save(output, "PNG")
+    return output.getvalue()
+
+
+def ocr_text_png() -> bytes:
+    image = Image.new("RGB", (1024, 1536), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((80, 120), "Vatan Market", fill="black")
+    draw.text((80, 240), "Hafta Fırsatları", fill="black")
+    draw.text((80, 360), "Coca Cola 1,99", fill="black")
     output = BytesIO()
     image.save(output, "PNG")
     return output.getvalue()
@@ -96,3 +108,12 @@ def test_genuinely_unavailable_ocr_still_fails_closed(monkeypatch) -> None:
     assert result.accepted is False
     assert result.report["evidence_status"] == "unverifiable"
     assert result.report["reason"] == "ocr_unavailable"
+
+
+def test_installed_pytesseract_executes_ocr_path() -> None:
+    pytest.importorskip("pytesseract")
+
+    result = validate_generated_brochure(ocr_text_png(), snapshot(), logo_required=False)
+
+    assert result.report["ocr"]["available"] is True
+    assert result.report["ocr"]["passes"]
