@@ -4,14 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
 from PIL import Image, ImageOps, ImageStat, UnidentifiedImageError
 
 OCR_MIN_CONFIDENCE = 55.0
-MIN_MATCH_RATIO_FOR_MISMATCH = 0.65
+PRICE_TOKEN_MIN_CONFIDENCE = 70.0
+_GENERIC_PRODUCT_TOKENS = {
+    "campaign",
+    "current",
+    "discount",
+    "fiyat",
+    "indirim",
+    "market",
+    "old",
+    "price",
+    "product",
+    "urun",
+}
 
 
 @dataclass(frozen=True)
@@ -31,12 +45,30 @@ class _OCREvidence:
     available: bool
     confidence: float
     normalized_text: str
-    matched: tuple[_ExpectedFact, ...]
+    words: tuple[str, ...]
+    word_confidences: tuple[float, ...]
     passes: tuple[dict[str, Any], ...]
 
 
+
 def _norm(value: object) -> str:
-    return re.sub(r"[^0-9a-zçğıöşü€$£]", "", str(value or "").casefold())
+    value = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    return re.sub(r"[^0-9a-z]", "", value)
+
+
+def _tokens(value: object) -> list[str]:
+    value = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    return re.findall(r"[a-z0-9]+", value)
+
+
+def _discriminative_tokens(value: object) -> list[str]:
+    return [
+        token
+        for token in _tokens(value)
+        if len(token) >= 3 and token not in _GENERIC_PRODUCT_TOKENS
+    ]
 
 
 def _required_fact_records(snapshot: dict[str, Any]) -> list[_ExpectedFact]:
@@ -137,9 +169,9 @@ def _ocr_evidence(image: Image.Image, facts: list[_ExpectedFact]) -> _OCREvidenc
     try:
         import pytesseract
     except Exception:  # noqa: BLE001 - optional OCR remains fail-closed
-        return _OCREvidence(False, 0.0, "", (), ())
+        return _OCREvidence(False, 0.0, "", (), (), ())
     reports: list[dict[str, Any]] = []
-    candidates: list[tuple[int, float, int, str, tuple[_ExpectedFact, ...]]] = []
+    candidates: list[tuple[int, float, int, str, tuple[str, ...], tuple[float, ...]]] = []
     for name, variant in _ocr_variants(image):
         try:
             data = pytesseract.image_to_data(
@@ -155,35 +187,272 @@ def _ocr_evidence(image: Image.Image, facts: list[_ExpectedFact]) -> _OCREvidenc
                 try:
                     confidence = float(raw_conf)
                 except (TypeError, ValueError):
-                    continue
-                if confidence >= 0:
-                    confidences.append(confidence)
+                    confidence = 0.0
+                confidences.append(max(confidence, 0.0))
             normalized = _norm(" ".join(words))
-            matched = tuple(fact for fact in facts if _norm(fact.value) in normalized)
+            matched_count = sum(
+                1
+                for fact in facts
+                if _fact_is_matched(fact, tuple(words), tuple(confidences))
+            )
             confidence = sum(confidences) / len(confidences) if confidences else 0.0
             reports.append(
                 {
                     "name": name,
                     "confidence": round(confidence, 2),
-                    "matched_fact_count": len(matched),
+                    "matched_fact_count": matched_count,
                     "recognized_character_count": len(normalized),
                 }
             )
-            candidates.append((len(matched), confidence, len(normalized), normalized, matched))
+            candidates.append(
+                (matched_count, confidence, len(normalized), normalized, tuple(words), tuple(confidences))
+            )
         except Exception:  # noqa: BLE001 - a secondary pass may still succeed
             reports.append({"name": name, "status": "unavailable"})
     if not candidates:
-        return _OCREvidence(False, 0.0, "", (), tuple(reports))
-    _, confidence, _, normalized, matched = max(candidates, key=lambda item: item[:3])
-    return _OCREvidence(True, confidence, normalized, matched, tuple(reports))
+        return _OCREvidence(False, 0.0, "", (), (), tuple(reports))
+    _, confidence, _, normalized, words, confidences = max(candidates, key=lambda item: item[:3])
+    return _OCREvidence(True, confidence, normalized, words, confidences, tuple(reports))
 
 
-def _product_order(snapshot: dict[str, Any], text: str) -> bool | None:
-    names = [_norm(item.get("name")) for item in snapshot.get("items") or [] if item.get("name")]
-    positions = [text.find(name) for name in names]
-    if any(position < 0 for position in positions):
+def _price_decimal(value: object) -> Decimal | None:
+    raw = re.sub(r"[^0-9,.-]", "", str(value or "")).replace("-", "")
+    if not raw or not re.search(r"[0-9]", raw):
+        return None
+    if "," in raw and "." in raw:
+        separator = "," if raw.rfind(",") > raw.rfind(".") else "."
+        integer, fraction = raw.rsplit(separator, 1)
+        integer = integer.replace(",", "").replace(".", "")
+        raw = f"{integer}.{fraction}"
+    elif "," in raw or "." in raw:
+        separator = "," if "," in raw else "."
+        parts = raw.split(separator)
+        if len(parts) == 2 and len(parts[1]) <= 2:
+            raw = f"{parts[0]}.{parts[1]}"
+        else:
+            raw = "".join(parts)
+    try:
+        return Decimal(raw).quantize(Decimal("0.01"))
+    except InvalidOperation:
+        return None
+
+
+def _numeric_price_candidates(
+    words: tuple[str, ...], confidences: tuple[float, ...]
+) -> list[tuple[Decimal, int, float]]:
+    candidates: list[tuple[Decimal, int, float]] = []
+    for index, word in enumerate(words):
+        for value in re.findall(r"[0-9]+(?:[.,][0-9]{1,2})?", word):
+            parsed = _price_decimal(value)
+            if parsed is not None:
+                confidence = confidences[index] if index < len(confidences) else 0.0
+                if value.isdigit() and len(value) >= 3:
+                    confidence = 0.0
+                candidates.append((parsed, index, confidence))
+    for index in range(len(words) - 1):
+        first = re.fullmatch(r"[0-9]{1,3}", words[index])
+        second = re.fullmatch(r"[0-9]{2}", words[index + 1])
+        if first and second:
+            parsed = _price_decimal(f"{first.group()}.{second.group()}")
+            if parsed is not None:
+                confidence = min(
+                    confidences[index] if index < len(confidences) else 0.0,
+                    confidences[index + 1] if index + 1 < len(confidences) else 0.0,
+                )
+                candidates.append((parsed, index, confidence))
+    return candidates
+
+
+def _product_position(value: object, words: tuple[str, ...]) -> int | None:
+    expected = _discriminative_tokens(value)
+    if not expected:
+        return None
+    normalized_words = [_tokens(word) for word in words]
+    flattened_positions = [
+        (token, index)
+        for index, group in enumerate(normalized_words)
+        for token in group
+    ]
+    flattened = [token for token, _ in flattened_positions]
+
+    def first_position(token: str) -> int:
+        return next(index for candidate, index in flattened_positions if candidate == token)
+
+    for start, (token, raw_index) in enumerate(flattened_positions):
+        if token != expected[0]:
+            continue
+        cursor = start + 1
+        matched_end = start
+        for target in expected[1:]:
+            while (
+                cursor < len(flattened_positions)
+                and flattened_positions[cursor][0] != target
+                and cursor - matched_end <= 4
+            ):
+                cursor += 1
+            if cursor >= len(flattened_positions) or flattened_positions[cursor][0] != target:
+                break
+            matched_end = cursor
+            cursor += 1
+        else:
+            return raw_index
+
+    if all(token in flattened for token in expected):
+        positions = [first_position(token) for token in expected]
+        if positions == sorted(positions):
+            return min(positions)
+    matched = [token for token in expected if token in flattened]
+    if len(expected) >= 2 and len(matched) >= 2 and len(matched) / len(expected) >= 0.5:
+        return min(first_position(token) for token in matched)
+    if len(expected) == 1 and len(matched) == 1:
+        return first_position(matched[0])
+    if len(matched) == 1 and len(matched[0]) >= 6:
+        return first_position(matched[0])
+    return None
+
+
+def _fact_is_matched(
+    fact: _ExpectedFact, words: tuple[str, ...], confidences: tuple[float, ...]
+) -> bool:
+    if fact.category == "product_name":
+        return _product_position(fact.value, words) is not None
+    if fact.category in {"current_price", "old_price"}:
+        expected = _price_decimal(fact.value)
+        return expected is not None and any(
+            value == expected and confidence >= PRICE_TOKEN_MIN_CONFIDENCE
+            for value, _, confidence in _numeric_price_candidates(words, confidences)
+        )
+    return _norm(fact.value) in _norm(" ".join(words))
+
+
+def _product_order(snapshot: dict[str, Any], text: str | list[str]) -> bool | None:
+    words = tuple(text.split()) if isinstance(text, str) else tuple(text)
+    positions = [
+        _product_position(item.get("name"), words)
+        for item in snapshot.get("items") or []
+        if item.get("name")
+    ]
+    if len(positions) < 2 or any(position is None for position in positions):
         return None
     return positions == sorted(positions)
+
+
+def _associated_price_candidates(
+    position: int | None,
+    candidates: list[tuple[Decimal, int, float]],
+) -> list[tuple[Decimal, int, float]]:
+    if position is None:
+        return []
+    nearby = [
+        candidate
+        for candidate in candidates
+        if candidate[1] > position
+        and candidate[1] - position <= 12
+        and candidate[2] >= PRICE_TOKEN_MIN_CONFIDENCE
+    ]
+    if nearby:
+        return nearby
+    return []
+
+
+def _product_conflict(
+    expected: str,
+    words: tuple[str, ...],
+    other_product_matched: bool,
+    non_product_tokens: set[str],
+) -> bool:
+    if other_product_matched:
+        return False
+    expected_tokens = set(_discriminative_tokens(expected))
+    observed = [token for token in _tokens(" ".join(words)) if len(token) >= 4]
+    unknown = [
+        token
+        for token in observed
+        if token not in expected_tokens
+        and token not in non_product_tokens
+        and token not in _GENERIC_PRODUCT_TOKENS
+        and not token.isdigit()
+    ]
+    if not unknown:
+        return False
+    for index in range(len(observed) - 1):
+        pair = observed[index : index + 2]
+        if any(token in unknown for token in pair) and any(
+            token in expected_tokens for token in pair
+        ):
+            return True
+    return len(unknown) >= 2
+
+
+def _fact_states(
+    snapshot: dict[str, Any],
+    facts: list[_ExpectedFact],
+    evidence: _OCREvidence,
+) -> dict[str, str]:
+    words = evidence.words
+    confidences = evidence.word_confidences
+    states = {_fact_token(fact): "unreadable" for fact in facts}
+    products = [item for item in snapshot.get("items") or [] if item.get("name")]
+    product_positions = [
+        _product_position(item.get("name"), words) for item in products
+    ]
+    product_matches = [position is not None for position in product_positions]
+    non_product_tokens = {
+        token
+        for fact in facts
+        if fact.category != "product_name"
+        for token in _tokens(fact.value)
+    }
+    for index, fact in enumerate(facts):
+        token = _fact_token(fact)
+        if fact.category == "product_name":
+            position = _product_position(fact.value, words)
+            if position is not None:
+                states[token] = "matched"
+            elif _product_conflict(
+                fact.value,
+                words,
+                any(product_matches),
+                non_product_tokens,
+            ):
+                states[token] = "conflicting"
+            continue
+        if fact.category not in {"current_price", "old_price"}:
+            if _fact_is_matched(fact, words, confidences):
+                states[token] = "matched"
+            continue
+        item = next(
+            (
+                candidate
+                for candidate in products
+                if candidate.get("price" if fact.category == "current_price" else "old_price")
+                == fact.value
+            ),
+            None,
+        )
+        position = _product_position(item.get("name"), words) if item else None
+        associated = _associated_price_candidates(
+            position, _numeric_price_candidates(words, confidences)
+        )
+        expected = _price_decimal(fact.value)
+        if expected is None:
+            continue
+        if any(value == expected for value, _, _ in associated):
+            states[token] = "matched"
+        elif associated and not any(
+            value
+            in {
+                parsed
+                for parsed in (
+                    _price_decimal(item.get("price")) if item else None,
+                    _price_decimal(item.get("old_price")) if item else None,
+                )
+                if parsed is not None
+            }
+            for value, _, _ in associated
+        ):
+            states[token] = "conflicting"
+    return states
 
 
 def _logo_similarity(image: Image.Image, logo_bytes: bytes) -> float:
@@ -222,7 +491,7 @@ def validate_generated_brochure(
     logo_image: bytes | None = None,
 ) -> BrochureValidationResult:
     report: dict[str, Any] = {
-        "version": 2,
+        "version": 3,
         "accepted": False,
         "evidence_status": "technical_failure",
         "critical_facts": {},
@@ -232,10 +501,19 @@ def validate_generated_brochure(
         return BrochureValidationResult(False, report)
     facts = _required_fact_records(snapshot)
     evidence = _ocr_evidence(image, facts)
-    matched_tokens = {_fact_token(fact) for fact in evidence.matched}
-    missing = [fact for fact in facts if _fact_token(fact) not in matched_tokens]
-    ratio = len(evidence.matched) / len(facts) if facts else 1.0
-    order_ok = _product_order(snapshot, evidence.normalized_text)
+    states = _fact_states(snapshot, facts, evidence)
+    matched = [fact for fact in facts if states[_fact_token(fact)] == "matched"]
+    unreadable = [fact for fact in facts if states[_fact_token(fact)] == "unreadable"]
+    conflicting = [fact for fact in facts if states[_fact_token(fact)] == "conflicting"]
+    order_ok = _product_order(snapshot, list(evidence.words))
+    category_counts: dict[str, dict[str, int]] = {}
+    for fact in facts:
+        counts = category_counts.setdefault(
+            fact.category,
+            {"required": 0, "matched": 0, "unreadable": 0, "conflicting": 0},
+        )
+        counts["required"] += 1
+        counts[states[_fact_token(fact)]] += 1
     report["ocr"] = {
         "available": evidence.available,
         "confidence": round(evidence.confidence, 2),
@@ -244,10 +522,15 @@ def validate_generated_brochure(
     }
     report["critical_facts"] = {
         "required_count": len(facts),
-        "matched_count": len(evidence.matched),
-        "missing_count": len(missing),
-        "missing_categories": sorted({fact.category for fact in missing}),
-        "missing_fact_tokens": [_fact_token(fact) for fact in missing],
+        "matched_count": len(matched),
+        "unreadable_count": len(unreadable),
+        "conflicting_count": len(conflicting),
+        "missing_count": len(unreadable),
+        "missing_categories": sorted({fact.category for fact in unreadable}),
+        "missing_fact_tokens": [_fact_token(fact) for fact in unreadable],
+        "conflicting_categories": sorted({fact.category for fact in conflicting}),
+        "conflicting_fact_tokens": [_fact_token(fact) for fact in conflicting],
+        "category_counts": category_counts,
         "product_order": order_ok,
     }
     if not evidence.available:
@@ -256,10 +539,11 @@ def validate_generated_brochure(
     if evidence.confidence < OCR_MIN_CONFIDENCE:
         report.update(evidence_status="unverifiable", reason="ocr_low_confidence")
         return BrochureValidationResult(False, report)
-    if order_ok is False or (missing and ratio >= MIN_MATCH_RATIO_FOR_MISMATCH):
+    if conflicting or order_ok is False:
         report.update(evidence_status="mismatch", reason="commercial_fact_mismatch")
         return BrochureValidationResult(False, report)
-    if missing or order_ok is None:
+    product_count = sum(1 for item in snapshot.get("items") or [] if item.get("name"))
+    if unreadable or (product_count >= 2 and order_ok is None):
         report.update(evidence_status="unverifiable", reason="critical_facts_unverifiable")
         return BrochureValidationResult(False, report)
     if logo_required:
