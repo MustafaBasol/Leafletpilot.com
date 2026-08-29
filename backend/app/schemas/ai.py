@@ -72,6 +72,7 @@ class AIRevisionApplyResult(BaseModel):
 
 
 ProfessionalizationStatus = Literal["pending", "generating", "validating", "ready", "applied", "rejected", "superseded", "failed"]
+ProfessionalizationSourceType = Literal["approved_original", "previous_ai_output"]
 
 
 class ProfessionalizationRequest(BaseModel):
@@ -82,6 +83,15 @@ class ProfessionalizationRequest(BaseModel):
     client_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     design_goal: str | None = Field(default=None, max_length=300)
 
+
+class ProfessionalizationRetryRequest(BaseModel):
+    """A presentation-only retry; authoritative facts always come from the snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    instruction: str | None = Field(default=None, max_length=500)
+    source_run_id: UUID | None = None
 
 class ProfessionalizationEmphasis(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -129,9 +139,19 @@ class ProfessionalizationRunRead(BaseModel):
     model: str
     status: ProfessionalizationStatus
     is_active: bool
+    version_number: int = Field(ge=1)
+    source_type: ProfessionalizationSourceType
+    source_run_id: UUID | None = None
+    request_mode: str
+    user_instruction: str | None = None
     plan: AIProfessionalizationPlanEnvelope
     summary: list[str]
     applied_at: datetime | None
+    completed_at: datetime | None = None
+    generated_image_file_id: UUID | None = None
+    failure_category: str | None = None
+    failure_reason: str | None = None
+    validation_outcome: Literal["verified", "unverifiable", "mismatch", "technical_failure"] | None = None
     created_at: datetime
     idempotent: bool = False
 
@@ -143,5 +163,10 @@ class ProfessionalizationApplyResult(BaseModel):
 
 class ProfessionalizationHistoryRead(BaseModel):
     active_run_id: UUID | None = None
+    latest_run_id: UUID | None = None
+    current_status: ProfessionalizationStatus | None = None
+    active_source: Literal["original", "ai"] = "original"
+    retry_allowed: bool = False
+    revise_allowed: bool = False
     original_available: bool = True
     runs: list[ProfessionalizationRunRead] = Field(default_factory=list)

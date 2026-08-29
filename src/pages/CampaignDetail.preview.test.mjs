@@ -167,3 +167,36 @@ test("AI proposal conflicts refresh authoritative campaign and preview state", (
   assert.match(page, /proposal_expired/);
   assert.match(page, /stale_revision/);
 });
+
+test("failed AI professionalization exposes safe retry actions", () => {
+  assert.match(page, /Üretim tamamlanamadı/);
+  assert.match(page, />Tekrar Dene</);
+  assert.match(page, />Talimatla Tekrar Dene</);
+  assert.match(page, /professionalizationFailureMessage\(latest\.failure_reason\)/);
+  assert.match(page, /Orijinal onaylı broşür kullanılmaya devam ediyor/);
+  assert.doesNotMatch(page, /setProfessionalizationError\(error\.message/);
+});
+
+test("visual revision uses the retry API with instruction and ready-source lineage", () => {
+  assert.match(api, /professionalization\/retry/);
+  assert.match(dataSource, /retryProfessionalization/);
+  assert.match(page, /client_request_id: revisionRequestId\("professionalization"\)/);
+  assert.match(page, /instruction: instruction\.trim\(\) \|\| null/);
+  assert.match(page, /source_run_id: sourceRunId/);
+  assert.match(page, />Yeniden Düzenle</);
+  assert.match(page, /AI tasarımını yeniden düzenle/);
+  assert.match(page, /Neyi değiştirmek istersiniz\?/);
+  assert.match(page, /maxLength=\{500\}/);
+  assert.match(page, /Ürün, fiyat ve kampanya bilgileri değiştirilemez/);
+  assert.match(page, /Yeniden Oluştur/);
+});
+
+test("ready versions support view, explicit selection, original fallback, and history", () => {
+  assert.match(page, /AI Tasarımını Görüntüle/);
+  assert.match(page, /AI Tasarımını Kullan/);
+  assert.match(page, /applyProfessionalizationRun\(campaignId, run\.id\)/);
+  assert.match(page, /restoreOriginalProfessionalization\(campaignId\)/);
+  assert.match(page, />Orijinale Dön</);
+  assert.match(page, /AI tasarım sürüm geçmişi/);
+  assert.match(page, /Seçili AI sürümü \{active\.version_number\} kullanılmaya devam ediyor/);
+});

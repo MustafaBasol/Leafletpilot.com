@@ -19,6 +19,7 @@ from app.schemas.ai import (
     ProfessionalizationApplyResult,
     ProfessionalizationHistoryRead,
     ProfessionalizationRequest,
+    ProfessionalizationRetryRequest,
     ProfessionalizationRunRead,
     RevisionIntentRequest,
 )
@@ -286,6 +287,31 @@ async def get_professionalization_history(campaign_id: UUID, market_id: UUID = D
 @router.post("/{campaign_id}/professionalization", response_model=ProfessionalizationRunRead)
 async def create_professionalization_run(campaign_id: UUID, payload: ProfessionalizationRequest, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), actor: User = Depends(get_current_user), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationRunRead:
     return await ai_service.create_run(session, campaign_id=campaign_id, market_id=market_id, user_id=actor.id, request=payload)
+
+@router.post(
+    "/{campaign_id}/professionalization/retry",
+    response_model=ProfessionalizationRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_professionalization_run(
+    campaign_id: UUID,
+    payload: ProfessionalizationRetryRequest,
+    background_tasks: BackgroundTasks,
+    market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)),
+    actor: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_campaign_session),
+    ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service),
+) -> ProfessionalizationRunRead:
+    run = await ai_service.retry_run(
+        session,
+        campaign_id=campaign_id,
+        market_id=market_id,
+        user_id=actor.id,
+        request=payload,
+    )
+    if not run.idempotent and run.status == "pending":
+        background_tasks.add_task(_process_professionalization_background, run.id)
+    return run
 
 @router.post("/{campaign_id}/professionalization/{run_id}/apply", response_model=ProfessionalizationApplyResult)
 async def apply_professionalization_run(campaign_id: UUID, run_id: UUID, market_id: UUID = Depends(require_market_role(*MARKET_MUTATION_ROLES)), actor: User = Depends(get_current_user), session: AsyncSession = Depends(get_campaign_session), ai_service: AIProfessionalizationService = Depends(get_ai_professionalization_service)) -> ProfessionalizationApplyResult:

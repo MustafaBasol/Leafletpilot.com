@@ -72,10 +72,13 @@ def build_campaign_render_payload(campaign: Campaign, template) -> dict:
     if campaign.snapshot_json:
         from copy import deepcopy
 
-        from app.services.ai.professionalization import frozen_snapshot_hash
+        from app.services.ai.professionalization import frozen_snapshot_hash, is_exportable_ai_run
+        from app.services.ai.types import AICapability
         payload = deepcopy(campaign.snapshot_json)
+        snapshot_hash = frozen_snapshot_hash(campaign.snapshot_json)
         active = next((run for run in campaign.professionalization_runs if run.is_active), None)
-        if active is not None and active.snapshot_hash == frozen_snapshot_hash(campaign.snapshot_json):
+        is_image_run = bool(active and getattr(active, "capability", "") == AICapability.BROCHURE_IMAGE_PROFESSIONALIZATION.value)
+        if active is not None and active.snapshot_hash == snapshot_hash and (not is_image_run or is_exportable_ai_run(active, snapshot_hash)):
             payload["professionalization_plan"] = dict(active.plan_json)
         return payload
     from app.services.preview_renderer import _live_payload

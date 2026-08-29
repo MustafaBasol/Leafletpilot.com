@@ -827,6 +827,10 @@ export async function createProfessionalizationRun(campaignId, payload) {
   return campaignApi.createProfessionalizationRun(campaignId, payload, requireSelectedMarketId());
 }
 
+export async function retryProfessionalization(campaignId, payload) {
+  if (!isRealApiEnabled) return null;
+  return campaignApi.retryProfessionalization(campaignId, payload, requireSelectedMarketId());
+}
 export async function applyProfessionalizationRun(campaignId, runId) {
   if (!isRealApiEnabled) return null;
   return campaignApi.applyProfessionalizationRun(campaignId, runId, requireSelectedMarketId());
